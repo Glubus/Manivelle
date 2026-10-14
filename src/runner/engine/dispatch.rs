@@ -5,10 +5,12 @@ use rquickjs::{CatchResultExt, CaughtError, Ctx, Value as JsValue};
 
 use crate::contract::{JsArgs, JsDecode, JsEncode};
 use crate::error::EngineError;
+use crate::types::Emission;
 
 use super::super::errors::{caught_js_error, in_typescript};
 use super::super::host_fn;
 use super::Engine;
+use super::delivery::Audience;
 use super::invoke::invoke;
 
 /// How a thrown `null` is described: QuickJS throws it when it runs out of memory while
@@ -54,13 +56,50 @@ impl Engine {
     /// returned. An interrupt or an exhausted execution budget does stop them: no
     /// handler is entered after it. The payload is encoded once per script with
     /// handlers and shared by all of that script's handlers. Scripts that never
-    /// registered a handler for `event` cost a set lookup.
+    /// registered a handler for `event` cost a set lookup. To know which script
+    /// failed, use [`emit_report`](Self::emit_report), or [`emit_to`](Self::emit_to)
+    /// for one script.
     pub fn emit<P: JsEncode + ?Sized>(
         &self,
         event: &str,
         payload: &P,
     ) -> Result<usize, EngineError> {
-        self.dispatch(event, payload, false, |_, _, _| Ok(()))
+        let audience = self.everyone_listening_to(event);
+        let emission = self.dispatch(&audience, event, payload, false, |_, _, _| Ok(()));
+        self.first_failure(emission)
+    }
+
+    /// Delivers one event like [`Engine::emit`], and reports what it did to each script:
+    /// how many it reached, the first error of every script whose handlers failed, and
+    /// the errors no script owns. It never fails as a whole, so a host that disables
+    /// the scripts that fail (or counts their failures) reads them all from one
+    /// emission.
+    pub fn emit_report<P: JsEncode + ?Sized>(&self, event: &str, payload: &P) -> Emission<'_> {
+        let audience = self.everyone_listening_to(event);
+        let mut emission = self.dispatch(&audience, event, payload, false, |_, _, _| Ok(()));
+        if emission.delivered > 0
+            && self.execution.interrupt_requested()
+            && emission.unattributed.is_none()
+        {
+            emission.unattributed = Some(EngineError::Interrupted);
+        }
+        emission
+    }
+
+    /// Delivers one event to the handlers of one script only, like [`Engine::emit`]: every
+    /// handler of the script runs even after one throws, and the first error is
+    /// returned, so a failure is the script's by construction. Returns `1` if the script
+    /// had a handler for `event`, `0` if it had none or is quarantined; an error if it is
+    /// not loaded.
+    pub fn emit_to<P: JsEncode + ?Sized>(
+        &self,
+        script_id: &str,
+        event: &str,
+        payload: &P,
+    ) -> Result<usize, EngineError> {
+        let audience = self.script_listening_to(script_id, event)?;
+        let emission = self.dispatch(&audience, event, payload, false, |_, _, _| Ok(()));
+        self.first_failure(emission)
     }
 
     /// Delivers one event like [`Engine::emit`] and returns what every handler returned,
@@ -77,17 +116,48 @@ impl Engine {
         event: &str,
         payload: &P,
     ) -> Result<Vec<(&str, R)>, EngineError> {
+        let audience = self.everyone_listening_to(event);
+        self.request_audience(&audience, event, payload)
+    }
+
+    /// Delivers one event like [`Engine::request`], to the handlers of one script only,
+    /// and returns their replies in registration order. The script not being loaded is
+    /// an error; having no handler for `event`, or being quarantined, is an empty list.
+    pub fn request_to<P: JsEncode + ?Sized, R: JsDecode>(
+        &self,
+        script_id: &str,
+        event: &str,
+        payload: &P,
+    ) -> Result<Vec<R>, EngineError> {
+        let audience = self.script_listening_to(script_id, event)?;
+        let replies = self.request_audience(&audience, event, payload)?;
+        Ok(replies.into_iter().map(|(_, reply)| reply).collect())
+    }
+
+    fn request_audience<P: JsEncode + ?Sized, R: JsDecode>(
+        &self,
+        audience: &Audience,
+        event: &str,
+        payload: &P,
+    ) -> Result<Vec<(&str, R)>, EngineError> {
         let mut replies = Vec::new();
-        self.dispatch(event, payload, true, |script_id, ctx, returned| {
-            let value = self.await_returned(ctx, returned, || {
-                format!("a `{event}` handler of script `{script_id}`")
-            })?;
-            let reply = R::decode_js(ctx, value)
-                .catch(ctx)
-                .map_err(caught_js_error)?;
-            replies.push((script_id, reply));
-            Ok(())
-        })?;
+        let emission = self.dispatch(
+            audience,
+            event,
+            payload,
+            true,
+            |script_id, ctx, returned| {
+                let value = self.await_returned(ctx, returned, || {
+                    format!("a `{event}` handler of script `{script_id}`")
+                })?;
+                let reply = R::decode_js(ctx, value)
+                    .catch(ctx)
+                    .map_err(caught_js_error)?;
+                replies.push((script_id, reply));
+                Ok(())
+            },
+        );
+        self.first_failure(emission)?;
         Ok(replies)
     }
 
@@ -156,7 +226,7 @@ impl Engine {
 
     /// An error as the host sees it: TypeScript locations, and an out of memory, however
     /// QuickJS or rquickjs described it, said as such with the limit to raise.
-    fn reported(&self, error: EngineError) -> EngineError {
+    pub(super) fn reported(&self, error: EngineError) -> EngineError {
         match in_typescript(error, &self.module_store) {
             EngineError::Execution { details } if self.is_out_of_memory(&details) => {
                 let stats = self.memory_stats();

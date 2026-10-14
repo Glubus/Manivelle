@@ -85,6 +85,22 @@ scripts had at least one handler.
   already in progress still runs it. A script whose last handler for an event is
   removed is no longer entered for that event.
 
+### One Script, And Who Failed
+
+`emit` reaches every listener. To deliver to one script (the answer to a request that
+script made, a message for the mod that provides an element), use
+`emit_to(script_id, event, &payload)`: it runs only that script's handlers, returns `1`
+if it had one for the event and `0` if it had none or is quarantined, and fails with
+`EngineError::ScriptNotFound` if it is not loaded. An error it returns is that
+script's by construction. `request_to(script_id, event, &payload)` does the same for
+a request and returns that script's replies.
+
+To know which script an `emit` failed in, use `emit_report(event, &payload)`: it
+returns an `Emission` with the number of scripts reached, `failures` (the id and first
+error of each script whose handlers failed, in delivery order, a time or memory
+budget included) and `unattributed` (an error no script owns, such as an unhandled
+rejection, or the interrupt). It never fails as a whole, and every script still runs.
+
 ### Per-Frame Data
 
 Delivering an event costs about 100 ns per script on top of the handler itself,

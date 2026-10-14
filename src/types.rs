@@ -42,3 +42,19 @@ pub struct ReloadReport {
     /// `ctx.hot.dispose` callback threw after the new version was loaded.
     pub dispose_failed: Vec<(ScriptId, EngineError)>,
 }
+
+/// Outcome of [`Engine::emit_report`](crate::Engine::emit_report): what an event did to
+/// each script.
+#[derive(Debug, Default)]
+#[non_exhaustive]
+pub struct Emission<'a> {
+    /// How many scripts had at least one handler for the event.
+    pub delivered: usize,
+    /// Each script whose handlers failed, in delivery order, with its first error: a
+    /// throw, a rejection, or a script that ran out of its time or memory budget. Every
+    /// other handler ran regardless.
+    pub failures: Vec<(&'a str, EngineError)>,
+    /// An error no script owns: a Promise job queued by a handler that threw later, an
+    /// unhandled rejection, or the host's interrupt.
+    pub unattributed: Option<EngineError>,
+}

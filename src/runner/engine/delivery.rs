@@ -10,23 +10,46 @@ use rquickjs::{Ctx, Value as JsValue};
 
 use super::super::errors::js_error;
 use super::super::events::{Handlers, deliver};
-use super::{Engine, EngineScript};
+use super::{Engine, EngineScript, script_not_found};
 use crate::contract::JsEncode;
 use crate::error::EngineError;
+use crate::types::Emission;
+
+/// The scripts an event is delivered to, as positions in load order.
+pub(super) enum Audience {
+    /// No script listens.
+    Nobody,
+    /// Every script that listens.
+    Everyone(Rc<[usize]>),
+    /// One script that listens.
+    One(usize),
+}
+
+impl Audience {
+    fn positions(&self) -> &[usize] {
+        match self {
+            Self::Nobody => &[],
+            Self::Everyone(positions) => positions,
+            Self::One(position) => std::slice::from_ref(position),
+        }
+    }
+}
 
 impl Engine {
-    /// Runs every handler of `event` in load order, handing each returned value to
-    /// `on_return`; see [`Engine::emit`]. Returns how many scripts it delivered to.
+    /// Runs every handler of `event` of the `audience` in load order, handing each returned
+    /// value to `on_return`; see [`Engine::emit`]. Settles what the handlers left, and
+    /// reports what happened to each script.
     pub(super) fn dispatch<'a, P: JsEncode + ?Sized>(
         &'a self,
+        audience: &Audience,
         event: &str,
         payload: &P,
         keep_results: bool,
         on_return: impl for<'js> FnMut(&'a str, &Ctx<'js>, JsValue<'js>) -> Result<(), EngineError>,
-    ) -> Result<usize, EngineError> {
-        let Some(listeners) = self.listeners_of(event) else {
-            return Ok(0);
-        };
+    ) -> Emission<'a> {
+        if matches!(audience, Audience::Nobody) {
+            return Emission::default();
+        }
         let _budget = self.budget();
         let mut delivery = Delivery {
             engine: self,
@@ -35,11 +58,44 @@ impl Engine {
             keep_results,
             on_return,
             delivered: 0,
-            first_error: None,
+            failures: Vec::new(),
             stopped: false,
         };
-        delivery.visit(&listeners);
+        delivery.visit(audience.positions());
         delivery.finish()
+    }
+
+    /// What [`Engine::emit`] returns for an emission: the first error, the interrupt
+    /// taking precedence over any, else how many scripts it delivered to.
+    pub(super) fn first_failure(&self, emission: Emission<'_>) -> Result<usize, EngineError> {
+        let delivered = emission.delivered;
+        let error = (emission.failures.into_iter().next())
+            .map(|(_, error)| error)
+            .or(emission.unattributed);
+        self.attribute_interrupt(error.map_or(Ok(delivered), Err))
+    }
+
+    /// The scripts listening to `event`, quarantined ones left out.
+    pub(super) fn everyone_listening_to(&self, event: &str) -> Audience {
+        self.listeners_of(event)
+            .map_or(Audience::Nobody, Audience::Everyone)
+    }
+
+    /// The script `script_id` if it listens to `event` and is not quarantined; an error when
+    /// it is not loaded.
+    pub(super) fn script_listening_to(
+        &self,
+        script_id: &str,
+        event: &str,
+    ) -> Result<Audience, EngineError> {
+        let (position, _, script) =
+            (self.scripts.get_full(script_id)).ok_or_else(|| script_not_found(script_id))?;
+        let listening = !script.quarantined.get() && script.signals.events.listens(event);
+        Ok(if listening {
+            Audience::One(position)
+        } else {
+            Audience::Nobody
+        })
     }
 
     /// The load-order positions of the scripts listening to `event`, quarantined ones
@@ -85,8 +141,8 @@ struct Delivery<'a, 'e, P: ?Sized, F> {
     on_return: F,
     /// The scripts a handler list was taken from.
     delivered: usize,
-    /// The first error of a script, as the operation reports it.
-    first_error: Option<EngineError>,
+    /// The error of each script whose handlers failed, in delivery order.
+    failures: Vec<(&'a str, EngineError)>,
     /// Set once the host interrupts the operation: no handler is entered after that.
     /// A script that runs out of its own budget does not stop the others.
     stopped: bool,
@@ -141,7 +197,7 @@ where
         self.delivered += 1;
         let outcome = self.run_handlers(ctx, id, script, &handlers, payload);
         if let Err(error) = outcome {
-            self.first_error.get_or_insert(error);
+            self.failures.push((id, error));
         }
         self.stopped = self.engine.execution.interrupt_requested();
     }
@@ -177,31 +233,46 @@ where
     }
 
     /// The payload could not be encoded: nothing to hand over, so the scripts of the run
-    /// that listen fail together.
+    /// that listen fail together, each with the same error.
     fn encoding_failed(&mut self, run: &[usize], error: EngineError) {
-        self.first_error.get_or_insert(error);
-        self.delivered += run
-            .iter()
-            .filter(|&&position| {
-                self.engine
-                    .scripts
-                    .get_index(position)
-                    .is_some_and(|(_, script)| script.signals.events.listens(self.event))
-            })
-            .count();
+        let details = match error {
+            EngineError::Execution { details } => details,
+            other => other.to_string(),
+        };
+        for &position in run {
+            let Some((id, script)) = self.engine.scripts.get_index(position) else {
+                continue;
+            };
+            if script.signals.events.listens(self.event) {
+                self.delivered += 1;
+                let details = details.clone();
+                self.failures.push((id, EngineError::Execution { details }));
+            }
+        }
     }
 
-    /// Settles what the handlers left, and reports the operation's result.
-    fn finish(self) -> Result<usize, EngineError> {
-        if self.delivered == 0 {
+    /// Settles what the handlers left, and reports what happened.
+    fn finish(self) -> Emission<'a> {
+        let Self {
+            engine,
+            delivered,
+            failures,
+            ..
+        } = self;
+        if delivered == 0 {
             // No JavaScript ran, so there is no Promise job to settle.
-            return Ok(0);
+            return Emission::default();
         }
         // The work left to settle runs under a budget of its own.
-        self.engine.begin_settle_slice();
-        self.engine.attribute_interrupt(
-            self.engine
-                .settle(self.first_error.map_or(Ok(self.delivered), Err)),
-        )
+        engine.begin_settle_slice();
+        let failures = (failures.into_iter())
+            .map(|(id, error)| (id, engine.reported(error)))
+            .collect();
+        let unattributed = engine.settle(Ok(())).err();
+        Emission {
+            delivered,
+            failures,
+            unattributed,
+        }
     }
 }

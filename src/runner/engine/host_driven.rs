@@ -153,7 +153,8 @@ impl Engine {
     ) -> Result<PendingCall<Vec<(ScriptId, R)>>, EngineError> {
         let handle = PendingCall::new();
         let replies = RequestResults::new(handle.clone());
-        let delivery = self.dispatch(event, payload, true, |script_id, ctx, value| {
+        let audience = self.everyone_listening_to(event);
+        let emission = self.dispatch(&audience, event, payload, true, |script_id, ctx, value| {
             let script = self.script(script_id)?;
             script
                 .request_guards
@@ -165,6 +166,7 @@ impl Engine {
             }
             Ok(())
         });
+        let delivery = self.first_failure(emission);
         if let Err(error) = delivery {
             replies.borrow_mut().fail(error);
         }

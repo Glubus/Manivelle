@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased (0.1)
+## 0.1.1
+
+### Added
+
+- `Engine::emit_to` and `Engine::request_to` deliver an event to the handlers of one
+  script only.
+- `Engine::emit_report` returns an `Emission`: how many scripts an event reached and the
+  error of each script that failed, instead of only the first error of the emission.
+
+## 0.1.0
 
 First release under the name Manivelle. It continues `rustts` (deprecated, last
 release 0.3.0); the history of `rustts` stays in that project's tags.
