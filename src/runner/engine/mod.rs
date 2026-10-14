@@ -20,7 +20,7 @@ use crate::types::{MemoryStats, ScriptId};
 
 use super::console::{ConsoleLevel, ConsoleSink};
 use super::errors::{js_error, pending_exception};
-use super::events::ListenedEvents;
+use super::events::{EventIndex, ListenedEvents};
 use super::execution::{ExecutionControl, ExecutionGuard};
 use super::host_fn::HostFnClass;
 use super::host_promises::HostPromises;
@@ -40,7 +40,7 @@ mod host_driven;
 mod invoke;
 mod lifecycle;
 
-/// Single-thread RustTS engine.
+/// Single-thread Manivelle engine.
 ///
 /// The engine owns its QuickJS runtime and cannot leave the thread that created it.
 /// Script exports are called directly, host functions are native QuickJS functions,
@@ -84,6 +84,8 @@ pub struct Engine {
     execution_timeout: Duration,
     console: ConsoleSink,
     timer_clock: TimerClock,
+    /// Which scripts listen to each event, for `emit` and `request`.
+    event_index: EventIndex,
     /// No later than the earliest due time of any script's timers.
     earliest_timer: EarliestDue,
     /// Raised when a resolver queues an answer for any script, lowered by `pump`.
@@ -97,7 +99,7 @@ pub struct Engine {
     export_atoms: KeptAtoms,
     /// Contexts shared by scripts, by group name.
     groups: HashMap<Box<str>, ScriptGroup, FxBuildHasher>,
-    /// The environment of every script loaded into a group, for its `rustts:env` module.
+    /// The environment of every script loaded into a group, for its `manivelle:env` module.
     envs: ScriptEnvs,
     // Declared last: contexts and persistent values must drop before their runtime.
     rejections: UnhandledRejections,
@@ -133,7 +135,7 @@ impl EngineScript {
 struct ScriptHooks {
     hot_save: Persistent<Function<'static>>,
     hot_dispose: Persistent<Function<'static>>,
-    timers_run: Persistent<Function<'static>>,
+    timers_run: Retained,
 }
 
 /// The functions the context prelude exports, which build and expose a script's
@@ -156,10 +158,18 @@ struct ScriptGroup {
 /// so `emit` and `advance_timers` skip scripts with nothing to run instead of entering
 /// their context, and find the handlers to run without a lookup by name. Owned by the
 /// script: a reload starts anew.
-#[derive(Default)]
 struct ScriptSignals {
     events: ListenedEvents,
     next_timer: NextTimer,
+}
+
+impl ScriptSignals {
+    fn new(events: &EventIndex) -> Self {
+        Self {
+            events: ListenedEvents::new(events.stale_flag()),
+            next_timer: NextTimer::default(),
+        }
+    }
 }
 
 /// The value a replaced version's `ctx.hot.save` returned, on its way to the next
@@ -205,6 +215,7 @@ impl Engine {
             console: ConsoleSink::default(),
             timer_clock: TimerClock::default(),
             earliest_timer: EarliestDue::default(),
+            event_index: EventIndex::default(),
             host_wake: Arc::default(),
             builtins: options.builtins,
             prelude: OnceCell::new(),

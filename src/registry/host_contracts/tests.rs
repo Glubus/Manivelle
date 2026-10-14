@@ -375,7 +375,7 @@ fn dts_generates_function_declaration_from_contract_model() {
 }
 
 /// The declarations' closing `ctx` section, typing `ctx.on` and `ctx.off` only when
-/// events exist, and the `rustts:env` module that exports it.
+/// events exist, and the `manivelle:env` module that exports it.
 fn ctx_declaration(with_events: bool) -> String {
     let (event_context, events) = if with_events {
         (
@@ -403,7 +403,7 @@ fn sdk_generates_function_wrapper_from_contract_model() {
     assert!(sdk.contains("export const user = {"));
     assert!(sdk.contains("find(input: FindUserInput): FindUserOutput"));
     assert!(sdk.contains("return __hostCall<FindUserOutput>(\"user.find\", input);"));
-    assert!(sdk.contains("export const rusttsSdk = {"));
+    assert!(sdk.contains("export const manivelleSdk = {"));
     assert!(sdk.contains("functions: {"));
     assert!(sdk.contains("user,"));
 }
@@ -419,7 +419,7 @@ fn sdk_generates_event_wrapper_from_callback_contracts() {
     assert!(sdk.contains("export const events = {"));
     assert!(sdk.contains("callback(handler: HostEventHandler<\"demo.callback\">): void"));
     assert!(sdk.contains("return __ctx.on(\"demo.callback\", handler);"));
-    assert!(sdk.contains("export const rusttsSdk = {"));
+    assert!(sdk.contains("export const manivelleSdk = {"));
     assert!(sdk.contains("events,"));
     assert!(sdk.contains("ctx,"));
 }

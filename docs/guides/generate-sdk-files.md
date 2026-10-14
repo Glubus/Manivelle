@@ -1,6 +1,6 @@
 # Generate TypeScript SDK Files
 
-`RustTS` generates TypeScript files from the Rust-side registry. This is how a
+`Manivelle` generates TypeScript files from the Rust-side registry. This is how a
 host application exposes a typed scripting API to script authors: the Rust
 contracts are the single source of truth, and the declarations follow them.
 
@@ -23,7 +23,7 @@ Every registered callback appears in the declarations and the SDK.
 ## Write Files
 
 ```rust
-use rustts::SdkFileNames;
+use manivelle::SdkFileNames;
 
 let written = engine.registry().write_sdk_files_with_names(
     "generated",
@@ -46,7 +46,7 @@ generated/
 ```
 
 `write_sdk_files(...)` also exists for quick experiments (it writes
-`rustts.d.ts` and `rustts.sdk.ts`), but real applications should usually call
+`manivelle.d.ts` and `manivelle.sdk.ts`), but real applications should usually call
 `write_sdk_files_with_names(...)` and choose names that match their package.
 `registry().dts()` and `registry().sdk()` return the same contents as strings.
 
@@ -136,5 +136,5 @@ my-sdk build
 ```
 
 That CLI can call `write_sdk_files_with_names(...)`, create `tsconfig.json`, and
-decide where generated files live. `RustTS` only owns the
+decide where generated files live. `Manivelle` only owns the
 registry-to-TypeScript generation.

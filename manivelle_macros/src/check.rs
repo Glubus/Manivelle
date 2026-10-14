@@ -1,5 +1,5 @@
 //! Compile-time checks: shapes TsSchema cannot describe, and serde attributes the native
-//! codec cannot mirror without an explicit `#[rustts(codec = "json")]` opt-in.
+//! codec cannot mirror without an explicit `#[manivelle(codec = "json")]` opt-in.
 
 use syn::{DeriveInput, Error, Fields, GenericArgument, PathArguments, Result, Type};
 
@@ -7,8 +7,8 @@ use crate::attrs::{JsonOnly, SchemaOnly};
 use crate::directions::Directions;
 use crate::model::{Body, Container, Field, Shape, Style, Tagging};
 
-const TYPE_OPT_IN: &str = "add `#[rustts(codec = \"json\")]` to the type";
-const FIELD_OPT_IN: &str = "add `#[rustts(codec = \"json\")]` (or a native `#[rustts(with = \"...\")]`) to this field, or `#[rustts(codec = \"json\")]` to the type";
+const TYPE_OPT_IN: &str = "add `#[manivelle(codec = \"json\")]` to the type";
+const FIELD_OPT_IN: &str = "add `#[manivelle(codec = \"json\")]` (or a native `#[manivelle(with = \"...\")]`) to this field, or `#[manivelle(codec = \"json\")]` to the type";
 
 pub(crate) fn check(container: &Container<'_>, input: &DeriveInput) -> Result<()> {
     check_transparent(container, input)?;
@@ -191,13 +191,13 @@ fn check_field_codecs(shape: &Shape<'_>) -> Result<()> {
     {
         Some(field) => Err(Error::new_spanned(
             field.original,
-            "`#[rustts(with)]` and `#[rustts(codec = \"json\")]` both choose this field's codec; keep one",
+            "`#[manivelle(with)]` and `#[manivelle(codec = \"json\")]` both choose this field's codec; keep one",
         )),
         None => Ok(()),
     }
 }
 
-/// `#[rustts(rename/optional)]` would make the schema disagree with the codecs.
+/// `#[manivelle(rename/optional)]` would make the schema disagree with the codecs.
 fn check_schema_only_attrs(container: &Container<'_>) -> Result<()> {
     let fields = shapes(container)
         .into_iter()
@@ -220,7 +220,7 @@ fn schema_only_error(attr: &SchemaOnly) -> Error {
     Error::new_spanned(
         &attr.path,
         format!(
-            "`#[rustts({key})]` changes only the TypeScript schema, so the codec would disagree; use `#[serde({})]`, or mark the type `#[rustts(schema_only)]`",
+            "`#[manivelle({key})]` changes only the TypeScript schema, so the codec would disagree; use `#[serde({})]`, or mark the type `#[manivelle(schema_only)]`",
             attr.serde_equivalent
         ),
     )

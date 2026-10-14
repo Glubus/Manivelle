@@ -3,7 +3,7 @@ mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rustts::{Engine, VmError};
+use manivelle::{Engine, VmError};
 use serde_json::{Value, json};
 
 use support::TestCacheDir;

@@ -4,7 +4,7 @@ mod support;
 
 use std::fs;
 
-use rustts::{
+use manivelle::{
     Engine, HostCallback, HostContract, HostContractKind, HostRequest, VmError, VmOptions,
 };
 use serde_json::json;
@@ -66,6 +66,49 @@ fn replies_come_back_in_load_then_registration_order_with_their_script() {
             ("alpha", "alpha:save".to_owned()),
         ]
     );
+}
+
+/// Which scripts answer `menu.label`, in order.
+fn answering(engine: &Engine) -> Vec<String> {
+    let replies: Vec<(&str, String)> = engine.request("menu.label", "x").expect("request");
+    replies.iter().map(|(id, _)| (*id).to_owned()).collect()
+}
+
+#[test]
+fn the_scripts_that_answer_follow_loads_unloads_and_handler_changes() {
+    let mut engine = engine_with(&[
+        ("one", r#"ctx.on("menu.label", () => "one"); export {};"#),
+        (
+            "joiner",
+            r#"const handler = () => "joiner";
+               export function join(): void { ctx.on("menu.label", handler); }
+               export function leave(): void { ctx.off("menu.label", handler); }"#,
+        ),
+    ]);
+    assert_eq!(answering(&engine), ["one"]);
+
+    engine.call::<()>("joiner", "join", ()).expect("join");
+    assert_eq!(answering(&engine), ["one", "joiner"]);
+
+    engine.unload_script("one").expect("unload");
+    assert_eq!(
+        answering(&engine),
+        ["joiner"],
+        "positions shifted by the unload"
+    );
+
+    engine
+        .load_script("late", r#"ctx.on("menu.label", () => "late"); export {};"#)
+        .expect("load late");
+    assert_eq!(answering(&engine), ["joiner", "late"]);
+
+    engine.call::<()>("joiner", "leave", ()).expect("leave");
+    assert_eq!(answering(&engine), ["late"]);
+
+    engine
+        .load_script("late", "export {};")
+        .expect("reload without a handler");
+    assert!(answering(&engine).is_empty());
 }
 
 #[test]

@@ -12,7 +12,7 @@ use super::field_atoms::define_field;
 pub use super::js_text::JsText;
 use super::{JsDecode, JsEncode, at_path, codec_error, define_property_named};
 
-/// Encodes `value` through the serde_json reference path (`#[rustts(codec = "json")]`).
+/// Encodes `value` through the serde_json reference path (`#[manivelle(codec = "json")]`).
 pub fn json_encode<'js, T: Serialize + ?Sized>(
     value: &T,
     ctx: &Ctx<'js>,
@@ -20,7 +20,7 @@ pub fn json_encode<'js, T: Serialize + ?Sized>(
     json_encode_with(value, ctx, T::serialize)
 }
 
-/// Decodes `value` through the serde_json reference path (`#[rustts(codec = "json")]`).
+/// Decodes `value` through the serde_json reference path (`#[manivelle(codec = "json")]`).
 pub fn json_decode<'js, T: DeserializeOwned>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<T> {
     json_decode_with(ctx, value, T::deserialize)
 }

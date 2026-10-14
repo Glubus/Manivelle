@@ -22,7 +22,7 @@ pub(super) fn shape_type(
     container_default: bool,
 ) -> TokenStream {
     match shape.style {
-        Style::Unit => quote!(::rustts::TsType::Null),
+        Style::Unit => quote!(::manivelle::TsType::Null),
         Style::Newtype => type_ref(&shape.fields[0]),
         Style::Tuple => {
             let items = shape
@@ -30,7 +30,7 @@ pub(super) fn shape_type(
                 .iter()
                 .filter(|field| presence(container, field, false) != Presence::Omitted)
                 .map(type_ref);
-            quote!(::rustts::TsType::Tuple(::std::vec![#(#items),*]))
+            quote!(::manivelle::TsType::Tuple(::std::vec![#(#items),*]))
         }
         Style::Struct => {
             let object = object_schema(container, shape, container_default);
@@ -56,10 +56,10 @@ pub(super) fn object_schema(
 /// `ObjectSchema` expression built by `steps`, which add to `object`.
 pub(super) fn object_block(steps: &[TokenStream]) -> TokenStream {
     if steps.is_empty() {
-        return quote!(::rustts::__ObjectSchema::new());
+        return quote!(::manivelle::__ObjectSchema::new());
     }
     quote!({
-        let mut object = ::rustts::__ObjectSchema::new();
+        let mut object = ::manivelle::__ObjectSchema::new();
         #(#steps)*
         object
     })
@@ -68,16 +68,16 @@ pub(super) fn object_block(steps: &[TokenStream]) -> TokenStream {
 /// Statement merging `ty`'s schema into `object`, as serde merges a flattened struct or
 /// map, or an internally tagged newtype payload.
 pub(super) fn flatten_step(ty: &Type, all_optional: bool, requirement: &str) -> TokenStream {
-    quote!(object.flatten(<#ty as ::rustts::TsSchema>::ts_type(), #all_optional, #requirement);)
+    quote!(object.flatten(<#ty as ::manivelle::TsSchema>::ts_type(), #all_optional, #requirement);)
 }
 
-/// Type of a field: its `#[rustts(type)]` text or its `TsSchema` reference.
+/// Type of a field: its `#[manivelle(type)]` text or its `TsSchema` reference.
 pub(super) fn type_ref(field: &Field<'_>) -> TokenStream {
     match &field.attrs.ts_type {
-        Some(text) => quote!(::rustts::TsType::TypeRef(::std::string::String::from(#text))),
+        Some(text) => quote!(::manivelle::TsType::TypeRef(::std::string::String::from(#text))),
         None => {
             let ty = field.ty;
-            quote!(::rustts::__schema_type_ref::<#ty>())
+            quote!(::manivelle::__schema_type_ref::<#ty>())
         }
     }
 }
@@ -89,7 +89,7 @@ pub(super) fn dependency(field: &Field<'_>) -> Option<TokenStream> {
         .attrs
         .ts_type
         .is_none()
-        .then(|| quote!(::rustts::__push_schema_dependency::<#ty>(&mut dependencies);))
+        .then(|| quote!(::manivelle::__push_schema_dependency::<#ty>(&mut dependencies);))
 }
 
 pub(super) fn shape_dependencies(
@@ -132,8 +132,8 @@ fn field_step(
         .unwrap_or_else(|| container.schema_key(&field.name));
     let ty = type_ref(field);
     Some(match presence {
-        Presence::Required => quote!(object.field(::rustts::TsField::required(#key, #ty));),
-        _ => quote!(object.field(::rustts::TsField::optional(#key, #ty));),
+        Presence::Required => quote!(object.field(::manivelle::TsField::required(#key, #ty));),
+        _ => quote!(object.field(::manivelle::TsField::optional(#key, #ty));),
     })
 }
 
@@ -175,7 +175,7 @@ fn input_presence(field: &Field<'_>, container_default: bool) -> Option<bool> {
     Some(!defaulted && !is_optional_type(field))
 }
 
-/// `Option<T>` and `#[rustts(optional)]` fields are optional in the schema.
+/// `Option<T>` and `#[manivelle(optional)]` fields are optional in the schema.
 fn is_optional_type(field: &Field<'_>) -> bool {
     field.attrs.schema_optional || field.option_inner().is_some()
 }

@@ -1,4 +1,4 @@
-//! The environment object of each context-group script, handed to its `rustts:env`
+//! The environment object of each context-group script, handed to its `manivelle:env`
 //! module.
 
 use std::cell::RefCell;

@@ -87,7 +87,7 @@ pub(crate) fn in_typescript(error: VmError, modules: &WorkerModuleStore) -> VmEr
     }
 }
 
-/// `text` with each `rustts://graph/...:line:column` location, in a message or a stack
+/// `text` with each `manivelle://graph/...:line:column` location, in a message or a stack
 /// frame, that falls in a loaded script module replaced by `path:line:column` in its
 /// TypeScript file. Other locations stay as they are; text without any is borrowed.
 pub(crate) fn locations_in_typescript<'a>(

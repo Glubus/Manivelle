@@ -3,14 +3,14 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rustts::VmOptions;
+use manivelle::VmOptions;
 
 #[allow(dead_code)]
 pub(crate) fn run_tsc(path: &std::path::Path) -> Option<std::process::Output> {
     let compiler =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("node_modules/typescript/bin/tsc");
     let required =
-        std::env::var_os("CI").is_some() || std::env::var_os("RUSTTS_REQUIRE_TSC").is_some();
+        std::env::var_os("CI").is_some() || std::env::var_os("MANIVELLE_REQUIRE_TSC").is_some();
     if !compiler.is_file() {
         assert!(!required, "TypeScript is required in CI: run npm ci first");
         eprintln!("TypeScript check skipped locally: run npm ci to enable it");
@@ -73,7 +73,7 @@ fn unique_path(prefix: &str) -> PathBuf {
         .expect("system time before epoch")
         .as_nanos();
     std::env::temp_dir().join(format!(
-        "rustts-{prefix}-{}-{timestamp}-{sequence}",
+        "manivelle-{prefix}-{}-{timestamp}-{sequence}",
         std::process::id()
     ))
 }

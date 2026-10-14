@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use rustts::{Engine, VmError, VmOptions};
+use manivelle::{Engine, VmError, VmOptions};
 
 #[test]
 fn deferred_call_waits_for_a_host_clock_then_returns_its_value() {

@@ -4,20 +4,20 @@ use std::collections::HashMap;
 
 use crate::compiler::CompiledModule;
 
-/// Start of every script module id: `rustts://graph/{graph id}/{module id}`.
-pub(crate) const RUNTIME_MODULE_PREFIX: &str = "rustts://graph/";
+/// Start of every script module id: `manivelle://graph/{graph id}/{module id}`.
+pub(crate) const RUNTIME_MODULE_PREFIX: &str = "manivelle://graph/";
 
 /// What a script imports to reach its own `ctx`, `console` and timers, and the host
 /// functions bound to it. In a context of its own it is one shared module reading the
 /// context's globals; in a context group each script gets an instance of its own.
-pub(crate) const ENV_SPECIFIER: &str = "rustts:env";
+pub(crate) const ENV_SPECIFIER: &str = "manivelle:env";
 
-/// Start of the id of a group script's environment module: `rustts:env/{graph id}`.
-pub(crate) const ENV_MODULE_PREFIX: &str = "rustts:env/";
+/// Start of the id of a group script's environment module: `manivelle:env/{graph id}`.
+pub(crate) const ENV_MODULE_PREFIX: &str = "manivelle:env/";
 
 /// Start of the id of a group script's instance of a host module:
-/// `rustts:host/{graph id}/{host module}`.
-const HOST_INSTANCE_PREFIX: &str = "rustts:host/";
+/// `manivelle:host/{graph id}/{host module}`.
+const HOST_INSTANCE_PREFIX: &str = "manivelle:host/";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeModuleGraph {

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rustts::{Engine, InterruptHandle, VmError, VmOptions};
+use manivelle::{Engine, InterruptHandle, VmError, VmOptions};
 
 const SCRIPT: &str = r#"
 export function spin(): void { while (true) {} }
@@ -82,7 +82,7 @@ fn a_timeout_is_not_reported_as_an_interrupt() {
 
 /// A script whose `tick` handler and timer count their runs, then never return.
 const RUNAWAY_LISTENER: &str = r#"
-import { ctx, setTimeout } from "rustts:env";
+import { ctx, setTimeout } from "manivelle:env";
 let ran = 0;
 export function count(): number { return ran; }
 ctx.on("tick", () => { ran += 1; while (true) {} });
@@ -196,7 +196,7 @@ fn an_exhausted_budget_stops_advance_timers_at_the_timer_that_used_it_up() {
 fn an_interrupted_hot_save_is_reported_as_an_interrupt() {
     let mut engine = engine();
     let spinning_save = r#"
-    import { ctx } from "rustts:env";
+    import { ctx } from "manivelle:env";
     ctx.hot.save(() => { while (true) {} });
     export function version(): number { return 1; }
     "#;
@@ -218,7 +218,7 @@ fn an_interrupted_hot_dispose_is_reported_as_an_interrupt() {
     engine
         .load_script(
             "hot",
-            r#"import { ctx } from "rustts:env"; ctx.hot.dispose(() => { while (true) {} }); export {};"#,
+            r#"import { ctx } from "manivelle:env"; ctx.hot.dispose(() => { while (true) {} }); export {};"#,
         )
         .expect("load");
 

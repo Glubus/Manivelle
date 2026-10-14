@@ -13,7 +13,7 @@ pub(super) const HOT_CONTEXT_TYPE: &str = include_str!("../../../assets/hot_cont
 /// `ctx.on` / `ctx.off` and the handler types, shared by the declarations and the SDK.
 pub(super) const EVENT_CONTEXT_TYPE: &str = include_str!("../../../assets/event_context.ts");
 
-/// The `rustts:env` module, whose `ctx` has the type `__CTX__`.
+/// The `manivelle:env` module, whose `ctx` has the type `__CTX__`.
 pub(super) const ENV_MODULE_TYPE: &str = include_str!("../../../assets/env_module.ts");
 
 pub(crate) fn render_typescript_declarations(descriptors: &[HostContractDescriptor]) -> String {

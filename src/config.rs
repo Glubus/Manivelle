@@ -46,7 +46,7 @@ impl VmUnknownFieldValidation {
 ///
 /// Every context has ECMAScript's core (`Object`, `Array`, `String`, `Number`, `Math`,
 /// `Symbol`, `BigInt`, `Reflect`, errors, ...), module support, `JSON`, `Map` and
-/// `Set`, and `Promise`: RustTS itself needs them. The others cost time and memory in
+/// `Set`, and `Promise`: Manivelle itself needs them. The others cost time and memory in
 /// every context, which adds up for a game with hundreds of scripts: about half of the
 /// time to create a context and a third of its memory. A script that uses a built-in
 /// that is off fails with a `ReferenceError` when it runs; there is no static check, so

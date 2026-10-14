@@ -18,7 +18,7 @@ const INTEGER_KEY_CAPACITY: usize = 40;
 /// `String` and the primitive integers, whose keys cross as their decimal text.
 ///
 /// This trait only names the key bound of the map codecs. It is sealed: it cannot be
-/// implemented outside RustTS, and its methods are implementation details.
+/// implemented outside Manivelle, and its methods are implementation details.
 pub trait MapKey: Sized + sealed::Sealed {
     /// Calls `write` with the key text.
     #[doc(hidden)]

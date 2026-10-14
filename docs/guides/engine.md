@@ -1,15 +1,15 @@
 # Run Scripts With `Engine`
 
-`Engine` is the RustTS runtime. It runs QuickJS on the thread that creates it:
+`Engine` is the Manivelle runtime. It runs QuickJS on the thread that creates it:
 calls between Rust and TypeScript are direct function calls with native value
 conversion, with no message to another thread, no generated source and no JSON
 text.
 
 It fits the way a game or an application already works: its main loop, simulation
-step or command handler calls into scripts when it needs them. RustTS spawns no
+step or command handler calls into scripts when it needs them. Manivelle spawns no
 threads and has no event loop; nothing runs unless the host calls `Engine`.
 
-[`examples/game_loop.rs`](https://github.com/Glubus/Rust-TS/blob/main/examples/game_loop.rs)
+[`examples/game_loop.rs`](https://github.com/Glubus/Manivelle/blob/main/examples/game_loop.rs)
 puts most of this page together in one frame loop: a [context group](#context-groups)
 of two scripts, [timers](#timers), [events](#events), [requests](#requests), an async
 host function resumed by [`pump`](#deferred-script-results), and a reload that
@@ -19,7 +19,7 @@ host function resumed by [`pump`](#deferred-script-results), and a reload that
 ## Load And Call
 
 ```rust
-use rustts::{Engine, VmOptions};
+use manivelle::{Engine, VmOptions};
 
 let mut engine = Engine::new(&VmOptions::default())?;
 engine
@@ -383,10 +383,10 @@ in memory. Set it to a directory to keep the transpiled JavaScript and its sourc
 map on disk and reuse them across reloads and runs:
 
 ```rust
-use rustts::{Engine, VmOptions};
+use manivelle::{Engine, VmOptions};
 
 let engine = Engine::new(&VmOptions {
-    cache_dir: Some("target/rustts-cache".into()),
+    cache_dir: Some("target/manivelle-cache".into()),
     ..VmOptions::default()
 })?;
 ```
@@ -435,7 +435,7 @@ optional ones a game's scripts do not use: `RegExp`, `Date`, `Proxy`, typed arra
 `WeakRef` and `FinalizationRegistry`, and `atob`, `btoa` and `performance`.
 
 ```rust
-use rustts::{ScriptBuiltins, VmOptions};
+use manivelle::{ScriptBuiltins, VmOptions};
 
 let options = VmOptions {
     // Scripts parse no text and keep no clock: they get the cheapest context.
@@ -479,11 +479,11 @@ shared context cannot hold one `ctx` or one `console` per script, so a grouped s
 imports them:
 
 ```ts
-import { ctx, console, setTimeout } from "rustts:env";
+import { ctx, console, setTimeout } from "manivelle:env";
 import { user } from "host-module"; // host functions come from host module imports
 ```
 
-`rustts:env` works in a script with a context of its own too, so one source runs both
+`manivelle:env` works in a script with a context of its own too, so one source runs both
 ways. A grouped script has none of `ctx`, `console`, the timers, `__host` or the
 namespaced host globals (`user.find(...)`) as globals, which also means the generated
 SDK file (which reads those globals) is not usable from a group, and a host function
@@ -549,7 +549,7 @@ dedicated thread and send it work over a channel:
 use std::sync::mpsc;
 use std::thread;
 
-use rustts::{Engine, VmError, VmOptions};
+use manivelle::{Engine, VmError, VmOptions};
 
 type Job = Box<dyn FnOnce(&mut Engine) + Send>;
 
@@ -577,7 +577,7 @@ QuickJS keeps about 250 internal assertions on, even in a release build. The
 `disable-assertions` feature builds it without them:
 
 ```toml
-rustts = { version = "0.4", features = ["disable-assertions"] }
+manivelle = { version = "0.1", features = ["disable-assertions"] }
 ```
 
 On a loaded development machine it made a call-heavy script (`fib(20)`) about 23 %

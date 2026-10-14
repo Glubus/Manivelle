@@ -1,4 +1,4 @@
-//! Derive macros for `rustts`.
+//! Derive macros for `manivelle`.
 
 mod attrs;
 mod check;
@@ -15,7 +15,7 @@ use syn::{Error, parse_macro_input};
 
 use expand::expand_ts_schema;
 
-/// Derives `rustts::TsSchema` plus the native `rustts::JsEncode` and `rustts::JsDecode`
+/// Derives `manivelle::TsSchema` plus the native `manivelle::JsEncode` and `manivelle::JsDecode`
 /// codecs.
 ///
 /// The schema and the codecs follow serde's wire format: a value crosses the
@@ -40,20 +40,20 @@ use expand::expand_ts_schema;
 /// `deserialize_with`, `from`, `try_from`, `into`, `remote`, `bound`, ...) are compile
 /// errors until the type or field opts into the `serde_json` reference codec.
 ///
-/// `rustts` attributes:
+/// `manivelle` attributes:
 ///
-/// - `#[rustts(name = "TypeName")]`: TypeScript declaration name.
-/// - `#[rustts(encode_only)]`, `#[rustts(decode_only)]`, `#[rustts(schema_only)]` on the
+/// - `#[manivelle(name = "TypeName")]`: TypeScript declaration name.
+/// - `#[manivelle(encode_only)]`, `#[manivelle(decode_only)]`, `#[manivelle(schema_only)]` on the
 ///   type: emit only `JsEncode`, only `JsDecode`, or no codec. A derive macro cannot see
 ///   which serde traits are derived, so both codecs are emitted by default.
-/// - `#[rustts(codec = "json")]` on the type: encode/decode through `serde_json`.
-/// - `#[rustts(codec = "json")]` on a field: only that field goes through `serde_json`
+/// - `#[manivelle(codec = "json")]` on the type: encode/decode through `serde_json`.
+/// - `#[manivelle(codec = "json")]` on a field: only that field goes through `serde_json`
 ///   (honoring its serde `with` functions).
-/// - `#[rustts(with = "module")]` on a field: native codec functions
+/// - `#[manivelle(with = "module")]` on a field: native codec functions
 ///   `module::encode_js(&value, ctx)` and `module::decode_js(ctx, value)`.
-/// - `#[rustts(type = "TsType")]` on a field: TypeScript type text used instead of the
+/// - `#[manivelle(type = "TsType")]` on a field: TypeScript type text used instead of the
 ///   field type's `TsSchema`, which is then not required.
-/// - `#[rustts(rename = "fieldName")]` and `#[rustts(optional)]`: field overrides for
+/// - `#[manivelle(rename = "fieldName")]` and `#[manivelle(optional)]`: field overrides for
 ///   `schema_only` types (elsewhere they would make the schema disagree with the codecs).
 ///
 /// # Panics
@@ -68,7 +68,7 @@ use expand::expand_ts_schema;
 ///   or unit: an enum, a newtype over a scalar, an integer-keyed map behind a type alias;
 /// - a merged field has the same name as another field of the object;
 /// - two flattened maps have different value types.
-#[proc_macro_derive(TsSchema, attributes(rustts, serde))]
+#[proc_macro_derive(TsSchema, attributes(manivelle, serde))]
 pub fn derive_ts_schema(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
     expand_ts_schema(&input)

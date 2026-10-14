@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use rustts::js::{Context, Ctx, Runtime, Value as JsValue};
-use rustts::{JsDecode, JsEncode, TsSchema, TsType};
+use manivelle::js::{Context, Ctx, Runtime, Value as JsValue};
+use manivelle::{JsDecode, JsEncode, TsSchema, TsType};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value, json};
@@ -321,7 +321,7 @@ fn a_flattened_proto_key_stays_an_own_property_both_ways() {
     };
     let own_key = with_js(|ctx| {
         let encoded = open.encode_js(ctx).expect("encode natively");
-        let check: rustts::js::Function<'_> = ctx
+        let check: manivelle::js::Function<'_> = ctx
             .eval(
                 "(o) => Object.getPrototypeOf(o) === Object.prototype \
                  && Object.prototype.hasOwnProperty.call(o, '__proto__') \
@@ -577,8 +577,8 @@ mod hex {
 
 /// Native codec mirroring `shout_serde`: upper-case on the wire.
 mod shout_js {
-    use rustts::js::{Ctx, Result, Value};
-    use rustts::{JsDecode, JsEncode};
+    use manivelle::js::{Ctx, Result, Value};
+    use manivelle::{JsDecode, JsEncode};
 
     pub fn encode_js<'js>(value: &str, ctx: &Ctx<'js>) -> Result<Value<'js>> {
         value.to_uppercase().encode_js(ctx)
@@ -603,20 +603,20 @@ mod shout_serde {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TsSchema)]
 struct Account {
-    #[rustts(codec = "json", type = "string")]
+    #[manivelle(codec = "json", type = "string")]
     external: ExternalId,
     #[serde(with = "hex")]
-    #[rustts(codec = "json", type = "string")]
+    #[manivelle(codec = "json", type = "string")]
     mask: u32,
     #[serde(with = "shout_serde")]
-    #[rustts(with = "shout_js")]
+    #[manivelle(with = "shout_js")]
     call_sign: String,
     balance: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TsSchema)]
 #[serde(into = "String", try_from = "String")]
-#[rustts(codec = "json")]
+#[manivelle(codec = "json")]
 struct Email(String);
 
 impl From<Email> for String {

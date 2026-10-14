@@ -12,7 +12,7 @@ use crate::model::{Body, Container, Shape};
 
 pub(crate) fn expand_schema_impl(container: &Container<'_>) -> TokenStream {
     let ident = container.ident;
-    let generics = bound_type_params(container.generics, &parse_quote!(::rustts::TsSchema));
+    let generics = bound_type_params(container.generics, &parse_quote!(::manivelle::TsSchema));
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let schema_name = container
         .attrs
@@ -24,16 +24,16 @@ pub(crate) fn expand_schema_impl(container: &Container<'_>) -> TokenStream {
 
     quote! {
         #[automatically_derived]
-        impl #impl_generics ::rustts::TsSchema for #ident #ty_generics #where_clause {
+        impl #impl_generics ::manivelle::TsSchema for #ident #ty_generics #where_clause {
             fn schema_name() -> &'static str {
                 #schema_name
             }
 
-            fn ts_type() -> ::rustts::TsType {
+            fn ts_type() -> ::manivelle::TsType {
                 #ts_type
             }
 
-            fn schema_dependencies() -> ::std::vec::Vec<::rustts::Schema> {
+            fn schema_dependencies() -> ::std::vec::Vec<::manivelle::Schema> {
                 #dependencies
             }
         }
@@ -42,7 +42,7 @@ pub(crate) fn expand_schema_impl(container: &Container<'_>) -> TokenStream {
 
 fn ts_type(container: &Container<'_>) -> TokenStream {
     if let Some(wire_type) = container.wire_type() {
-        return quote!(::rustts::__schema_type_ref::<#wire_type>());
+        return quote!(::manivelle::__schema_type_ref::<#wire_type>());
     }
     if let Some(field) = container.transparent_field() {
         return fields::type_ref(field);
@@ -92,5 +92,5 @@ fn described_shapes<'c>(container: &'c Container<'_>) -> Vec<(&'c Shape<'c>, boo
 }
 
 fn push_dependency(ty: &Type) -> TokenStream {
-    quote!(::rustts::__push_schema_dependency::<#ty>(&mut dependencies);)
+    quote!(::manivelle::__push_schema_dependency::<#ty>(&mut dependencies);)
 }

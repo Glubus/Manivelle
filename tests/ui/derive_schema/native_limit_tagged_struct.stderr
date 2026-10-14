@@ -1,4 +1,4 @@
-error: serde tag/untagged on a struct is not supported by the native codec; add `#[rustts(codec = "json")]` to the type
+error: serde tag/untagged on a struct is not supported by the native codec; add `#[manivelle(codec = "json")]` to the type
  --> tests/ui/derive_schema/native_limit_tagged_struct.rs:5:8
   |
 5 | struct Tagged {

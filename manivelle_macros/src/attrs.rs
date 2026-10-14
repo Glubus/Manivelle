@@ -1,9 +1,9 @@
-//! Parsing of `#[serde(...)]` and `#[rustts(...)]` attributes.
+//! Parsing of `#[serde(...)]` and `#[manivelle(...)]` attributes.
 //!
 //! Serde attributes are read so the schema and the native codec follow the wire format
 //! serde produces. Attributes only the serde_json reference codec can honor are kept as
 //! [`JsonOnly`] entries; `check` rejects them unless the type or field opts in with
-//! `#[rustts(codec = "json")]`.
+//! `#[manivelle(codec = "json")]`.
 
 use proc_macro2::Group;
 use syn::{
@@ -27,7 +27,7 @@ pub(crate) struct JsonOnly {
     pub(crate) directions: Directions,
 }
 
-/// A `#[rustts]` attribute that changes only the schema, with the serde attribute that
+/// A `#[manivelle]` attribute that changes only the schema, with the serde attribute that
 /// changes schema and codec together.
 pub(crate) struct SchemaOnly {
     pub(crate) path: Path,
@@ -39,8 +39,8 @@ pub(crate) struct SchemaOnly {
 pub(crate) struct ContainerAttrs {
     pub(crate) schema_name: Option<String>,
     pub(crate) json_codec: bool,
-    /// Codecs to emit: both by default, restricted by `#[rustts(encode_only)]`,
-    /// `#[rustts(decode_only)]` or `#[rustts(schema_only)]`.
+    /// Codecs to emit: both by default, restricted by `#[manivelle(encode_only)]`,
+    /// `#[manivelle(decode_only)]` or `#[manivelle(schema_only)]`.
     pub(crate) codecs: Directions,
     codecs_restricted: bool,
     pub(crate) rename_all: RenameRules,
@@ -74,12 +74,12 @@ impl ContainerAttrs {
             json_only: serde.json_only,
             ..Self::default()
         };
-        parse_rustts(attrs, |meta| container.apply_rustts(&meta))?;
+        parse_manivelle(attrs, |meta| container.apply_manivelle(&meta))?;
         container.check_tagging(attrs)?;
         Ok(container)
     }
 
-    fn apply_rustts(&mut self, meta: &ParseNestedMeta<'_>) -> Result<()> {
+    fn apply_manivelle(&mut self, meta: &ParseNestedMeta<'_>) -> Result<()> {
         if meta.path.is_ident("name") || meta.path.is_ident("rename") {
             self.schema_name = Some(string_value(meta)?);
         } else if meta.path.is_ident("codec") {
@@ -92,7 +92,7 @@ impl ContainerAttrs {
             }
             self.codecs = codecs;
         } else {
-            return Err(meta.error("unsupported rustts type attribute"));
+            return Err(meta.error("unsupported manivelle type attribute"));
         }
         Ok(())
     }
@@ -126,11 +126,11 @@ pub(crate) struct FieldAttrs {
     pub(crate) serialize_with: Option<ExprPath>,
     pub(crate) deserialize_with: Option<ExprPath>,
     pub(crate) json_only: Vec<JsonOnly>,
-    /// `#[rustts(codec = "json")]`: this field crosses through serde_json.
+    /// `#[manivelle(codec = "json")]`: this field crosses through serde_json.
     pub(crate) json_codec: bool,
-    /// `#[rustts(with = "path")]`: `path::encode_js` / `path::decode_js` codec.
+    /// `#[manivelle(with = "path")]`: `path::encode_js` / `path::decode_js` codec.
     pub(crate) with: Option<ExprPath>,
-    /// `#[rustts(type = "...")]`: TypeScript type text used instead of the field's schema.
+    /// `#[manivelle(type = "...")]`: TypeScript type text used instead of the field's schema.
     pub(crate) ts_type: Option<String>,
     pub(crate) schema_rename: Option<String>,
     pub(crate) schema_optional: bool,
@@ -153,11 +153,11 @@ impl FieldAttrs {
             json_only: serde.json_only,
             ..Self::default()
         };
-        parse_rustts(&field.attrs, |meta| attrs.apply_rustts(&meta))?;
+        parse_manivelle(&field.attrs, |meta| attrs.apply_manivelle(&meta))?;
         Ok(attrs)
     }
 
-    fn apply_rustts(&mut self, meta: &ParseNestedMeta<'_>) -> Result<()> {
+    fn apply_manivelle(&mut self, meta: &ParseNestedMeta<'_>) -> Result<()> {
         if meta.path.is_ident("rename") {
             self.schema_rename = Some(string_value(meta)?);
             self.schema_only.push(SchemaOnly {
@@ -177,7 +177,7 @@ impl FieldAttrs {
         } else if meta.path.is_ident("type") {
             self.ts_type = Some(string_value(meta)?);
         } else {
-            return Err(meta.error("unsupported rustts field attribute"));
+            return Err(meta.error("unsupported manivelle field attribute"));
         }
         Ok(())
     }
@@ -215,13 +215,13 @@ impl VariantAttrs {
             json_only,
             ..Self::default()
         };
-        parse_rustts(&variant.attrs, |meta| attrs.apply_rustts(&meta))?;
+        parse_manivelle(&variant.attrs, |meta| attrs.apply_manivelle(&meta))?;
         Ok(attrs)
     }
 
-    fn apply_rustts(&mut self, meta: &ParseNestedMeta<'_>) -> Result<()> {
+    fn apply_manivelle(&mut self, meta: &ParseNestedMeta<'_>) -> Result<()> {
         if !meta.path.is_ident("rename") {
-            return Err(meta.error("unsupported rustts enum variant attribute"));
+            return Err(meta.error("unsupported manivelle enum variant attribute"));
         }
         self.schema_rename = Some(string_value(meta)?);
         self.schema_only.push(SchemaOnly {
@@ -346,11 +346,14 @@ impl SerdeAttrs {
     }
 }
 
-fn parse_rustts(
+fn parse_manivelle(
     attrs: &[Attribute],
     mut apply: impl FnMut(ParseNestedMeta<'_>) -> Result<()>,
 ) -> Result<()> {
-    for attr in attrs.iter().filter(|attr| attr.path().is_ident("rustts")) {
+    for attr in attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("manivelle"))
+    {
         attr.parse_nested_meta(&mut apply)?;
     }
     Ok(())
@@ -376,7 +379,7 @@ fn parse_json_codec(meta: &ParseNestedMeta<'_>) -> Result<bool> {
     } else {
         Err(Error::new_spanned(
             codec,
-            "unsupported rustts codec, expected \"json\"",
+            "unsupported manivelle codec, expected \"json\"",
         ))
     }
 }

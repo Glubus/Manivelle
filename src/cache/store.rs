@@ -10,7 +10,7 @@ use crate::error::VmError;
 
 /// First line of an artifact, before the BLAKE3 hash of the rest. The rest is the
 /// source map `mappings` line, then the JavaScript.
-const ARTIFACT_HEADER: &str = "// rustts-cache-v3 ";
+const ARTIFACT_HEADER: &str = "// manivelle-cache-v3 ";
 
 #[derive(Debug, Clone)]
 pub(crate) struct ScriptCache {
@@ -149,7 +149,7 @@ mod tests {
         );
         for content in [
             "legacy",
-            "// rustts-cache-v3 invalid\npartial",
+            "// manivelle-cache-v3 invalid\npartial",
             legacy_v2.as_str(),
         ] {
             fs::write(cache.js_path("broken"), content).unwrap();

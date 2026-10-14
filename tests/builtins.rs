@@ -1,6 +1,6 @@
 //! `VmOptions::builtins`: which optional JavaScript built-ins a script context has.
 
-use rustts::{Engine, ScriptBuiltins, VmOptions};
+use manivelle::{Engine, ScriptBuiltins, VmOptions};
 
 /// The switch of one optional built-in.
 type Switch = fn(&mut ScriptBuiltins) -> &mut bool;
@@ -80,7 +80,7 @@ fn each_option_adds_exactly_its_own_globals() {
 }
 
 #[test]
-fn a_context_with_none_still_runs_what_rustts_itself_needs() {
+fn a_context_with_none_still_runs_what_manivelle_itself_needs() {
     let mut engine = engine(ScriptBuiltins::NONE);
     engine
         .load_script(

@@ -1,6 +1,6 @@
 #![cfg(feature = "derive")]
 
-use rustts::{
+use manivelle::{
     Engine, HostCallback, HostContext, HostContract, HostContractKind, HostFunction,
     HostFunctionSignature, HostMetadata, Schema, TsField, TsSchema, TsType, VmContractValidation,
     VmError, VmUnknownFieldValidation,
@@ -208,7 +208,7 @@ fn registry_generates_sdk_source_from_contracts() {
     assert!(sdk.contains("update(handler: HostEventHandler<\"score.update\">): void"));
     assert!(sdk.contains("export const score = {"));
     assert!(sdk.contains("onUpdate(handler: HostEventHandler<\"score.update\">): void"));
-    assert!(sdk.contains("export const rusttsSdk = {"));
+    assert!(sdk.contains("export const manivelleSdk = {"));
     assert!(sdk.contains("functions: {"));
     assert!(sdk.contains("call,"));
     assert!(sdk.contains("events,"));
@@ -260,7 +260,7 @@ fn host_context_v0_is_declarative_sdk_surface_only() {
     assert!(sdk.contains(
         "export const overlay = (globalThis as unknown as Record<string, unknown>)[\"overlay\"] as OverlayContext;"
     ));
-    assert!(sdk.contains("export const rusttsSdk = {"));
+    assert!(sdk.contains("export const manivelleSdk = {"));
     assert!(sdk.contains("contexts: {"));
     assert!(sdk.contains("overlay,"));
     assert!(!sdk.contains("__hostCall"));
@@ -316,18 +316,18 @@ fn registry_writes_sdk_files() {
 
     let types = std::fs::read_to_string(&written.types_path).expect("read types");
     let sdk = std::fs::read_to_string(&written.sdk_path).expect("read sdk");
-    assert_eq!(written.types_path, output_dir.join("rustts.d.ts"));
-    assert_eq!(written.sdk_path, output_dir.join("rustts.sdk.ts"));
+    assert_eq!(written.types_path, output_dir.join("manivelle.d.ts"));
+    assert_eq!(written.sdk_path, output_dir.join("manivelle.sdk.ts"));
     assert!(types.contains("declare namespace user"));
     assert!(sdk.contains("export const user = {"));
 }
 
 #[test]
-fn rustts_sdk_binary_writes_files_from_descriptor_json() {
+fn manivelle_sdk_binary_writes_files_from_descriptor_json() {
     let cache_dir = TestCacheDir::new("host-registry-sdk-bin");
     let descriptors_path = cache_dir.path().join("descriptors.json");
     let output_dir = cache_dir.path().join("out");
-    let registry = rustts::InMemoryHostContractRegistry::new();
+    let registry = manivelle::InMemoryHostContractRegistry::new();
     registry
         .callback::<ScoreUpdate>()
         .and_then(|registry| registry.function::<FindUser>())
@@ -339,20 +339,20 @@ fn rustts_sdk_binary_writes_files_from_descriptor_json() {
     )
     .expect("write descriptors");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_rustts-sdk"))
+    let output = Command::new(env!("CARGO_BIN_EXE_manivelle-sdk"))
         .arg(&descriptors_path)
         .arg(&output_dir)
         .output()
-        .expect("run rustts-sdk");
+        .expect("run manivelle-sdk");
 
     assert!(
         output.status.success(),
-        "rustts-sdk failed\nstdout:\n{}\nstderr:\n{}",
+        "manivelle-sdk failed\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output_dir.join("rustts.d.ts").exists());
-    assert!(output_dir.join("rustts.sdk.ts").exists());
+    assert!(output_dir.join("manivelle.d.ts").exists());
+    assert!(output_dir.join("manivelle.sdk.ts").exists());
 }
 
 #[test]
@@ -393,9 +393,9 @@ overlay.visible.valueOf();\n\
 events.score.update(event => {{\n\
   event.combo.toFixed();\n\
 }});\n\
-const foundFromAggregate = rusttsSdk.functions.user.find(2);\n\
+const foundFromAggregate = manivelleSdk.functions.user.find(2);\n\
 foundFromAggregate.toUpperCase();\n\
-const foundFromAggregateCall = rusttsSdk.call(\"user.find\", 4);\n\
+const foundFromAggregateCall = manivelleSdk.call(\"user.find\", 4);\n\
 foundFromAggregateCall.toUpperCase();\n\
 const scorePayload = models.ScoreUpdatePayload.create({{ combo: 8 }});\n\
 scorePayload.combo.toFixed();\n\
@@ -410,18 +410,18 @@ scorePayloadModel.value.combo.toFixed();\n\
 scorePayloadModel.toJSON().combo.toFixed();\n\
 const directScorePayloadModel = new ScoreUpdatePayloadModel({{ combo: 11 }});\n\
 directScorePayloadModel.valueOf().combo.toFixed();\n\
-const scorePayloadFromAggregate = rusttsSdk.models.ScoreUpdatePayload.create({{ combo: 9 }});\n\
+const scorePayloadFromAggregate = manivelleSdk.models.ScoreUpdatePayload.create({{ combo: 9 }});\n\
 scorePayloadFromAggregate.combo.toFixed();\n\
-const scorePayloadModelFromAggregate = rusttsSdk.models.ScoreUpdatePayload.wrap({{ combo: 12 }});\n\
+const scorePayloadModelFromAggregate = manivelleSdk.models.ScoreUpdatePayload.wrap({{ combo: 12 }});\n\
 scorePayloadModelFromAggregate.toJSON().combo.toFixed();\n\
-rusttsSdk.contexts.overlay.visible.valueOf();\n\
-rusttsSdk.events.score.update(event => {{\n\
+manivelleSdk.contexts.overlay.visible.valueOf();\n\
+manivelleSdk.events.score.update(event => {{\n\
   event.combo.toFixed();\n\
 }});\n\
 score.onUpdate(event => {{\n\
   event.combo.toFixed();\n\
 }});\n\
-rusttsSdk.ctx.on(\"score.update\", event => {{\n\
+manivelleSdk.ctx.on(\"score.update\", event => {{\n\
   event.combo.toFixed();\n\
 }});\n"
     )

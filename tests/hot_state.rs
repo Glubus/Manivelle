@@ -6,8 +6,8 @@ use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rustts::js::{Ctx, Object, Value as JsValue};
-use rustts::{
+use manivelle::js::{Ctx, Object, Value as JsValue};
+use manivelle::{
     Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
     JsDecode, JsEncode, TsField, TsSchema, TsType, VmError, VmOptions,
 };
@@ -69,7 +69,7 @@ impl TsSchema for TickPayload {
 }
 
 impl JsEncode for TickPayload {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> rustts::js::Result<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> manivelle::js::Result<JsValue<'js>> {
         let payload = Object::new(ctx.clone())?;
         payload.set("frame", self.frame)?;
         Ok(payload.into_value())
@@ -389,7 +389,7 @@ fn generated_sdk_types_ctx_hot_next_to_ctx_on() {
         .expect("register callback");
     let sdk = engine.registry().sdk().expect("render SDK");
     let usage = format!(
-        "{sdk}\n{HOT_USAGE}\nctx.on(\"game.tick\", event => {{ event.frame.toFixed(); }});\nrusttsSdk.ctx.hot.dispose(() => {{}});\n"
+        "{sdk}\n{HOT_USAGE}\nctx.on(\"game.tick\", event => {{ event.frame.toFixed(); }});\nmanivelleSdk.ctx.hot.dispose(() => {{}});\n"
     );
 
     assert_typechecks("hot-sdk", &usage);

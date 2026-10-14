@@ -23,7 +23,7 @@ Bad examples:
 Use `load_script` when you already have one TypeScript source string.
 
 ```rust
-use rustts::{Engine, VmOptions};
+use manivelle::{Engine, VmOptions};
 use serde_json::{Value, json};
 
 let mut engine = Engine::new(&VmOptions::default())?;

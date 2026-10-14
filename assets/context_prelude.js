@@ -9,7 +9,7 @@
 // (the host sink), `now` and `schedule` (the engine clock and the script's next due
 // time) and, on a reload, `hotData`, the previous version's saved state.
 // `installGlobals(env)` also exposes them as globals, for a script in a context of its
-// own; a script in a group imports them from `rustts:env` instead.
+// own; a script in a group imports them from `manivelle:env` instead.
 
 export function makeEnv(hooks) {
   // Hot reload: `ctx.hot.data` is what the previous version's `save` returned. The
@@ -309,8 +309,8 @@ export function installGlobals(env) {
   globalThis.setInterval = env.setInterval;
   globalThis.clearTimeout = env.clearTimeout;
   globalThis.clearInterval = env.clearInterval;
-  globalThis.__rustts_on = env.on;
-  globalThis.__rustts_native = env.native;
+  globalThis.__manivelle_on = env.on;
+  globalThis.__manivelle_native = env.native;
   const native = env.native;
 
   const hostFunction = (name) => {

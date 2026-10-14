@@ -1,7 +1,7 @@
 //! Scripts share nothing but the host: one script's changes to its built-ins must not
 //! show up in another's, host functions included.
 
-use rustts::{
+use manivelle::{
     Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature, VmError, VmOptions,
 };
 

@@ -1,9 +1,8 @@
 //! Per-field codec selection and default values.
 //!
 //! A field crosses natively through `JsEncode`/`JsDecode`, through serde_json with
-//! `#[rustts(codec = "json")]` (honoring serde `with` functions), or through a custom
-//! native module with `#[rustts(with = "path")]`.
-
+/// `#[manivelle(codec = "json")]` (honoring serde `with` functions), or through a custom
+/// native module with `#[manivelle(with = "path")]`.
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
@@ -19,13 +18,13 @@ pub(super) fn encoder(field: &Field<'_>) -> TokenStream {
         return quote!(|__field, __ctx| #module::encode_js(__field, __ctx));
     }
     if !field.attrs.json_codec {
-        return quote_spanned!(ty.span()=> <#ty as ::rustts::JsEncode>::encode_js);
+        return quote_spanned!(ty.span()=> <#ty as ::manivelle::JsEncode>::encode_js);
     }
     match &field.attrs.serialize_with {
         Some(serialize) => quote! {
-            |__field, __ctx| ::rustts::__derive::json_encode_with(__field, __ctx, #serialize)
+            |__field, __ctx| ::manivelle::__derive::json_encode_with(__field, __ctx, #serialize)
         },
-        None => quote_spanned!(ty.span()=> ::rustts::__derive::json_encode::<#ty>),
+        None => quote_spanned!(ty.span()=> ::manivelle::__derive::json_encode::<#ty>),
     }
 }
 
@@ -36,13 +35,13 @@ pub(super) fn decoder(field: &Field<'_>) -> TokenStream {
         return quote!(|__ctx, __field| #module::decode_js(__ctx, __field));
     }
     if !field.attrs.json_codec {
-        return quote_spanned!(ty.span()=> <#ty as ::rustts::JsDecode>::decode_js);
+        return quote_spanned!(ty.span()=> <#ty as ::manivelle::JsDecode>::decode_js);
     }
     match &field.attrs.deserialize_with {
         Some(deserialize) => quote! {
-            |__ctx, __field| ::rustts::__derive::json_decode_with(__ctx, __field, #deserialize)
+            |__ctx, __field| ::manivelle::__derive::json_decode_with(__ctx, __field, #deserialize)
         },
-        None => quote_spanned!(ty.span()=> ::rustts::__derive::json_decode::<#ty>),
+        None => quote_spanned!(ty.span()=> ::manivelle::__derive::json_decode::<#ty>),
     }
 }
 

@@ -45,7 +45,7 @@ fn enum_of(tag: Option<&str>, variants: impl Iterator<Item = TokenStream>) -> To
         None => quote!(::core::option::Option::None),
     };
     quote! {
-        ::rustts::TsType::Enum {
+        ::manivelle::TsType::Enum {
             tag: #tag,
             variants: ::std::vec![#(#variants),*],
         }
@@ -53,7 +53,7 @@ fn enum_of(tag: Option<&str>, variants: impl Iterator<Item = TokenStream>) -> To
 }
 
 fn union(types: impl Iterator<Item = TokenStream>) -> TokenStream {
-    quote!(::rustts::TsType::Union(::std::vec![#(#types),*]))
+    quote!(::manivelle::TsType::Union(::std::vec![#(#types),*]))
 }
 
 fn variant_key(container: &Container<'_>, variant: &Variant<'_>) -> String {
@@ -74,12 +74,12 @@ struct Described<'c> {
 impl Described<'_> {
     fn unit(&self) -> TokenStream {
         let key = &self.key;
-        quote!(::rustts::TsEnumVariant::unit(#key))
+        quote!(::manivelle::TsEnumVariant::unit(#key))
     }
 
     fn literal(&self) -> TokenStream {
         let key = &self.key;
-        quote!(::rustts::TsType::Literal(::rustts::TsLiteral::String(::std::string::String::from(#key))))
+        quote!(::manivelle::TsType::Literal(::manivelle::TsLiteral::String(::std::string::String::from(#key))))
     }
 
     /// Payload as it appears on its own: `null`, the inner type, a tuple or an object.
@@ -94,16 +94,16 @@ impl Described<'_> {
         }
         let key = &self.key;
         let payload = self.payload_type();
-        quote!(::rustts::TsType::Object(
-            ::std::vec![::rustts::TsField::required(#key, #payload)]
+        quote!(::manivelle::TsType::Object(
+            ::std::vec![::manivelle::TsField::required(#key, #payload)]
         ))
     }
 
     /// `{ tag: "Name" }`, for tagged enums made only of unit variants.
     fn tag_object(&self, tag: &str) -> TokenStream {
         let literal = self.literal();
-        quote!(::rustts::TsType::Object(
-            ::std::vec![::rustts::TsField::required(#tag, #literal)]
+        quote!(::manivelle::TsType::Object(
+            ::std::vec![::manivelle::TsField::required(#tag, #literal)]
         ))
     }
 
@@ -131,13 +131,13 @@ impl Described<'_> {
             Style::Unit => return self.unit(),
             Style::Newtype if shape.fields[0].option_inner().is_some() => {
                 let ty = type_ref(&shape.fields[0]);
-                quote!(::rustts::TsField::optional(#content, #ty))
+                quote!(::manivelle::TsField::optional(#content, #ty))
             }
             _ => {
                 let payload = self.payload_type();
-                quote!(::rustts::TsField::required(#content, #payload))
+                quote!(::manivelle::TsField::required(#content, #payload))
             }
         };
-        quote!(::rustts::TsEnumVariant::payload(#key, ::std::vec![#content_field]))
+        quote!(::manivelle::TsEnumVariant::payload(#key, ::std::vec![#content_field]))
     }
 }

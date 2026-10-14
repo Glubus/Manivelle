@@ -1,4 +1,4 @@
-use rustts::{Engine, VmOptions};
+use manivelle::{Engine, VmOptions};
 use serde_json::{Value, json};
 
 const DEMO_SCRIPT: &str = include_str!("../../assets/demo_math.ts");

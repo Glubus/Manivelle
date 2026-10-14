@@ -13,7 +13,7 @@ for large payloads. `NativeBytes` crosses as a `Uint8Array` in both directions:
 
 ```rust
 use serde::Deserialize;
-use rustts::{
+use manivelle::{
     HostContract, HostContractKind, HostFunction, HostFunctionSignature, NativeBytes,
     TsSchema, VmError,
 };

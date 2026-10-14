@@ -1,10 +1,10 @@
 [package]
-name = "rustts_macros"
-version = "0.4.0"
+name = "manivelle_macros"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.96"
-description = "Derive macros for RustTS TypeScript schemas"
-repository = "https://github.com/Glubus/Rust-TS"
+description = "Derive macros for Manivelle TypeScript schemas"
+repository = "https://github.com/Glubus/Manivelle"
 license = "MIT"
 
 [lib]

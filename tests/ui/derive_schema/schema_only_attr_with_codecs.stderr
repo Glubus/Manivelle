@@ -1,5 +1,5 @@
-error: `#[rustts(rename)]` changes only the TypeScript schema, so the codec would disagree; use `#[serde(rename = "...")]`, or mark the type `#[rustts(schema_only)]`
- --> tests/ui/derive_schema/schema_only_attr_with_codecs.rs:5:14
+error: `#[manivelle(rename)]` changes only the TypeScript schema, so the codec would disagree; use `#[serde(rename = "...")]`, or mark the type `#[manivelle(schema_only)]`
+ --> tests/ui/derive_schema/schema_only_attr_with_codecs.rs:5:17
   |
-5 |     #[rustts(rename = "invoiceId")]
-  |              ^^^^^^
+5 |     #[manivelle(rename = "invoiceId")]
+  |                 ^^^^^^

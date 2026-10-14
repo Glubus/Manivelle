@@ -419,7 +419,10 @@ fn render_sdk_aggregate(
         ));
     }
 
-    format!("export const rusttsSdk = {{\n{}\n}};", entries.join("\n"))
+    format!(
+        "export const manivelleSdk = {{\n{}\n}};",
+        entries.join("\n")
+    )
 }
 
 fn render_model_helpers(models: &BTreeMap<String, TsType>) -> Option<String> {

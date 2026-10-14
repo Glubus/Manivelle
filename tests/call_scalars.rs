@@ -1,7 +1,7 @@
 //! Calling exports with number and boolean arguments and results: what crosses, exactly,
 //! and what fails with which error.
 
-use rustts::{Engine, VmError, VmOptions};
+use manivelle::{Engine, VmError, VmOptions};
 
 fn engine() -> Engine {
     let mut engine = Engine::new(&VmOptions::default()).expect("create engine");

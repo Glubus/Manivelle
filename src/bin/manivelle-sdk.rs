@@ -1,11 +1,11 @@
-//! `rustts-sdk`: writes the TypeScript declarations and SDK for host contract descriptors.
+//! `manivelle-sdk`: writes the TypeScript declarations and SDK for host contract descriptors.
 
 use std::env;
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use rustts::{HostContractDescriptor, SdkFileNames, write_host_sdk_files_with_names};
+use manivelle::{HostContractDescriptor, SdkFileNames, write_host_sdk_files_with_names};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -72,5 +72,5 @@ fn required_arg(value: Option<String>, message: &str) -> Result<String, Box<dyn 
 }
 
 fn usage() -> &'static str {
-    "usage: rustts-sdk <descriptors.json> <output-dir> [--types rustts.d.ts] [--sdk rustts.sdk.ts]"
+    "usage: manivelle-sdk <descriptors.json> <output-dir> [--types manivelle.d.ts] [--sdk manivelle.sdk.ts]"
 }

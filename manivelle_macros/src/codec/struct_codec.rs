@@ -56,5 +56,5 @@ fn decode_transparent(shape: &Shape<'_>, forwarded: &Field<'_>) -> TokenStream {
             default_value(field, false)
         }
     });
-    quote!(::rustts::js::Result::Ok(Self { #(#members: #values),* }))
+    quote!(::manivelle::js::Result::Ok(Self { #(#members: #values),* }))
 }

@@ -1,13 +1,12 @@
-# RustTS
+# Manivelle
 
 Embeddable TypeScript scripting for Rust applications and games.
 
-RustTS is licensed under MIT. Version 0.4 adds context groups, state-preserving hot
-reload, async host functions, requests, timers and `console`; it changes how host
-contracts are declared. See [the changelog](CHANGELOG.md) and
-[Migrate From 0.3 To 0.4](docs/guides/migrating-0.3-to-0.4.md).
+Manivelle is licensed under MIT. It is the successor of `rustts`, which is
+deprecated: see [Migrate From rustts](docs/guides/migrating-from-rustts.md) and
+[the changelog](CHANGELOG.md).
 
-`RustTS` lets a Rust host run TypeScript scripts on its own thread through
+`Manivelle` lets a Rust host run TypeScript scripts on its own thread through
 `Engine`, expose typed Rust host functions and callbacks to them, and generate
 the scripts' TypeScript declarations and SDK from those Rust contracts. It spawns
 no threads and has no event loop: scripts run when the host calls them. It is a
@@ -100,7 +99,7 @@ Useful starting points:
 - [Load Scripts And Projects](docs/guides/load-scripts-and-projects.md)
 - [Use Native Bytes](docs/guides/native-bytes.md)
 - [Runtime Guarantees](docs/guides/runtime-guarantees.md)
-- [Migrate From 0.3 To 0.4](docs/guides/migrating-0.3-to-0.4.md)
+- [Migrate From rustts](docs/guides/migrating-from-rustts.md)
 
 [`examples/game_loop.rs`](examples/game_loop.rs) runs a frame loop over a context
 group with timers, events, requests, an async host function and a hot reload that
@@ -173,7 +172,7 @@ Tests run without `disable-assertions`, so QuickJS assertions stay on; the
 `--all-features` check only proves that feature builds.
 
 Install the pinned SDK type checker with `npm ci` before running the tests.
-CI requires it; locally, set `RUSTTS_REQUIRE_TSC=1` to enforce the same rule.
+CI requires it; locally, set `MANIVELLE_REQUIRE_TSC=1` to enforce the same rule.
 
 Execution budget, reload and cache guarantees are documented in
 [Runtime Guarantees](docs/guides/runtime-guarantees.md).

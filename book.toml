@@ -1,7 +1,7 @@
 [book]
-title = "RustTS"
+title = "Manivelle"
 description = "Embed TypeScript scripting into Rust applications with generated host contracts."
-authors = ["RustTS contributors"]
+authors = ["Manivelle contributors"]
 language = "en"
 src = "docs"
 
@@ -10,5 +10,5 @@ build-dir = "book"
 create-missing = false
 
 [output.html]
-git-repository-url = "https://github.com/Glubus/Rust-TS"
+git-repository-url = "https://github.com/Glubus/Manivelle"
 edit-url-template = ""

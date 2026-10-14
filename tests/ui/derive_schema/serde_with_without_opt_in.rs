@@ -1,4 +1,4 @@
-use rustts::TsSchema;
+use manivelle::TsSchema;
 use serde::{Serialize, Serializer};
 
 fn as_text<S: Serializer>(value: &u32, serializer: S) -> Result<S::Ok, S::Error> {
@@ -6,7 +6,7 @@ fn as_text<S: Serializer>(value: &u32, serializer: S) -> Result<S::Ok, S::Error>
 }
 
 #[derive(Serialize, TsSchema)]
-#[rustts(encode_only)]
+#[manivelle(encode_only)]
 struct Counter {
     #[serde(serialize_with = "as_text")]
     value: u32,

@@ -1,6 +1,6 @@
-# RustTS
+# Manivelle
 
-`RustTS` is an embeddable TypeScript scripting layer for Rust applications and
+`Manivelle` is an embeddable TypeScript scripting layer for Rust applications and
 games. The host exposes typed Rust functions and events to scripts, runs the
 scripts on its own thread through `Engine`, and generates the scripts' TypeScript
 declarations and SDK from the Rust contracts.
@@ -39,7 +39,7 @@ export function lookup() {
 
 ## What It Is Not
 
-RustTS is not a server runtime and not a Node or Deno replacement:
+Manivelle is not a server runtime and not a Node or Deno replacement:
 
 - it starts no threads and has no event loop, network or filesystem API;
   scripts run only when the host calls them, and reach the outside world only

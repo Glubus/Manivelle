@@ -1,4 +1,4 @@
-error: `#[serde(into)]` needs the serde_json reference codec: add `#[rustts(codec = "json")]` to the type
+error: `#[serde(into)]` needs the serde_json reference codec: add `#[manivelle(codec = "json")]` to the type
  --> tests/ui/derive_schema/serde_into_without_opt_in.rs:5:9
   |
 5 | #[serde(into = "String")]

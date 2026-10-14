@@ -2,7 +2,7 @@
 
 mod support;
 
-use rustts::{
+use manivelle::{
     Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
     TsSchema, VmError, VmOptions,
 };
@@ -36,7 +36,7 @@ user.onFound(event => {
 });
 
 export function lookup(): string {
-  const result = rusttsSdk.functions.user.find({ userId: 7, includeRoles: true });
+  const result = manivelleSdk.functions.user.find({ userId: 7, includeRoles: true });
   return `${result.displayName}:${result.roles.length}:${result.active}`;
 }
 
@@ -231,8 +231,8 @@ events.user.found(event => {{\n\
 user.onFound(event => {{\n\
   event.roles.map(role => role.toUpperCase());\n\
 }});\n\
-rusttsSdk.functions.user.find(input).active.valueOf();\n\
-rusttsSdk.models.DogfoodUserFoundPayload.wrap({{ userId: 7, displayName: \"user-7\", roles: [\"admin\"] }}).toJSON().roles.length.toFixed();\n"
+manivelleSdk.functions.user.find(input).active.valueOf();\n\
+manivelleSdk.models.DogfoodUserFoundPayload.wrap({{ userId: 7, displayName: \"user-7\", roles: [\"admin\"] }}).toJSON().roles.length.toFixed();\n"
     )
 }
 

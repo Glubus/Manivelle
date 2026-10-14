@@ -8,7 +8,7 @@ use std::fs;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use rustts::{
+use manivelle::{
     Engine, HostContract, HostContractAbi, HostContractKind, HostFunctionSignature, HostResolver,
     InMemoryHostContractRegistry, VmContractValidation, VmError, VmOptions,
 };

@@ -1,4 +1,4 @@
-// Installed on globalThis by the RustTS engine before any script runs.
+// Installed on globalThis by the Manivelle engine before any script runs.
 declare const __host: {
   callValue(name: string, input: unknown): unknown;
 };

@@ -4,9 +4,10 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use rquickjs::{CatchResultExt, Ctx, Function, Persistent};
+use rquickjs::{Ctx, Function, qjs};
 
-use super::errors::{caught_js_error, js_error};
+use super::errors::{js_error, pending_exception};
+use super::retained::Retained;
 use crate::error::VmError;
 
 /// Engine time in milliseconds, advanced only by
@@ -101,15 +102,33 @@ pub(super) fn timer_hooks<'js>(
 }
 
 /// Fires a script's timers due at `now`, through the `run` function its prelude built.
-pub(super) fn run_due_timers<'js>(
-    ctx: &Ctx<'js>,
-    run: &Persistent<Function<'static>>,
-    now: f64,
-) -> Result<(), VmError> {
-    run.clone()
-        .restore(ctx)
-        .map_err(js_error)?
-        .call::<_, ()>((now,))
-        .catch(ctx)
-        .map_err(caught_js_error)
+///
+/// The function is only borrowed for the call, as a handler is in
+/// [`deliver`](super::events::deliver): `Function::call` would take and release several
+/// references to the context and the value.
+pub(super) fn run_due_timers(ctx: &Ctx<'_>, run: &Retained, now: f64) -> Result<(), VmError> {
+    // SAFETY: `run` is a live function of this runtime and `arguments` holds a number,
+    // which owns no reference: `JS_Call` borrows both, and `this` is `undefined`.
+    let returned = unsafe {
+        let mut arguments = [qjs::JS_NewFloat64(now)];
+        qjs::JS_Call(
+            ctx.as_raw().as_ptr(),
+            run.raw(),
+            qjs::JS_UNDEFINED,
+            1,
+            arguments.as_mut_ptr(),
+        )
+    };
+    // SAFETY: `returned` is the value `JS_Call` just gave back.
+    if unsafe { qjs::JS_IsException(returned) } {
+        return Err(pending_exception(ctx));
+    }
+    // SAFETY: `returned` is an owned value of `ctx` that nothing else releases;
+    // `undefined`, what the prelude's function returns, holds no reference.
+    unsafe {
+        if !qjs::JS_IsUndefined(returned) {
+            qjs::JS_FreeValue(ctx.as_raw().as_ptr(), returned);
+        }
+    }
+    Ok(())
 }

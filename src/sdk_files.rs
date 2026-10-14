@@ -21,8 +21,8 @@ pub struct SdkFileNames {
 impl Default for SdkFileNames {
     fn default() -> Self {
         Self {
-            types: String::from("rustts.d.ts"),
-            sdk: String::from("rustts.sdk.ts"),
+            types: String::from("manivelle.d.ts"),
+            sdk: String::from("manivelle.sdk.ts"),
         }
     }
 }

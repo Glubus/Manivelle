@@ -3,7 +3,7 @@
  * context group has no such globals, since its context is shared; a script in a context
  * of its own can use either.
  */
-declare module "rustts:env" {
+declare module "manivelle:env" {
   export const ctx: __CTX__;
   export const console: {
     debug(...data: unknown[]): void;

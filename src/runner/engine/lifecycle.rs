@@ -32,9 +32,9 @@ use super::{
 /// globals, as globals. A module, so that its compiled form can be kept and loaded into
 /// every context.
 const CONTEXT_PRELUDE: &str = include_str!("../../../assets/context_prelude.js");
-const PRELUDE_MODULE: &str = "rustts:prelude";
+const PRELUDE_MODULE: &str = "manivelle:prelude";
 
-/// What `import ... from "rustts:env"` reads in a context of its own: the globals the
+/// What `import ... from "manivelle:env"` reads in a context of its own: the globals the
 /// prelude exposed. A script in a group gets its own environment module instead.
 const LEGACY_ENV_MODULE: &str = r#"
 export const ctx = globalThis.ctx;
@@ -74,7 +74,7 @@ impl Engine {
     /// from a few hundred scripts on, faster to deliver events to. Each keeps its own
     /// events, timers, `console`, host-function identity ([`Caller`](crate::Caller)),
     /// `ctx.hot` state and lifecycle, and reaches them with
-    /// `import { ctx, console, setTimeout } from "rustts:env"`: a shared context has no
+    /// `import { ctx, console, setTimeout } from "manivelle:env"`: a shared context has no
     /// per-script globals, so a script of a group has none of `ctx`, `console`, the timers
     /// or the namespaced host globals as globals, and reaches host functions through
     /// host module imports.
@@ -253,6 +253,7 @@ impl Engine {
             .scripts
             .shift_remove(id)
             .ok_or_else(|| script_not_found(id))?;
+        self.event_index.mark_stale();
         self.retire(script)?.map_err(|error| {
             hot_hook_error(
                 error,
@@ -363,7 +364,7 @@ impl Engine {
         if group.is_some() {
             self.module_store.mark_grouped(graph.graph_id)?;
         }
-        let signals = ScriptSignals::default();
+        let signals = ScriptSignals::new(&self.event_index);
         let host_promises = HostPromises::with_wake(Arc::clone(&self.host_wake));
         let mounted = target.context.with(|ctx| {
             let (env, hooks) = self.build_env(
@@ -555,7 +556,11 @@ impl Engine {
         let script_hooks = ScriptHooks {
             hot_save: hook("hotSave")?,
             hot_dispose: hook("hotDispose")?,
-            timers_run: hook("timersRun")?,
+            timers_run: Retained::new(
+                env.get::<_, Function<'js>>("timersRun")
+                    .map_err(js_error)?
+                    .as_value(),
+            ),
         };
         Ok((env, script_hooks))
     }
@@ -563,7 +568,9 @@ impl Engine {
     /// Swaps `script` in, then retires the version it replaces, whose failed `dispose`
     /// does not undo the swap.
     fn replace_script(&mut self, id: ScriptId, script: EngineScript) -> Result<Disposed, VmError> {
-        let Some(previous) = self.scripts.insert(id.clone(), script) else {
+        let previous = self.scripts.insert(id.clone(), script);
+        self.event_index.mark_stale();
+        let Some(previous) = previous else {
             return Ok(Ok(()));
         };
         Ok(self.retire(previous)?.map_err(|error| {
@@ -670,7 +677,7 @@ fn hot_hook_error(error: VmError, outcome: &str) -> VmError {
     }
 }
 
-/// A context with the core, the built-ins RustTS needs and the optional ones `builtins`
+/// A context with the core, the built-ins Manivelle needs and the optional ones `builtins`
 /// asks for. All of them is `Context::full`; fewer adds the same intrinsics one by one,
 /// in the order QuickJS's `JS_NewContext` does.
 fn new_context(runtime: &Runtime, builtins: ScriptBuiltins) -> Result<Context, VmError> {

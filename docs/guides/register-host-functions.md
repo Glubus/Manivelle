@@ -14,18 +14,18 @@ This guide shows the normal flow:
 
 ```toml
 [dependencies]
-rustts = { version = "0.4", features = ["derive"] }
+manivelle = { version = "0.1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
 ## Create The Engine
 
 ```rust
-use rustts::{Engine, VmError, VmOptions};
+use manivelle::{Engine, VmError, VmOptions};
 
 fn create_engine() -> Result<Engine, VmError> {
     Engine::new(&VmOptions {
-        cache_dir: Some("target/rustts-cache".into()),
+        cache_dir: Some("target/manivelle-cache".into()),
         ..VmOptions::default()
     })
 }
@@ -42,7 +42,7 @@ the generated TypeScript namespace. For example, `user.find` becomes
 
 ```rust
 use serde::{Deserialize, Serialize};
-use rustts::{
+use manivelle::{
     HostContract, HostContractKind, HostFunction, HostFunctionSignature, TsSchema, VmError,
 };
 
@@ -128,7 +128,7 @@ arrives:
 ```rust
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use rustts::HostResolver;
+use manivelle::HostResolver;
 
 let pending: Arc<Mutex<VecDeque<HostResolver<u32>>>> = Arc::new(Mutex::new(VecDeque::new()));
 let next = Arc::clone(&pending);
@@ -188,7 +188,7 @@ the ergonomic alias `user.onFound(...)`.
 
 ```rust
 use serde::{Deserialize, Serialize};
-use rustts::{HostCallback, HostContract, HostContractKind, TsSchema};
+use manivelle::{HostCallback, HostContract, HostContractKind, TsSchema};
 
 #[derive(Deserialize, Serialize, TsSchema)]
 #[serde(rename_all = "camelCase")]
@@ -222,7 +222,7 @@ handler returned. Declare the callback like `UserFound`, here `MenuLabel` named
 types the handlers' return value:
 
 ```rust
-use rustts::HostRequest;
+use manivelle::HostRequest;
 
 impl HostRequest for MenuLabel {
     type Reply = String;
@@ -265,7 +265,7 @@ as an exception the script can catch. To return a Promise instead, use
 ## Generate The SDK Files
 
 ```rust
-use rustts::SdkFileNames;
+use manivelle::SdkFileNames;
 
 let written = engine.registry().write_sdk_files_with_names(
     "target/generated",
@@ -372,7 +372,7 @@ strict unknown-field rejection when you want scripts to fail fast on extra input
 fields.
 
 ```rust
-use rustts::{VmContractValidation, VmUnknownFieldValidation, VmOptions};
+use manivelle::{VmContractValidation, VmUnknownFieldValidation, VmOptions};
 
 let mut options = VmOptions::default();
 options.contract_validation = VmContractValidation::Inputs;

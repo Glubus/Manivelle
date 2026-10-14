@@ -17,8 +17,8 @@ use glam::{
     DVec2, DVec3, DVec4, IVec2, IVec3, IVec4, Mat2, Mat3, Mat4, Quat, UVec2, UVec3, UVec4, Vec2,
     Vec3, Vec4,
 };
-use rustts::js::{Context, Ctx, Function, Runtime, Value as JsValue};
-use rustts::{JsDecode, JsEncode, TsSchema, TsType};
+use manivelle::js::{Context, Ctx, Function, Runtime, Value as JsValue};
+use manivelle::{JsDecode, JsEncode, TsSchema, TsType};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};

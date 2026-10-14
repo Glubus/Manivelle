@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use rustts::{
+use manivelle::{
     Engine, HostContract, HostContractKind, HostFunctionSignature, HostResolver, PendingCall,
     TsSchema, VmOptions,
 };
@@ -46,7 +46,7 @@ impl HostFunctionSignature for HighScore {
 fn spawner(version: u32) -> String {
     format!(
         r#"
-        import {{ ctx, setTimeout }} from "rustts:env";
+        import {{ ctx, setTimeout }} from "manivelle:env";
         import {{ highScore }} from "game";
 
         let waves = (ctx.hot.data as {{ waves: number }} | undefined)?.waves ?? 0;
@@ -74,7 +74,7 @@ fn spawner(version: u32) -> String {
 /// Counts frames, shows a "get ready" banner for half a second, and answers the
 /// `status` request.
 const HUD: &str = r#"
-import { ctx, setTimeout } from "rustts:env";
+import { ctx, setTimeout } from "manivelle:env";
 
 let frameCount = 0;
 let lastTick = -1;

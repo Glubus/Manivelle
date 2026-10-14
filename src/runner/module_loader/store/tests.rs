@@ -36,12 +36,12 @@ fn project_graph_uses_runtime_scoped_module_ids() {
         .insert_project("/app/main.ts", app_modules(), 7)
         .expect("insert project graph");
 
-    assert_eq!(graph.entry_module_id, "rustts://graph/7//app/main.ts");
+    assert_eq!(graph.entry_module_id, "manivelle://graph/7//app/main.ts");
     assert_eq!(graph.module_ids.len(), 2);
     let resolved = store
-        .resolve("rustts://graph/7//app/main.ts", "./dep")
+        .resolve("manivelle://graph/7//app/main.ts", "./dep")
         .expect("resolve runtime module");
-    assert_eq!(resolved, "rustts://graph/7//app/dep.ts");
+    assert_eq!(resolved, "manivelle://graph/7//app/dep.ts");
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn removing_graph_clears_sources_and_resolutions() {
         .expect("remove graph modules");
 
     let error = store
-        .resolve("rustts://graph/7//app/main.ts", "./dep")
+        .resolve("manivelle://graph/7//app/main.ts", "./dep")
         .expect_err("graph resolution removed");
     assert!(matches!(error, rquickjs::Error::Resolving { .. }));
 }
@@ -79,7 +79,7 @@ fn removing_a_script_keeps_the_host_module_that_shares_its_name() {
         .expect("remove script graph");
 
     let resolved = store
-        .resolve("rustts://graph/1/other", "bench")
+        .resolve("manivelle://graph/1/other", "bench")
         .expect("host module still resolvable");
     assert_eq!(resolved, "bench");
 }

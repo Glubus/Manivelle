@@ -3,7 +3,7 @@ mod support;
 use std::fs;
 use std::path::Path;
 
-use rustts::{Engine, VmError, VmOptions};
+use manivelle::{Engine, VmError, VmOptions};
 use serde_json::json;
 
 use support::TestCacheDir;
@@ -68,7 +68,7 @@ fn assert_mapped(details: &str, locations: &[String]) {
         );
     }
     assert!(
-        !details.contains("rustts://graph"),
+        !details.contains("manivelle://graph"),
         "unmapped frame in:\n{details}"
     );
 }

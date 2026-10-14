@@ -7,8 +7,8 @@ use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 
-use rustts::js::{Context, Ctx, Runtime, Value as JsValue};
-use rustts::{JsDecode, JsEncode, NativeBytes};
+use manivelle::js::{Context, Ctx, Runtime, Value as JsValue};
+use manivelle::{JsDecode, JsEncode, NativeBytes};
 use serde::Serialize;
 use serde_json::{Number, Value, json};
 
@@ -102,7 +102,7 @@ fn encode_error<T: JsEncode>(value: &T) -> String {
 fn check_encoded<T: JsEncode>(value: &T, check: &str) -> bool {
     with_js(|ctx| {
         let encoded = value.encode_js(ctx).expect("encode natively");
-        let check: rustts::js::Function<'_> = ctx.eval(check).expect("compile check");
+        let check: manivelle::js::Function<'_> = ctx.eval(check).expect("compile check");
         check.call((encoded,)).expect("run check")
     })
 }

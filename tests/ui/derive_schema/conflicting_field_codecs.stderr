@@ -1,6 +1,6 @@
-error: `#[rustts(with)]` and `#[rustts(codec = "json")]` both choose this field's codec; keep one
+error: `#[manivelle(with)]` and `#[manivelle(codec = "json")]` both choose this field's codec; keep one
  --> tests/ui/derive_schema/conflicting_field_codecs.rs:5:5
   |
-5 | /     #[rustts(codec = "json", with = "custom")]
+5 | /     #[manivelle(codec = "json", with = "custom")]
 6 | |     value: String,
   | |_________________^

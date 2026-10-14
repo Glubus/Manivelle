@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use rustts::{
+use manivelle::{
     HostContract, HostContractKind, HostFunction, HostFunctionSignature,
     InMemoryHostContractRegistry, TsSchema, VmError,
 };

@@ -55,7 +55,7 @@ primitive integers only.
 
 ### Feature-Gated Third-Party Types
 
-Enable the matching RustTS feature (`uuid`, `chrono`, `glam`) to use these types
+Enable the matching Manivelle feature (`uuid`, `chrono`, `glam`) to use these types
 natively, with the crate's own serde representation:
 
 | Rust | TypeScript | Notes |
@@ -135,9 +135,9 @@ range, got 300` or `inventory[sword][2].id: missing field`.
 A derive macro cannot see which serde traits sit next to it, so
 `#[derive(TsSchema)]` always generates both codecs. Restrict them on the type:
 
-- `#[rustts(encode_only)]`: only `JsEncode`
-- `#[rustts(decode_only)]`: only `JsDecode`
-- `#[rustts(schema_only)]`: TypeScript declaration only, no codec
+- `#[manivelle(encode_only)]`: only `JsEncode`
+- `#[manivelle(decode_only)]`: only `JsDecode`
+- `#[manivelle(schema_only)]`: TypeScript declaration only, no codec
 
 If a field type supports only one direction, the compiler points at that field.
 
@@ -151,26 +151,26 @@ can execute (`with`, `serialize_with`, `deserialize_with`, `from`, `into`,
 #[derive(Serialize, Deserialize, TsSchema)]
 struct Account {
     // Only this field goes through serde_json; the rest stays native.
-    #[rustts(codec = "json", type = "string")]
+    #[manivelle(codec = "json", type = "string")]
     id: some_crate::AccountId,
 
     // Native codec functions: `shout::encode_js(&value, ctx)` / `shout::decode_js(ctx, value)`.
-    #[rustts(with = "shout")]
+    #[manivelle(with = "shout")]
     name: String,
 }
 
 // The whole type goes through serde_json.
 #[derive(Serialize, Deserialize, TsSchema)]
 #[serde(into = "String", try_from = "String")]
-#[rustts(codec = "json")]
+#[manivelle(codec = "json")]
 struct Email(String);
 ```
 
-`#[rustts(type = "...")]` writes the TypeScript type as given and removes the need
+`#[manivelle(type = "...")]` writes the TypeScript type as given and removes the need
 for `TsSchema` on that field. Use it for types from crates that do not implement
 `TsSchema`.
 
-`#[rustts(rename = "...")]` and `#[rustts(optional)]` are only accepted on
+`#[manivelle(rename = "...")]` and `#[manivelle(optional)]` are only accepted on
 `schema_only` types. On types with codecs, use the serde attributes, which change
 the declaration and the runtime value together.
 
@@ -179,8 +179,8 @@ the declaration and the runtime value together.
 A type that cannot use the derive implements the traits directly:
 
 ```rust
-use rustts::js::{Ctx, Result, Value};
-use rustts::{JsDecode, JsEncode};
+use manivelle::js::{Ctx, Result, Value};
+use manivelle::{JsDecode, JsEncode};
 
 impl JsEncode for Celsius {
     fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<Value<'js>> {
@@ -195,8 +195,8 @@ impl JsDecode for Celsius {
 }
 ```
 
-`rustts::js` re-exports the QuickJS types these signatures use, at the exact version
-RustTS is built with. Use it instead of a direct `rquickjs` dependency; it also
+`manivelle::js` re-exports the QuickJS types these signatures use, at the exact version
+Manivelle is built with. Use it instead of a direct `rquickjs` dependency; it also
 provides `Runtime` and `Context` for unit-testing a codec.
 
 `function` requires `Input: TsSchema + JsDecode` and

@@ -8,7 +8,7 @@ use std::hash::{BuildHasherDefault, DefaultHasher};
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use rustts::{
+use manivelle::{
     Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
     InMemoryHostContractRegistry, TsEnumVariant, TsField, TsLiteral, TsRecordKey, TsSchema, TsType,
     VmError, VmOptions,
@@ -17,19 +17,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 #[derive(TsSchema)]
-#[rustts(schema_only)]
+#[manivelle(schema_only)]
 #[allow(dead_code)]
 struct InvoicePayload {
     id: u64,
-    #[rustts(rename = "displayName")]
+    #[manivelle(rename = "displayName")]
     name: String,
-    #[rustts(optional)]
+    #[manivelle(optional)]
     metadata: BTreeMap<String, String>,
     flags: Vec<bool>,
 }
 
 #[derive(TsSchema)]
-#[rustts(name = "BillingStatus")]
+#[manivelle(name = "BillingStatus")]
 #[allow(dead_code)]
 enum Status {
     Pending,
@@ -205,7 +205,7 @@ struct CreateInvoiceInput {
 }
 
 #[derive(Debug, Serialize, TsSchema)]
-#[rustts(name = "InvoiceCreated")]
+#[manivelle(name = "InvoiceCreated")]
 #[allow(dead_code)]
 struct CreateInvoiceOutput {
     invoice_id: String,
@@ -287,12 +287,12 @@ impl HostContract for AutoInvoiceCreated {
     }
 }
 
-impl rustts::HostCallback for AutoInvoiceCreated {
+impl manivelle::HostCallback for AutoInvoiceCreated {
     type Payload = AutoInvoiceCreatedPayload;
 }
 
 #[derive(TsSchema)]
-#[rustts(schema_only)]
+#[manivelle(schema_only)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct SerdePlayerPayload {
@@ -305,7 +305,7 @@ struct SerdePlayerPayload {
     spawn_region: String,
     #[serde(rename = "damage")]
     amount: f32,
-    #[rustts(rename = "rusttsName")]
+    #[manivelle(rename = "manivelleName")]
     serde_priority_check: String,
     #[serde(skip)]
     internal_seed: u64,
@@ -428,7 +428,7 @@ fn derive_ts_schema_respects_serde_field_attributes() {
             TsField::optional("lives", TsType::Number),
             TsField::optional("spawnRegion", TsType::String),
             TsField::required("damage", TsType::Number),
-            TsField::required("rusttsName", TsType::String),
+            TsField::required("manivelleName", TsType::String),
         ])
     );
 }
@@ -1031,7 +1031,7 @@ struct DirectionalFields {
 }
 
 #[derive(TsSchema)]
-#[rustts(encode_only)]
+#[manivelle(encode_only)]
 #[allow(dead_code)]
 struct OutputView {
     #[serde(skip_serializing)]

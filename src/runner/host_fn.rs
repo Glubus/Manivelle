@@ -70,7 +70,7 @@ impl HostFnClass {
     /// QuickJS ran out of memory.
     pub(crate) fn register(ctx: &Ctx<'_>) -> JsResult<Self> {
         let definition = qjs::JSClassDef {
-            class_name: c"RustTSHostFunction".as_ptr(),
+            class_name: c"ManivelleHostFunction".as_ptr(),
             finalizer: Some(finalize),
             gc_mark: None,
             call: Some(call),

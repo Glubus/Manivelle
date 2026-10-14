@@ -1,5 +1,5 @@
 error: use only one of `schema_only`, `encode_only` and `decode_only`
- --> tests/ui/derive_schema/conflicting_codec_directions.rs:4:23
+ --> tests/ui/derive_schema/conflicting_codec_directions.rs:4:26
   |
-4 | #[rustts(encode_only, decode_only)]
-  |                       ^^^^^^^^^^^
+4 | #[manivelle(encode_only, decode_only)]
+  |                          ^^^^^^^^^^^

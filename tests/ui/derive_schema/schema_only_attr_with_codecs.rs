@@ -1,8 +1,8 @@
-use rustts::TsSchema;
+use manivelle::TsSchema;
 
 #[derive(TsSchema)]
 struct Invoice {
-    #[rustts(rename = "invoiceId")]
+    #[manivelle(rename = "invoiceId")]
     invoice_id: String,
 }
 

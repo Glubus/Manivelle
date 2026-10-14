@@ -1,9 +1,8 @@
 //! `JsEncode` / `JsDecode` impls that reproduce serde's wire format natively.
 //!
-//! Both are emitted unless the type restricts them with `#[rustts(encode_only)]`,
-//! `#[rustts(decode_only)]` or `#[rustts(schema_only)]`; `#[rustts(codec = "json")]` on
-//! the type routes them through serde_json instead.
-
+/// Both are emitted unless the type restricts them with `#[manivelle(encode_only)]`,
+/// `#[manivelle(decode_only)]` or `#[manivelle(schema_only)]`; `#[manivelle(codec = "json")]` on
+/// the type routes them through serde_json instead.
 mod enum_codec;
 mod field;
 mod shape;
@@ -27,9 +26,9 @@ fn encode_impl(container: &Container<'_>) -> TokenStream {
         (
             with_predicate(
                 container.generics,
-                parse_quote!(Self: ::rustts::__serde::Serialize),
+                parse_quote!(Self: ::manivelle::__serde::Serialize),
             ),
-            quote!(::rustts::__derive::json_encode(self, __ctx)),
+            quote!(::manivelle::__derive::json_encode(self, __ctx)),
         )
     } else {
         let body = match &container.body {
@@ -37,7 +36,7 @@ fn encode_impl(container: &Container<'_>) -> TokenStream {
             Body::Enum(variants) => enum_codec::encode_body(container, variants),
         };
         (
-            bound_type_params(container.generics, &parse_quote!(::rustts::JsEncode)),
+            bound_type_params(container.generics, &parse_quote!(::manivelle::JsEncode)),
             body,
         )
     };
@@ -45,11 +44,11 @@ fn encode_impl(container: &Container<'_>) -> TokenStream {
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     quote! {
         #[automatically_derived]
-        impl #impl_generics ::rustts::JsEncode for #ident #ty_generics #where_clause {
+        impl #impl_generics ::manivelle::JsEncode for #ident #ty_generics #where_clause {
             fn encode_js<'__js>(
                 &self,
-                __ctx: &::rustts::js::Ctx<'__js>,
-            ) -> ::rustts::js::Result<::rustts::js::Value<'__js>> {
+                __ctx: &::manivelle::js::Ctx<'__js>,
+            ) -> ::manivelle::js::Result<::manivelle::js::Value<'__js>> {
                 #body
             }
         }
@@ -60,15 +59,15 @@ fn decode_impl(container: &Container<'_>) -> TokenStream {
     if container.attrs.json_codec {
         let generics = with_predicate(
             container.generics,
-            parse_quote!(Self: ::rustts::__serde::de::DeserializeOwned),
+            parse_quote!(Self: ::manivelle::__serde::de::DeserializeOwned),
         );
         return decode_trait_impl(
             container,
             &generics,
-            &quote!(::rustts::__derive::json_decode(__ctx, __value)),
+            &quote!(::manivelle::__derive::json_decode(__ctx, __value)),
         );
     }
-    let generics = bound_type_params(container.generics, &parse_quote!(::rustts::JsDecode));
+    let generics = bound_type_params(container.generics, &parse_quote!(::manivelle::JsDecode));
     match &container.body {
         Body::Struct(shape) => decode_trait_impl(
             container,
@@ -100,11 +99,11 @@ fn decode_trait_impl(
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     quote! {
         #[automatically_derived]
-        impl #impl_generics ::rustts::JsDecode for #ident #ty_generics #where_clause {
+        impl #impl_generics ::manivelle::JsDecode for #ident #ty_generics #where_clause {
             fn decode_js<'__js>(
-                __ctx: &::rustts::js::Ctx<'__js>,
-                __value: ::rustts::js::Value<'__js>,
-            ) -> ::rustts::js::Result<Self> {
+                __ctx: &::manivelle::js::Ctx<'__js>,
+                __value: ::manivelle::js::Value<'__js>,
+            ) -> ::manivelle::js::Result<Self> {
                 #body
             }
         }

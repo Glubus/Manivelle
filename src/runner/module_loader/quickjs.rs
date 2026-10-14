@@ -7,7 +7,7 @@ use super::envs::EnvHandle;
 use super::graph::ENV_MODULE_PREFIX;
 use super::store::WorkerModuleStore;
 
-/// The module a context-group script imports as `rustts:env`: the script's environment
+/// The module a context-group script imports as `manivelle:env`: the script's environment
 /// object, which the loader sets as `import.meta.env`. Only this module sees it, so one
 /// script cannot reach another's.
 const ENV_MODULE_SOURCE: &str = r#"

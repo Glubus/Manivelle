@@ -1,4 +1,4 @@
-use rustts::TsSchema;
+use manivelle::TsSchema;
 
 #[derive(TsSchema)]
 #[serde(tag = "type")]

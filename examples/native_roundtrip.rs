@@ -1,6 +1,6 @@
 //! Rust <-> JS round-trip overhead on the same workloads:
-//! mlua (Lua 5.4), QuickJS called directly, and the RustTS `Engine`.
-//! The gap between QuickJS direct and the engine is RustTS's own overhead
+//! mlua (Lua 5.4), QuickJS called directly, and the Manivelle `Engine`.
+//! The gap between QuickJS direct and the engine is Manivelle's own overhead
 //! (argument encoding, contract dispatch, execution budget).
 //!
 //! Run: `cargo run --release --example native_roundtrip`
@@ -11,12 +11,12 @@ mod quickjs_json;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use mlua::{Lua, LuaSerdeExt};
-use rquickjs::{Context, Ctx, Function, Object, Runtime, Value as JsValue, prelude::Func};
-use rustts::{
+use manivelle::{
     Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
     VmError, VmOptions,
 };
+use mlua::{Lua, LuaSerdeExt};
+use rquickjs::{Context, Ctx, Function, Object, Runtime, Value as JsValue, prelude::Func};
 use serde_json::{Value, json};
 
 const OPS: u32 = 10_000;
@@ -266,7 +266,7 @@ impl EngineBackend {
 
 impl Backend for EngineBackend {
     fn name(&self) -> &'static str {
-        "RustTS engine"
+        "Manivelle engine"
     }
 
     fn sum(&self) -> f64 {

@@ -2,7 +2,7 @@
 //! group name share a QuickJS context (cheaper to load, smaller, faster to deliver to at
 //! hundreds of scripts) but keep their own events, timers, console, host-function
 //! identity, `ctx.hot` state and lifecycle. They reach those through
-//! `import { ... } from "rustts:env"`, since a shared context has no per-script globals.
+//! `import { ... } from "manivelle:env"`, since a shared context has no per-script globals.
 
 mod support;
 
@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rustts::{
+use manivelle::{
     ConsoleLevel, Engine, HostCallback, HostContract, HostContractKind, HostFunctionSignature,
     HostResolver, VmOptions,
 };
@@ -73,7 +73,7 @@ impl HostCallback for ScoreUpdate {
 
 /// Counts `frame` events, tells who it is, and exposes both.
 const COUNTER: &str = r#"
-import { ctx } from "rustts:env";
+import { ctx } from "manivelle:env";
 import { whoami } from "host";
 
 let frames = 0;
@@ -149,7 +149,7 @@ fn events_reach_every_script_in_load_order_whatever_its_group() {
                 id,
                 &format!(
                     r#"
-                    import {{ ctx }} from "rustts:env";
+                    import {{ ctx }} from "manivelle:env";
                     ctx.on("tick", () => "{id}");
                     export {{}};
                     "#
@@ -281,7 +281,7 @@ fn console_output_names_the_script_that_logged() {
                 "pack",
                 id,
                 r#"
-                import { console } from "rustts:env";
+                import { console } from "manivelle:env";
                 export function shout(word: string): void { console.warn(word, 1); }
                 "#,
             )
@@ -306,7 +306,7 @@ fn timers_belong_to_the_script_that_set_them() {
     let ticker = |step: u32| {
         format!(
             r#"
-            import {{ setInterval, clearInterval }} from "rustts:env";
+            import {{ setInterval, clearInterval }} from "manivelle:env";
             let ticks = 0;
             const timer = setInterval(() => {{ ticks += {step}; }}, 10);
             export function count(): number {{ return ticks; }}
@@ -391,7 +391,7 @@ fn reloading_a_script_hands_over_its_state_and_leaves_the_others_alone() {
     let versioned = |version: u32| {
         format!(
             r#"
-            import {{ ctx }} from "rustts:env";
+            import {{ ctx }} from "manivelle:env";
             let frames = ctx.hot.data?.frames ?? 0;
             ctx.hot.save(() => ({{ frames }}));
             ctx.on("frame", () => {{ frames += 1; }});
@@ -437,7 +437,7 @@ fn a_failed_load_keeps_the_previous_version_in_the_group() {
     let failed = engine.load_script_in(
         "pack",
         "kept",
-        r#"import { ctx } from "rustts:env"; throw new Error("broken"); export {};"#,
+        r#"import { ctx } from "manivelle:env"; throw new Error("broken"); export {};"#,
     );
     engine.emit("frame", &json!({})).expect("emit");
 
@@ -452,7 +452,7 @@ fn a_project_loads_into_a_group_and_reloads_in_it() {
     std::fs::write(
         root.join("main.ts"),
         r#"
-        import { ctx } from "rustts:env";
+        import { ctx } from "manivelle:env";
         import { step } from "./step";
         let total = 0;
         ctx.on("frame", () => { total += step; });
@@ -517,7 +517,7 @@ fn generated_declarations_type_the_environment_module() {
     let dir = TestCacheDir::new("group-env-tsc");
     let engine = engine();
     std::fs::write(
-        dir.path().join("rustts.d.ts"),
+        dir.path().join("manivelle.d.ts"),
         engine.registry().dts().expect("render declarations"),
     )
     .expect("write declarations");
@@ -525,8 +525,8 @@ fn generated_declarations_type_the_environment_module() {
     std::fs::write(
         &script,
         r#"
-        /// <reference path="./rustts.d.ts" />
-        import { ctx, console, setTimeout, setInterval, clearInterval } from "rustts:env";
+        /// <reference path="./manivelle.d.ts" />
+        import { ctx, console, setTimeout, setInterval, clearInterval } from "manivelle:env";
 
         ctx.on("score.update", (combo: number) => { console.log(combo.toFixed(0)); });
         ctx.hot.save(() => ({ at: 1 }));
@@ -544,7 +544,7 @@ fn generated_declarations_type_the_environment_module() {
 
     assert!(
         output.status.success(),
-        "tsc rejected a script importing rustts:env\n{}{}",
+        "tsc rejected a script importing manivelle:env\n{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -554,7 +554,7 @@ fn generated_declarations_type_the_environment_module() {
 fn the_scripts_of_a_group_are_handed_one_payload_object_and_other_scripts_their_own() {
     let mut engine = engine();
     let mutating = r#"
-        import { ctx } from "rustts:env";
+        import { ctx } from "manivelle:env";
         ctx.on("tick", (event: { n: number }) => { event.n += 1; return event.n; });
         export {};
     "#;
@@ -584,7 +584,7 @@ fn a_script_of_another_group_in_between_does_not_break_the_load_order() {
     let listener = |id: &str| {
         format!(
             r#"
-            import {{ ctx }} from "rustts:env";
+            import {{ ctx }} from "manivelle:env";
             ctx.on("tick", () => "{id}");
             export {{}};
             "#
@@ -618,16 +618,16 @@ fn victim_module_ids() -> Vec<String> {
     (0..4)
         .flat_map(|graph| {
             [
-                format!("rustts://graph/{graph}/victim"),
-                format!("rustts:env/{graph}"),
-                format!("rustts:host/{graph}/host"),
+                format!("manivelle://graph/{graph}/victim"),
+                format!("manivelle:env/{graph}"),
+                format!("manivelle:host/{graph}/host"),
             ]
         })
         .collect()
 }
 
 fn assert_cannot_import_the_victim(
-    load: impl Fn(&mut Engine, &str) -> Result<(), rustts::VmError>,
+    load: impl Fn(&mut Engine, &str) -> Result<(), manivelle::VmError>,
 ) {
     let mut engine = engine();
     engine

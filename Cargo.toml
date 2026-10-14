@@ -1,19 +1,19 @@
 [package]
-name = "rustts"
-version = "0.4.0"
+name = "manivelle"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.96"
 description = "Embedded TypeScript runtime for Rust with typed host contracts and generated SDKs"
-repository = "https://github.com/Glubus/Rust-TS"
+repository = "https://github.com/Glubus/Manivelle"
 readme = "README.md"
 license = "MIT"
 
 [workspace]
-members = [".", "rustts_macros"]
+members = [".", "manivelle_macros"]
 
 [features]
 default = []
-derive = ["dep:rustts_macros"]
+derive = ["dep:manivelle_macros"]
 uuid = ["dep:uuid"]
 chrono = ["dep:chrono"]
 glam = ["dep:glam"]
@@ -33,7 +33,7 @@ thiserror = "2.0.17"
 blake3 = "1.8.2"
 indexmap = "2.14.2"
 tempfile = "3.23.0"
-rustts_macros = { version = "0.4.0", path = "rustts_macros", optional = true }
+manivelle_macros = { version = "0.1.0", path = "manivelle_macros", optional = true }
 uuid = { version = "1.26.1", optional = true, default-features = false, features = ["serde"] }
 chrono = { version = "0.4.45", optional = true, default-features = false, features = ["std", "serde"] }
 glam = { version = "0.33.9", optional = true, features = ["serde"] }

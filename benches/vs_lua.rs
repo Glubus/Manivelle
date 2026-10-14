@@ -1,8 +1,8 @@
-//! Same workloads on mlua (Lua 5.4), raw rquickjs and RustTS.
+//! Same workloads on mlua (Lua 5.4), raw rquickjs and Manivelle.
 //!
-//! `quickjs_raw` is the floor RustTS can reach on QuickJS: direct `Function::call`
-//! with native value conversion. `rustts_engine` is the single-thread [`Engine`].
-//! The RustTS gap to `quickjs_raw` is our own overhead; the raw QuickJS gap to mlua
+//! `quickjs_raw` is the floor Manivelle can reach on QuickJS: direct `Function::call`
+//! with native value conversion. `manivelle_engine` is the single-thread [`Engine`].
+//! The Manivelle gap to `quickjs_raw` is our own overhead; the raw QuickJS gap to mlua
 //! is the interpreter difference.
 
 use std::hint::black_box;
@@ -11,12 +11,12 @@ use std::time::Duration;
 use criterion::{
     BenchmarkGroup, Criterion, criterion_group, criterion_main, measurement::WallTime,
 };
-use mlua::{Lua, LuaSerdeExt};
-use rquickjs::{Context, Ctx, Function, Object, Runtime, Value as JsValue, prelude::Func};
-use rustts::{
+use manivelle::{
     Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
     VmError, VmOptions,
 };
+use mlua::{Lua, LuaSerdeExt};
+use rquickjs::{Context, Ctx, Function, Object, Runtime, Value as JsValue, prelude::Func};
 use serde_json::{Value, json};
 
 #[path = "support/quickjs_json.rs"]
@@ -169,8 +169,8 @@ fn js_function<'js>(ctx: &Ctx<'js>, name: &str) -> Function<'js> {
     ctx.globals().get(name).expect("quickjs function")
 }
 
-fn rustts_engine() -> Engine {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create rustts engine");
+fn manivelle_engine() -> Engine {
+    let mut engine = Engine::new(&VmOptions::default()).expect("create manivelle engine");
     engine
         .registry()
         .function::<Inc>()
@@ -178,7 +178,7 @@ fn rustts_engine() -> Engine {
         .expect("register bench contracts");
     engine
         .load_script("bench", TS_SOURCE)
-        .expect("load rustts engine source");
+        .expect("load manivelle engine source");
     engine
 }
 
@@ -214,7 +214,7 @@ fn bench_call_scalar(c: &mut Criterion, backends: &Backends) {
             })
         });
     });
-    group.bench_function("rustts_engine", |b| {
+    group.bench_function("manivelle_engine", |b| {
         b.iter(|| {
             black_box(
                 engine
@@ -250,7 +250,7 @@ fn bench_call_object(c: &mut Criterion, backends: &Backends) {
             })
         });
     });
-    group.bench_function("rustts_engine", |b| {
+    group.bench_function("manivelle_engine", |b| {
         b.iter(|| {
             black_box(
                 engine
@@ -281,7 +281,7 @@ fn bench_host_calls(c: &mut Criterion, backends: &Backends) {
             })
         });
     });
-    group.bench_function("rustts_engine", |b| {
+    group.bench_function("manivelle_engine", |b| {
         b.iter(|| {
             black_box(
                 engine
@@ -312,7 +312,7 @@ fn bench_compute(c: &mut Criterion, backends: &Backends) {
             })
         });
     });
-    group.bench_function("rustts_engine", |b| {
+    group.bench_function("manivelle_engine", |b| {
         b.iter(|| {
             black_box(
                 engine
@@ -346,14 +346,14 @@ fn bench_emit(c: &mut Criterion, backends: &Backends) {
             })
         });
     });
-    group.bench_function("rustts_engine", |b| {
+    group.bench_function("manivelle_engine", |b| {
         b.iter(|| black_box(engine.emit("score.update", &event).expect("engine emit")));
     });
     group.finish();
 }
 
 fn bench_reload(c: &mut Criterion, qjs: &QuickJsBench) {
-    let mut engine = rustts_engine();
+    let mut engine = manivelle_engine();
     let variants = [TS_SOURCE.to_owned(), format!("{TS_SOURCE}\n// variant b\n")];
     let mut group = c.benchmark_group("reload_script_warm");
     configure(&mut group);
@@ -375,7 +375,7 @@ fn bench_reload(c: &mut Criterion, qjs: &QuickJsBench) {
             black_box(context)
         });
     });
-    group.bench_function("rustts_engine", |b| {
+    group.bench_function("manivelle_engine", |b| {
         let mut next = 0usize;
         b.iter(|| {
             next ^= 1;
@@ -391,7 +391,7 @@ fn vs_lua_benchmarks(c: &mut Criterion) {
     let backends = Backends {
         lua: LuaBench::new(),
         qjs: QuickJsBench::new(),
-        engine: rustts_engine(),
+        engine: manivelle_engine(),
     };
 
     bench_call_scalar(c, &backends);

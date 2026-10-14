@@ -1,4 +1,4 @@
-use rustts::TsSchema;
+use manivelle::TsSchema;
 use serde::Serialize;
 
 #[derive(Clone, Serialize, TsSchema)]

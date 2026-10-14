@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use rustts::{
+use manivelle::{
     Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature, HostResolver,
     JsDecode, JsEncode, NativeBytes, Schema, TsField, TsSchema, TsType, VmContractValidation,
     VmError, VmOptions, VmUnknownFieldValidation,
@@ -40,17 +40,17 @@ macro_rules! declared {
         impl JsEncode for $name {
             fn encode_js<'js>(
                 &self,
-                ctx: &rustts::js::Ctx<'js>,
-            ) -> rustts::js::Result<rustts::js::Value<'js>> {
+                ctx: &manivelle::js::Ctx<'js>,
+            ) -> manivelle::js::Result<manivelle::js::Value<'js>> {
                 self.0.encode_js(ctx)
             }
         }
 
         impl JsDecode for $name {
             fn decode_js<'js>(
-                ctx: &rustts::js::Ctx<'js>,
-                value: rustts::js::Value<'js>,
-            ) -> rustts::js::Result<Self> {
+                ctx: &manivelle::js::Ctx<'js>,
+                value: manivelle::js::Value<'js>,
+            ) -> manivelle::js::Result<Self> {
                 Value::decode_js(ctx, value).map($name)
             }
         }

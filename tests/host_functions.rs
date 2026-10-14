@@ -4,7 +4,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use rustts::{
+use manivelle::{
     Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
     InMemoryHostContractRegistry, VmContractValidation, VmError, VmOptions,
 };

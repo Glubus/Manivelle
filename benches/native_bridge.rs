@@ -3,14 +3,14 @@ use std::hint::black_box;
 use std::sync::{Arc, OnceLock};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use rquickjs::{
-    ArrayBuffer, Context, Ctx, Function, Object, Result as JsResult, Runtime, TypedArray,
-    prelude::Func,
-};
-use rustts::{
+use manivelle::{
     Engine, HostContract, HostContractKind, HostContractRegistry, HostFunction,
     HostFunctionSignature, JsEncode, NativeBytes, TsSchema, VmContractValidation, VmError,
     VmOptions,
+};
+use rquickjs::{
+    ArrayBuffer, Context, Ctx, Function, Object, Result as JsResult, Runtime, TypedArray,
+    prelude::Func,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

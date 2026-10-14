@@ -29,7 +29,7 @@ pub(super) fn encode_payload(
 ) -> TokenStream {
     match shape.style {
         Style::Unit => quote! {
-            ::rustts::js::Result::Ok(::rustts::js::Value::new_null(__ctx.clone()))
+            ::manivelle::js::Result::Ok(::manivelle::js::Value::new_null(__ctx.clone()))
         },
         Style::Newtype => {
             let encode = encoder(&shape.fields[0]);
@@ -40,9 +40,9 @@ pub(super) fn encode_payload(
         Style::Struct => {
             let steps = encode_fields_into(scope, shape, accessors);
             quote!({
-                let __object = ::rustts::js::Object::new(__ctx.clone())?;
+                let __object = ::manivelle::js::Object::new(__ctx.clone())?;
                 #(#steps)*
-                ::rustts::js::Result::Ok(__object.into_value())
+                ::manivelle::js::Result::Ok(__object.into_value())
             })
         }
     }
@@ -64,12 +64,12 @@ pub(super) fn encode_fields_into(
             let encode = encoder(field);
             let step = if field.attrs.flatten {
                 quote! {
-                    ::rustts::__derive::merge_object(&__object, (#encode)(#access, __ctx)?, #rust)?;
+                    ::manivelle::__derive::merge_object(&__object, (#encode)(#access, __ctx)?, #rust)?;
                 }
             } else {
                 let key = &field.name.serialize;
                 quote! {
-                    ::rustts::__derive::encode_field(__ctx, &__object, #key, #access, #encode)?;
+                    ::manivelle::__derive::encode_field(__ctx, &__object, #key, #access, #encode)?;
                 }
             };
             match &field.attrs.skip_serializing_if {
@@ -89,12 +89,12 @@ fn encode_tuple(shape: &Shape<'_>, accessors: &[TokenStream]) -> TokenStream {
         .enumerate()
         .map(|(index, (field, access))| {
             let encode = encoder(field);
-            quote!(::rustts::__derive::encode_item(__ctx, &__array, #index, #access, #encode)?;)
+            quote!(::manivelle::__derive::encode_item(__ctx, &__array, #index, #access, #encode)?;)
         });
     quote!({
-        let __array = ::rustts::js::Array::new(__ctx.clone())?;
+        let __array = ::manivelle::js::Array::new(__ctx.clone())?;
         #(#items)*
-        ::rustts::js::Result::Ok(__array.into_value())
+        ::manivelle::js::Result::Ok(__array.into_value())
     })
 }
 
@@ -107,14 +107,14 @@ pub(super) fn decode_payload(
 ) -> TokenStream {
     match shape.style {
         Style::Unit => quote!({
-            <() as ::rustts::JsDecode>::decode_js(__ctx, __value)?;
-            ::rustts::js::Result::Ok(#constructor)
+            <() as ::manivelle::JsDecode>::decode_js(__ctx, __value)?;
+            ::manivelle::js::Result::Ok(#constructor)
         }),
         Style::Newtype => {
             let field = &shape.fields[0];
             let member = &field.member;
             let decode = decoder(field);
-            quote!(::rustts::js::Result::Ok(#constructor { #member: (#decode)(__ctx, __value)? }))
+            quote!(::manivelle::js::Result::Ok(#constructor { #member: (#decode)(__ctx, __value)? }))
         }
         Style::Tuple => decode_tuple(scope, shape, constructor),
         Style::Struct => decode_struct(scope, shape, constructor),
@@ -133,15 +133,15 @@ fn decode_tuple(scope: &Scope<'_>, shape: &Shape<'_>, constructor: &TokenStream)
             }
             let decode = decoder(field);
             let value =
-                quote!(::rustts::__derive::decode_item(__ctx, &__array, #position, #decode)?);
+                quote!(::manivelle::__derive::decode_item(__ctx, &__array, #position, #decode)?);
             position += 1;
             value
         })
         .collect();
     let members = shape.fields.iter().map(|field| &field.member);
     quote!({
-        let __array = ::rustts::__codec_expect_array_len(__value, #rust, #position)?;
-        ::rustts::js::Result::Ok(#constructor { #(#members: #values),* })
+        let __array = ::manivelle::__codec_expect_array_len(__value, #rust, #position)?;
+        ::manivelle::js::Result::Ok(#constructor { #(#members: #values),* })
     })
 }
 
@@ -150,10 +150,10 @@ fn decode_struct(scope: &Scope<'_>, shape: &Shape<'_>, constructor: &TokenStream
     let container_default = scope.container_default.is_some();
     let known = own_keys(scope, shape);
     let reject_unknown = (scope.deny_unknown_fields && !shape.has_flatten()).then(
-        || quote!(::rustts::__derive::reject_unknown_fields(&__object, &[#(#known),*], #rust)?;),
+        || quote!(::manivelle::__derive::reject_unknown_fields(&__object, &[#(#known),*], #rust)?;),
     );
     let rest = shape.has_flatten().then(|| {
-        quote!(let __rest = ::rustts::__derive::object_without(__ctx, &__object, &[#(#known),*])?;)
+        quote!(let __rest = ::manivelle::__derive::object_without(__ctx, &__object, &[#(#known),*])?;)
     });
     let default = scope.container_default.map(|default| {
         let value = container_default_value(default);
@@ -165,11 +165,11 @@ fn decode_struct(scope: &Scope<'_>, shape: &Shape<'_>, constructor: &TokenStream
         .iter()
         .map(|field| decode_struct_field(field, container_default));
     quote!({
-        let __object = ::rustts::__codec_expect_object(__value, #rust)?;
+        let __object = ::manivelle::__codec_expect_object(__value, #rust)?;
         #reject_unknown
         #rest
         #default
-        ::rustts::js::Result::Ok(#constructor { #(#members: #values),* })
+        ::manivelle::js::Result::Ok(#constructor { #(#members: #values),* })
     })
 }
 
@@ -196,10 +196,10 @@ fn decode_struct_field(field: &Field<'_>, container_default: bool) -> TokenStrea
     let decode = decoder(field);
     match default_fn(field, container_default) {
         Some(default) => quote! {
-            ::rustts::__derive::decode_field_or(__ctx, &__object, &[#(#names),*], #decode, #default)?
+            ::manivelle::__derive::decode_field_or(__ctx, &__object, &[#(#names),*], #decode, #default)?
         },
         None => quote! {
-            ::rustts::__derive::decode_field(__ctx, &__object, &[#(#names),*], #decode)?
+            ::manivelle::__derive::decode_field(__ctx, &__object, &[#(#names),*], #decode)?
         },
     }
 }
@@ -210,7 +210,7 @@ fn decode_flattened(field: &Field<'_>) -> TokenStream {
     let native = !field.attrs.json_codec && field.attrs.with.is_none();
     match field.option_inner() {
         Some(inner) if native => quote! {
-            <#inner as ::rustts::JsDecode>::decode_js(__ctx, __rest.clone().into_value()).ok()
+            <#inner as ::manivelle::JsDecode>::decode_js(__ctx, __rest.clone().into_value()).ok()
         },
         _ => {
             let decode = decoder(field);

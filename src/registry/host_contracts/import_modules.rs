@@ -18,10 +18,10 @@ struct HostModuleNode {
 /// from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HostModuleStyle {
-    /// The globals of the script's own context: `globalThis.__rustts_native` and
-    /// `globalThis.__rustts_on`.
+    /// The globals of the script's own context: `globalThis.__manivelle_native` and
+    /// `globalThis.__manivelle_on`.
     Globals,
-    /// The script's environment, imported from `rustts:env`: the module of a script in a
+    /// The script's environment, imported from `manivelle:env`: the module of a script in a
     /// context group, whose context has no per-script globals.
     Env,
 }
@@ -86,7 +86,7 @@ fn insert_binding(node: &mut HostModuleNode, path: &[String], binding: HostModul
 fn render_module_source(node: &HostModuleNode, style: HostModuleStyle) -> String {
     let mut output = String::new();
     if style == HostModuleStyle::Env {
-        output.push_str("import { __native, __on } from \"rustts:env\";\n");
+        output.push_str("import { __native, __on } from \"manivelle:env\";\n");
     }
 
     for (name, child) in &node.children {
@@ -140,13 +140,13 @@ fn render_object_node(node: &HostModuleNode, depth: usize, style: HostModuleStyl
 fn render_binding(binding: &HostModuleBinding, style: HostModuleStyle) -> String {
     match (binding, style) {
         (HostModuleBinding::Function { contract_name }, HostModuleStyle::Globals) => {
-            format!("globalThis.__rustts_native[{contract_name:?}]")
+            format!("globalThis.__manivelle_native[{contract_name:?}]")
         }
         (HostModuleBinding::Function { contract_name }, HostModuleStyle::Env) => {
             format!("__native[{contract_name:?}]")
         }
         (HostModuleBinding::Callback { event_name }, HostModuleStyle::Globals) => {
-            format!("handler => globalThis.__rustts_on({event_name:?}, handler)")
+            format!("handler => globalThis.__manivelle_on({event_name:?}, handler)")
         }
         (HostModuleBinding::Callback { event_name }, HostModuleStyle::Env) => {
             format!("handler => __on({event_name:?}, handler)")

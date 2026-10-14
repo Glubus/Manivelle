@@ -1,8 +1,8 @@
-use rustts::TsSchema;
+use manivelle::TsSchema;
 
 #[derive(TsSchema)]
 struct Conflict {
-    #[rustts(codec = "json", with = "custom")]
+    #[manivelle(codec = "json", with = "custom")]
     value: String,
 }
 

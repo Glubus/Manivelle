@@ -12,4 +12,4 @@
 - [Load Scripts And Projects](guides/load-scripts-and-projects.md)
 - [Use Native Bytes](guides/native-bytes.md)
 - [Runtime Guarantees](guides/runtime-guarantees.md)
-- [Migrate From 0.3 To 0.4](guides/migrating-0.3-to-0.4.md)
+- [Migrate From rustts](guides/migrating-from-rustts.md)

@@ -1,7 +1,7 @@
-use rustts::TsSchema;
+use manivelle::TsSchema;
 
 #[derive(TsSchema)]
-#[rustts(encode_only, decode_only)]
+#[manivelle(encode_only, decode_only)]
 struct Conflict {
     value: String,
 }

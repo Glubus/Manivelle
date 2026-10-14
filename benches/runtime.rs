@@ -13,7 +13,7 @@ use criterion::{
     BatchSize, Bencher, BenchmarkGroup, Criterion, Throughput, criterion_group, criterion_main,
     measurement::WallTime,
 };
-use rustts::{
+use manivelle::{
     Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
     MemoryStats, TsSchema, VmError, VmOptions,
 };
@@ -28,7 +28,7 @@ const MANY_SMALL_SCRIPT_COUNT: usize = 400;
 /// Scripts per context group in the grouped benches.
 const GROUP_SIZE: usize = 10;
 const GROUPED_FRAME_SCRIPT: &str = r#"
-import { ctx } from "rustts:env";
+import { ctx } from "manivelle:env";
 let total = 0;
 ctx.on("frame", (event: { dt: number }) => { total += event.dt; });
 export {};
@@ -39,6 +39,12 @@ const FRAME_DURATION: Duration = Duration::from_micros(500);
 const FRAME_SCRIPT: &str = r#"
 let total = 0;
 ctx.on("frame", (event: { dt: number }) => { total += event.dt; });
+export {};
+"#;
+/// Listens to an event the benches never emit.
+const OTHER_SCRIPT: &str = r#"
+let total = 0;
+ctx.on("other", () => { total += 1; });
 export {};
 "#;
 /// A zero-delay interval is due on every `advance_timers` call.
@@ -54,13 +60,13 @@ setInterval(() => {}, 1e12);
 export {};
 "#;
 const GROUPED_TIMER_SCRIPT: &str = r#"
-import { setInterval } from "rustts:env";
+import { setInterval } from "manivelle:env";
 let total = 0;
 setInterval(() => { total += 1; }, 0);
 export {};
 "#;
 const MANY_SCRIPTS_MEMORY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
-const MEMORY_REPORT_CHILD_ENV: &str = "RUSTTS_MEMORY_REPORT_SCRIPT_COUNT";
+const MEMORY_REPORT_CHILD_ENV: &str = "MANIVELLE_MEMORY_REPORT_SCRIPT_COUNT";
 const BYTES_PER_KIB: f64 = 1024.0;
 const BYTES_PER_MIB: f64 = 1024.0 * 1024.0;
 
@@ -98,6 +104,7 @@ fn bench_frame_budget(c: &mut Criterion) {
     configure_slow(&mut group);
     for &script_count in FRAME_SCRIPT_COUNTS {
         let events = scripts_engine(FRAME_SCRIPT, script_count);
+        let sparse = sparse_engine(script_count);
         let timers = scripts_engine(TIMER_SCRIPT, script_count);
         let grouped = grouped_engine(GROUPED_FRAME_SCRIPT, script_count);
         let grouped_timers = grouped_engine(GROUPED_TIMER_SCRIPT, script_count);
@@ -105,6 +112,10 @@ fn bench_frame_budget(c: &mut Criterion) {
         group.throughput(Throughput::Elements(script_count as u64));
         group.bench_function(format!("emit_{script_count}"), |b| {
             b.iter(|| black_box(events.emit("frame", &frame).expect("emit frame")));
+        });
+        // 1 script in 100 listens to `frame`; the others listen to another event.
+        group.bench_function(format!("emit_{script_count}_sparse"), |b| {
+            b.iter(|| black_box(sparse.emit("frame", &frame).expect("emit frame")));
         });
         group.bench_function(format!("emit_{script_count}_grouped"), |b| {
             b.iter(|| black_box(grouped.emit("frame", &frame).expect("emit frame")));
@@ -141,6 +152,22 @@ fn bench_frame_budget(c: &mut Criterion) {
         });
     }
     group.finish();
+}
+
+/// `script_count` scripts of which one in 100 listens to `frame`, the rest to `other`.
+fn sparse_engine(script_count: usize) -> Engine {
+    let mut engine = Engine::new(&many_scripts_options()).expect("create engine");
+    for index in 0..script_count {
+        let source = if index % 100 == 0 {
+            FRAME_SCRIPT
+        } else {
+            OTHER_SCRIPT
+        };
+        engine
+            .load_script(format!("script-{index}"), source)
+            .expect("load script");
+    }
+    engine
 }
 
 fn scripts_engine(source: &str, script_count: usize) -> Engine {
@@ -515,7 +542,7 @@ fn format_signed_float(value: f64, unit: &str) -> String {
 }
 
 #[derive(TsSchema)]
-#[rustts(name = "CreateInvoiceInput")]
+#[manivelle(name = "CreateInvoiceInput")]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct BenchCreateInvoiceInput {
@@ -524,14 +551,14 @@ struct BenchCreateInvoiceInput {
 }
 
 #[derive(TsSchema)]
-#[rustts(name = "CreateInvoiceOutput")]
+#[manivelle(name = "CreateInvoiceOutput")]
 struct BenchCreateInvoiceOutput {
     id: String,
     accepted: bool,
 }
 
 #[derive(TsSchema)]
-#[rustts(name = "ScoreUpdatePayload")]
+#[manivelle(name = "ScoreUpdatePayload")]
 struct BenchScoreUpdatePayload {
     combo: f64,
 }
@@ -624,7 +651,7 @@ impl CacheDir {
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
             .as_nanos();
-        Self(std::env::temp_dir().join(format!("rustts-{label}-{nanos}")))
+        Self(std::env::temp_dir().join(format!("manivelle-{label}-{nanos}")))
     }
 
     fn options(&self) -> VmOptions {

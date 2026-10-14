@@ -41,13 +41,13 @@ pub use contract::{
     schema_type_ref as __schema_type_ref,
 };
 pub use error::VmError;
+#[cfg(feature = "derive")]
+pub use manivelle_macros::TsSchema;
 pub use registry::{
     HostContractRegistry, InMemoryHostContractRegistry,
     render_typescript_declarations_for_descriptors, render_typescript_sdk_for_descriptors,
 };
 pub use runner::{ConsoleLevel, Engine, InterruptHandle, PendingCall};
-#[cfg(feature = "derive")]
-pub use rustts_macros::TsSchema;
 pub use sdk_files::{
     GeneratedSdkFiles, SdkFileNames, write_host_sdk_files, write_host_sdk_files_with_names,
 };

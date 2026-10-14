@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use rustts::{ConsoleLevel, Engine, VmError, VmOptions};
+use manivelle::{ConsoleLevel, Engine, VmError, VmOptions};
 use serde_json::json;
 
 fn engine() -> Engine {
@@ -215,7 +215,7 @@ fn a_logged_error_shows_its_typescript_location() {
     let message = &lines.borrow()[0].2;
     assert!(message.starts_with("Error: boom\n"), "{message}");
     assert!(message.contains("script.ts:2:"), "{message}");
-    assert!(!message.contains("rustts://"), "{message}");
+    assert!(!message.contains("manivelle://"), "{message}");
 }
 
 #[test]

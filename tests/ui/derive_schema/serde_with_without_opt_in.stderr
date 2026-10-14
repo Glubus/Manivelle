@@ -1,4 +1,4 @@
-error: `#[serde(serialize_with)]` needs the serde_json reference codec: add `#[rustts(codec = "json")]` (or a native `#[rustts(with = "...")]`) to this field, or `#[rustts(codec = "json")]` to the type
+error: `#[serde(serialize_with)]` needs the serde_json reference codec: add `#[manivelle(codec = "json")]` (or a native `#[manivelle(with = "...")]`) to this field, or `#[manivelle(codec = "json")]` to the type
   --> tests/ui/derive_schema/serde_with_without_opt_in.rs:11:13
    |
 11 |     #[serde(serialize_with = "as_text")]

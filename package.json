@@ -1,5 +1,5 @@
 {
-  "name": "rustts-sdk-checks",
+  "name": "manivelle-sdk-checks",
   "private": true,
   "devDependencies": {
     "typescript": "5.9.3"

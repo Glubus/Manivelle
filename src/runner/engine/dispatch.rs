@@ -97,30 +97,37 @@ impl Engine {
         keep_results: bool,
         mut on_return: impl for<'js> FnMut(&'a str, &Ctx<'js>, JsValue<'js>) -> Result<(), VmError>,
     ) -> Result<usize, VmError> {
+        // Only the scripts listening to `event` are visited, in load order.
+        let Some(listeners) = self.event_index.listeners(
+            event,
+            self.scripts.values().map(|script| &script.signals.events),
+        ) else {
+            return Ok(0);
+        };
         let _budget = self.budget();
         let mut delivered = 0;
         let mut first_error = None;
-        // Scripts that follow one another in load order and share a context (a group's)
-        // are served in one visit to it: the context is entered once and the payload
-        // encoded once, instead of once per script. The order is the load order.
-        let count = self.scripts.len();
+        // Listeners that follow one another and share a context (a group's) are served
+        // in one visit to it: the context is entered once and the payload encoded once,
+        // instead of once per script. The order is the load order.
         let mut start = 0;
         // Set once the operation is interrupted or out of budget: no handler is entered
         // after that, and the error is already recorded.
         let mut stopped = false;
-        while start < count && !stopped {
-            let Some((first_id, first)) = self.scripts.get_index(start) else {
+        while start < listeners.len() && !stopped {
+            let Some((first_id, first)) = self.scripts.get_index(listeners[start]) else {
                 break;
             };
             let mut end = start + 1;
-            while let Some((_, next)) = self.scripts.get_index(end)
+            while end < listeners.len()
+                && let Some((_, next)) = self.scripts.get_index(listeners[end])
                 && first.shares_context(next)
             {
                 end += 1;
             }
             if end - start == 1 {
                 // A context of its own: one look at the script's handlers decides
-                // whether to enter it.
+                // whether to enter it (an earlier handler may have removed them).
                 if let Some(handlers) = first.signals.events.handlers(event) {
                     delivered += 1;
                     let outcome = first.context.with(|ctx| match payload.encode_js(&ctx) {
@@ -142,52 +149,46 @@ impl Engine {
                 start = end;
                 continue;
             }
-            let listening = (start..end).any(|index| {
-                self.scripts
-                    .get_index(index)
-                    .is_some_and(|(_, script)| script.signals.events.listens(event))
-            });
-            if listening {
-                first.context.with(|ctx| match payload.encode_js(&ctx) {
-                    Ok(payload) => {
-                        for index in start..end {
-                            let Some((script_id, script)) = self.scripts.get_index(index) else {
-                                continue;
-                            };
-                            let Some(handlers) = script.signals.events.handlers(event) else {
-                                continue;
-                            };
-                            delivered += 1;
-                            let outcome = deliver(
-                                &ctx,
-                                &handlers,
-                                &payload,
-                                keep_results,
-                                &self.execution,
-                                |returned| on_return(script_id, &ctx, returned),
-                            );
-                            if let Err(error) = outcome {
-                                first_error.get_or_insert(error);
-                            }
-                            if self.execution.should_stop() {
-                                stopped = true;
-                                break;
-                            }
+            first.context.with(|ctx| match payload.encode_js(&ctx) {
+                Ok(payload) => {
+                    for &position in &listeners[start..end] {
+                        let Some((script_id, script)) = self.scripts.get_index(position) else {
+                            continue;
+                        };
+                        let Some(handlers) = script.signals.events.handlers(event) else {
+                            continue;
+                        };
+                        delivered += 1;
+                        let outcome = deliver(
+                            &ctx,
+                            &handlers,
+                            &payload,
+                            keep_results,
+                            &self.execution,
+                            |returned| on_return(script_id, &ctx, returned),
+                        );
+                        if let Err(error) = outcome {
+                            first_error.get_or_insert(error);
+                        }
+                        if self.execution.should_stop() {
+                            stopped = true;
+                            break;
                         }
                     }
-                    Err(error) => {
-                        // Nothing to hand over: the scripts that listen fail together.
-                        first_error.get_or_insert(js_error(error));
-                        delivered += (start..end)
-                            .filter(|&index| {
-                                self.scripts
-                                    .get_index(index)
-                                    .is_some_and(|(_, script)| script.signals.events.listens(event))
-                            })
-                            .count();
-                    }
-                });
-            }
+                }
+                Err(error) => {
+                    // Nothing to hand over: the scripts that listen fail together.
+                    first_error.get_or_insert(js_error(error));
+                    delivered += listeners[start..end]
+                        .iter()
+                        .filter(|&&position| {
+                            self.scripts
+                                .get_index(position)
+                                .is_some_and(|(_, script)| script.signals.events.listens(event))
+                        })
+                        .count();
+                }
+            });
             start = end;
         }
         if delivered == 0 {

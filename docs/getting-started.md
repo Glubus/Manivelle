@@ -12,14 +12,14 @@ math.add({ left: 20, right: 22 }) // 42
 ## Create A Rust Project
 
 ```text
-cargo new rustts-hello
-cd rustts-hello
+cargo new manivelle-hello
+cd manivelle-hello
 ```
 
 Add dependencies:
 
 ```text
-cargo add rustts@0.4 --features derive
+cargo add manivelle@0.1 --features derive
 cargo add serde --features derive
 cargo add serde_json
 ```
@@ -31,7 +31,7 @@ Replace `src/main.rs` with:
 ```rust
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use rustts::{
+use manivelle::{
     Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
     SdkFileNames, TsSchema, VmError, VmOptions,
 };

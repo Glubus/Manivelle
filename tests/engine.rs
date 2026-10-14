@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use rustts::{
+use manivelle::{
     Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
     VmContractValidation, VmError, VmOptions,
 };

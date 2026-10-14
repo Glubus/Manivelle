@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use rustts::TsSchema;
+use manivelle::TsSchema;
 
 #[derive(TsSchema)]
 struct FlattenedNumericMap {

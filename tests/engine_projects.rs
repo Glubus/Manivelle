@@ -3,7 +3,7 @@ mod support;
 use std::fs;
 use std::path::Path;
 
-use rustts::{
+use manivelle::{
     Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
     NativeBytes, VmError, VmOptions,
 };

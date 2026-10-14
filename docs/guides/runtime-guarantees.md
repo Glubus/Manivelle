@@ -8,13 +8,13 @@ schemas generate SDK declarations; runtime schema validation is independently
 controlled by `contract_validation` and `unknown_field_validation`.
 
 Repository SDK tests use the pinned TypeScript package installed by `npm ci`.
-CI (or `RUSTTS_REQUIRE_TSC=1`) fails if that compiler is missing. Local Rust-only
+CI (or `MANIVELLE_REQUIRE_TSC=1`) fails if that compiler is missing. Local Rust-only
 development can skip these checks when the package is absent, with a diagnostic.
 
 ## Threads and isolation
 
 `Engine` runs every load, call, emit, request and `advance_timers` on the thread
-that owns it, one at a time. RustTS starts no threads and runs no background work:
+that owns it, one at a time. Manivelle starts no threads and runs no background work:
 between two calls, no script code runs, and timers only fire in `advance_timers`.
 
 Each script owns a separate QuickJS context and ESM module graph, so scripts do not
