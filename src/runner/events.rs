@@ -147,12 +147,13 @@ impl EventIndex {
     }
 
     /// The positions, in load order, of the scripts listening to `event`; `None` when
-    /// no script does. `scripts` yields every script's events in load order and is
-    /// only read when the index is stale.
+    /// no script does. `scripts` yields every script's events in load order, `None` for a
+    /// script that must receive none (a quarantined one), and is only read when the
+    /// index is stale.
     pub(super) fn listeners<'a>(
         &self,
         event: &str,
-        scripts: impl Iterator<Item = &'a ListenedEvents>,
+        scripts: impl Iterator<Item = Option<&'a ListenedEvents>>,
     ) -> Option<Rc<[usize]>> {
         if self.stale.get() {
             self.rebuild(scripts);
@@ -160,9 +161,12 @@ impl EventIndex {
         self.listeners.borrow().get(event).cloned()
     }
 
-    fn rebuild<'a>(&self, scripts: impl Iterator<Item = &'a ListenedEvents>) {
+    fn rebuild<'a>(&self, scripts: impl Iterator<Item = Option<&'a ListenedEvents>>) {
         let mut by_event: HashMap<Box<str>, Vec<usize>, FxBuildHasher> = HashMap::default();
         for (position, events) in scripts.enumerate() {
+            let Some(events) = events else {
+                continue;
+            };
             events.for_each_event(|name| match by_event.get_mut(name) {
                 Some(positions) => positions.push(position),
                 None => {

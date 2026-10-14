@@ -30,3 +30,9 @@ release 0.3.0); the history of `rustts` stays in that project's tags.
   `TextEncoder` and `TextDecoder`, next to `atob`, `btoa` and `performance.now()`.
 - A per-event index of the scripts that listen, so `emit` and `request` cost
   O(listeners) instead of O(scripts) (1000 scripts with 10 listeners: 13.3 to 3.5 us).
+- Fault isolation: each script of an `emit`, `request`, `advance_timers` or `pump` gets
+  an execution budget of its own, so a runaway script costs one timeout and the scripts
+  after it still run. A script that runs out of its time or memory
+  `EngineOptions::max_script_faults` times (3 by default) is quarantined, and
+  `Engine::quarantined_scripts` lists it. See
+  [Untrusted Mods](docs/guides/untrusted-mods.md).

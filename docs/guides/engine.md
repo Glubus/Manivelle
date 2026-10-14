@@ -77,9 +77,10 @@ scripts had at least one handler.
   that script's handlers.
 - A reload keeps the script's place in the delivery order.
 - A handler that throws does not stop the others: every handler runs, then `emit`
-  returns the first error. An exhausted [execution budget](#execution-budget) or an
-  interrupt does stop it: delivery ends at the handler that hit it, and later
-  handlers do not run. The same holds for `request`.
+  returns the first error. A script that exhausts its own [execution
+  budget](#execution-budget) faults, but does not stop the scripts after it (and is
+  quarantined after repeated faults); an interrupt does stop it: delivery ends at the
+  handler that hit it, and later handlers do not run. The same holds for `request`.
 - `ctx.off(event, handler)` removes the first registration of `handler`. A delivery
   already in progress still runs it. A script whose last handler for an event is
   removed is no longer entered for that event.
@@ -189,10 +190,10 @@ ctx.on("round.start", async () => {
 - A timer fires at most once per call: one set from a callback waits for the next
   call even with a zero delay, and an interval several periods late fires once,
   its next due time staying its previous one plus its delay.
-- A throwing callback does not stop the others; the first error is returned. An
-  exhausted [execution budget](#execution-budget) or an interrupt does: firing ends
-  at the timer that hit it, and the timers of the scripts not reached yet stay due
-  for the next `advance_timers`.
+- A throwing callback does not stop the others; the first error is returned. A timer
+  that exhausts its script's [execution budget](#execution-budget) faults that script
+  and the others still fire; an interrupt ends the pass at the timer it reached, and
+  the timers of the scripts not reached yet stay due for the next `advance_timers`.
 - Timers belong to the script version that set them: a reload or unload drops
   them. Restart them from the new version, with `ctx.hot` for their state.
 - The callback must be a function; a string of code is rejected.
@@ -345,15 +346,22 @@ export function add(points: number): number {
 
 Every load, call, emit, request, deferred call or request, `pump`, and
 `advance_timers` runs under `EngineOptions::execution_timeout` (5 seconds by
-default). The budget starts when the operation first reaches a QuickJS check or a
-Rust host function, so time spent in host functions counts against it and an
-operation that reaches neither (a short handler) never reads the clock; suspended
+default), per script: an emission, a timer pass or a pump gives each script it
+visits a budget of its own. The budget starts when the script first reaches a QuickJS
+check or a Rust host function, so time spent in host functions counts against it and
+a handler that reaches neither (a short one) never reads the clock; suspended
 time between host calls does not count. QuickJS
 checks about every ten thousand interpreter steps: JavaScript still running at
 the first check after expiry is interrupted with `EngineError::Execution`. The
 budget is cooperative: it cannot preempt a blocked Rust function, and JavaScript
 that finishes before the next check is not stopped. A synchronous loop cannot
 be paused and resumed: interruption aborts it.
+
+A script that runs out of its time or memory while an event, a timer or a host answer
+is delivered to it is faulting: the error names it, the other scripts carry on, and
+after `EngineOptions::max_script_faults` faults (3 by default) it is quarantined: its
+handlers and timers stop running until it is reloaded, and
+`Engine::quarantined_scripts()` lists it.
 
 To stop a script earlier, for example from a UI "stop" button or a watchdog thread,
 take an `InterruptHandle` before handing work to the engine's thread. It is `Send`
@@ -372,9 +380,10 @@ let result = engine.call::<()>("rules", "simulate", ());
 `interrupt` stops the operation in progress (load, call, emit, request or
 `advance_timers`); the engine stays usable. A request made while nothing runs has
 no effect on the next operation. An `emit`, `request` or `advance_timers` stops at
-the handler or timer the interrupt or the exhausted budget reached; later ones do
-not run. An interrupt that reaches a `ctx.hot.save` or `ctx.hot.dispose` callback
-is reported as `EngineError::Interrupted` by the load or `unload_script` that ran it.
+the handler or timer the interrupt reached; later ones do not run, and the interrupt
+is not a fault. An interrupt that reaches a `ctx.hot.save` or `ctx.hot.dispose`
+callback is reported as `EngineError::Interrupted` by the load or `unload_script`
+that ran it.
 
 ## Transpilation Cache
 

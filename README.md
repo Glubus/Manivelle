@@ -99,6 +99,7 @@ Useful starting points:
 - [Load Scripts And Projects](docs/guides/load-scripts-and-projects.md)
 - [Use Native Bytes](docs/guides/native-bytes.md)
 - [Runtime Guarantees](docs/guides/runtime-guarantees.md)
+- [Untrusted Mods](docs/guides/untrusted-mods.md)
 - [Migrate From rustts](docs/guides/migrating-from-rustts.md)
 
 [`examples/getting_started.rs`](examples/getting_started.rs) is the smallest complete
@@ -138,7 +139,8 @@ Manivelle provides:
 - native `Uint8Array` in both directions through `NativeBytes`
 - web APIs QuickJS lacks, loaded only when a script uses them: `structuredClone`,
   `TextEncoder` and `TextDecoder` (next to `atob`, `btoa` and `performance.now()`)
-- execution budget per load, call, emit, request and timer advance, and an
+- execution budget per script for each load, call, emit, request and timer advance
+  (a script that keeps running out of it is quarantined), and an
   `InterruptHandle` to stop running JavaScript from another thread
 - garbage collection control (`run_gc`, `set_gc_threshold`) and per-context
   built-in selection (`EngineOptions::builtins`, `ScriptBuiltins`)

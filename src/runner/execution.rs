@@ -78,6 +78,27 @@ impl ExecutionControl {
         self.deadline.store(deadline, Ordering::Release);
     }
 
+    /// Gives the next script of a multi-script operation (an emission, a timer pass, a
+    /// pump) a budget of its own: the operation's budget again, its clock not started.
+    /// An interrupt the host requested is not cleared, so it still stops the operation.
+    /// Costs one atomic load when the running script has not started the clock.
+    pub(crate) fn restart_slice(&self) {
+        match self.deadline.load(Ordering::Acquire) {
+            NO_DEADLINE | PENDING => {}
+            _ if self.interrupt_requested() => {}
+            _ => {
+                self.stopped.store(false, Ordering::Release);
+                self.deadline.store(PENDING, Ordering::Release);
+            }
+        }
+    }
+
+    /// Whether the budget ran out, rather than the host asking to stop: the script that
+    /// ran since the last [`ExecutionControl::restart_slice`] used up its slice.
+    pub(crate) fn slice_expired(&self) -> bool {
+        self.stopped.load(Ordering::Acquire) && !self.interrupt_requested()
+    }
+
     /// Asks the running operation to stop at its next interrupt check. Starting an
     /// operation clears the request, so a request made while none runs has no effect.
     pub(crate) fn request_interrupt(&self) {
@@ -210,6 +231,36 @@ mod tests {
         assert!(
             !control.should_stop(),
             "a new operation starts with its own budget"
+        );
+    }
+
+    #[test]
+    fn a_new_slice_gives_the_next_script_its_own_budget() {
+        let control = ExecutionControl::default();
+        let _guard = control.enter(Duration::ZERO);
+        assert!(control.interrupted());
+        assert!(control.slice_expired());
+
+        control.restart_slice();
+
+        assert!(!control.slice_expired());
+        assert!(!control.should_stop());
+        assert!(!control.budget_expired(), "its clock has not started");
+    }
+
+    #[test]
+    fn a_host_interrupt_survives_a_new_slice() {
+        let control = ExecutionControl::default();
+        let _guard = control.enter(Duration::MAX);
+        control.request_interrupt();
+        assert!(control.interrupted());
+
+        control.restart_slice();
+
+        assert!(control.should_stop());
+        assert!(
+            !control.slice_expired(),
+            "the host asked, the budget did not run out"
         );
     }
 }

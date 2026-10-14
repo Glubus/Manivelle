@@ -138,33 +138,33 @@ fn interrupted<T>(handle: InterruptHandle, operation: impl FnOnce() -> T) -> T {
 }
 
 #[test]
-fn an_exhausted_budget_stops_an_emit_at_the_handler_that_used_it_up() {
-    let engine = engine_with_listeners(Duration::from_millis(50));
+fn a_script_that_uses_up_its_budget_in_an_emit_does_not_stop_the_scripts_after_it() {
+    let engine = engine_with_listeners(Duration::from_millis(30));
 
     let result = engine.emit("tick", &1u32);
 
     assert!(
-        matches!(result, Err(EngineError::Execution { .. })),
-        "{result:?}"
+        matches!(&result, Err(EngineError::Execution { details }) if details.contains("script `s0`")),
+        "the first fault is reported, with its script: {result:?}"
     );
     assert_eq!(
         entered(&engine),
-        1.0,
-        "no handler runs after the budget is gone"
+        LISTENERS as f64,
+        "every script got its own budget, so every handler ran"
     );
 }
 
 #[test]
-fn an_exhausted_budget_stops_a_request_at_the_handler_that_used_it_up() {
-    let engine = engine_with_listeners(Duration::from_millis(50));
+fn a_script_that_uses_up_its_budget_in_a_request_does_not_stop_the_scripts_after_it() {
+    let engine = engine_with_listeners(Duration::from_millis(30));
 
     let result = engine.request::<_, ()>("tick", &1u32);
 
     assert!(result.is_err(), "{result:?}");
     assert_eq!(
         entered(&engine),
-        1.0,
-        "no handler runs after the budget is gone"
+        LISTENERS as f64,
+        "every script got its own budget, so every handler ran"
     );
 }
 
@@ -182,8 +182,8 @@ fn an_interrupt_stops_an_emit_at_the_handler_it_reached() {
 }
 
 #[test]
-fn an_exhausted_budget_stops_advance_timers_at_the_timer_that_used_it_up() {
-    let engine = engine_with_listeners(Duration::from_millis(50));
+fn a_timer_that_uses_up_its_budget_does_not_stop_the_timers_after_it() {
+    let engine = engine_with_listeners(Duration::from_millis(30));
 
     let result = engine.advance_timers(Duration::from_millis(1));
 
@@ -193,8 +193,8 @@ fn an_exhausted_budget_stops_advance_timers_at_the_timer_that_used_it_up() {
     );
     assert_eq!(
         entered(&engine),
-        1.0,
-        "no timer fires after the budget is gone"
+        LISTENERS as f64,
+        "every script's timer fired under its own budget"
     );
 }
 

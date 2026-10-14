@@ -1,7 +1,7 @@
 //! Loading, reloading and unloading scripts, and the `ctx.hot` hand-over between
 //! versions.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -313,6 +313,8 @@ impl Engine {
                         host_promises: mounted.host_promises,
                         module_ids: graph.module_ids,
                         origin,
+                        faults: Cell::new(0),
+                        quarantined: Cell::new(false),
                     },
                 )
             }

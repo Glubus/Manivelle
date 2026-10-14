@@ -6,7 +6,7 @@ use rquickjs::{CatchResultExt, CaughtError, Ctx, Value as JsValue};
 use crate::contract::{JsArgs, JsDecode, JsEncode};
 use crate::error::EngineError;
 
-use super::super::errors::{OUT_OF_MEMORY, caught_js_error, in_typescript, js_error};
+use super::super::errors::{caught_js_error, in_typescript, js_error};
 use super::super::events::deliver;
 use super::super::host_fn;
 use super::Engine;
@@ -15,7 +15,7 @@ use super::invoke::invoke;
 /// How a thrown `null` is described: QuickJS throws it when it runs out of memory while
 /// already handling an out of memory. Built without its assertions, the same failure
 /// surfaces as an exception with no message at all.
-const NULL_EXCEPTION: &str = "non-error exception: Null";
+pub(super) const NULL_EXCEPTION: &str = "non-error exception: Null";
 
 impl Engine {
     /// Calls one exported function. Arguments encode through [`JsArgs`] (a tuple, a
@@ -104,7 +104,9 @@ impl Engine {
         // Only the scripts listening to `event` are visited, in load order.
         let Some(listeners) = self.event_index.listeners(
             event,
-            self.scripts.values().map(|script| &script.signals.events),
+            self.scripts
+                .values()
+                .map(|script| (!script.quarantined.get()).then_some(&script.signals.events)),
         ) else {
             return Ok(0);
         };
@@ -115,8 +117,9 @@ impl Engine {
         // in one visit to it: the context is entered once and the payload encoded once,
         // instead of once per script. The order is the load order.
         let mut start = 0;
-        // Set once the operation is interrupted or out of budget: no handler is entered
-        // after that, and the error is already recorded.
+        // Set once the host interrupts the operation: no handler is entered after that,
+        // and the error is already recorded. A script that runs out of its own budget does
+        // not stop the others: it faults, and the next one starts with a budget of its own.
         let mut stopped = false;
         while start < listeners.len() && !stopped {
             let Some((first_id, first)) = self.scripts.get_index(listeners[start]) else {
@@ -134,6 +137,7 @@ impl Engine {
                 // whether to enter it (an earlier handler may have removed them).
                 if let Some(handlers) = first.signals.events.handlers(event) {
                     delivered += 1;
+                    self.begin_slice();
                     let outcome = first.context.with(|ctx| match payload.encode_js(&ctx) {
                         Ok(payload) => deliver(
                             &ctx,
@@ -145,10 +149,12 @@ impl Engine {
                         ),
                         Err(error) => Err(js_error(error)),
                     });
-                    if let Err(error) = outcome {
+                    let judged = self
+                        .judge_slice(first_id, first, outcome, || format!("a `{event}` handler"));
+                    if let Err(error) = judged {
                         first_error.get_or_insert(error);
                     }
-                    stopped = self.execution.should_stop();
+                    stopped = self.execution.interrupt_requested();
                 }
                 start = end;
                 continue;
@@ -163,6 +169,7 @@ impl Engine {
                             continue;
                         };
                         delivered += 1;
+                        self.begin_slice();
                         let outcome = deliver(
                             &ctx,
                             &handlers,
@@ -171,10 +178,13 @@ impl Engine {
                             &self.execution,
                             |returned| on_return(script_id, &ctx, returned),
                         );
-                        if let Err(error) = outcome {
+                        let judged = self.judge_slice(script_id, script, outcome, || {
+                            format!("a `{event}` handler")
+                        });
+                        if let Err(error) = judged {
                             first_error.get_or_insert(error);
                         }
-                        if self.execution.should_stop() {
+                        if self.execution.interrupt_requested() {
                             stopped = true;
                             break;
                         }
@@ -199,6 +209,8 @@ impl Engine {
             // No JavaScript ran, so there is no Promise job to settle.
             return Ok(0);
         }
+        // The jobs the handlers queued run under a budget of their own.
+        self.begin_slice();
         self.attribute_interrupt(self.settle(first_error.map_or(Ok(delivered), Err)))
     }
 
@@ -269,24 +281,15 @@ impl Engine {
     /// QuickJS or rquickjs described it, said as such with the limit to raise.
     fn reported(&self, error: EngineError) -> EngineError {
         match in_typescript(error, &self.module_store) {
-            EngineError::Execution { details }
-                if details.is_empty()
-                    || details.starts_with(NULL_EXCEPTION)
-                    || details.starts_with(OUT_OF_MEMORY) =>
-            {
+            EngineError::Execution { details } if self.is_out_of_memory(&details) => {
                 let stats = self.memory_stats();
-                if stats.malloc_limit_bytes != 0
-                    && stats.malloc_size_bytes * 10 >= stats.malloc_limit_bytes * 9
-                {
-                    return EngineError::Execution {
-                        details: format!(
-                            "out of memory: {} of {} bytes allocated, the limit \
-                             `EngineOptions::memory_limit_bytes`; raise it or load fewer scripts",
-                            stats.malloc_size_bytes, stats.malloc_limit_bytes
-                        ),
-                    };
+                EngineError::Execution {
+                    details: format!(
+                        "out of memory: {} of {} bytes allocated, the limit \
+                         `EngineOptions::memory_limit_bytes`; raise it or load fewer scripts",
+                        stats.malloc_size_bytes, stats.malloc_limit_bytes
+                    ),
                 }
-                EngineError::Execution { details }
             }
             error => error,
         }

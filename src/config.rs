@@ -109,9 +109,12 @@ pub struct EngineOptions {
     /// Directory for transpiled JavaScript artifacts, reused across runs and reloads.
     /// `None` (the default) transpiles in memory on every load.
     pub cache_dir: Option<PathBuf>,
-    /// Maximum wall time per load, call, emit, request or timer advance, including the
-    /// Promise jobs it queues. Rust host handlers must return cooperatively; they
-    /// cannot be preempted.
+    /// Maximum wall time per script and operation, including the Promise jobs it
+    /// queues. A call, a load or a deferred operation has one script, so this is its
+    /// whole budget; an emission, a timer pass or a pump gives each script it visits its
+    /// own, so a script that never returns costs this much once and does not keep the
+    /// scripts after it from their turn. Rust host handlers must return cooperatively;
+    /// they cannot be preempted.
     pub execution_timeout: Duration,
     /// QuickJS memory limit in bytes.
     pub memory_limit_bytes: usize,
@@ -123,6 +126,12 @@ pub struct EngineOptions {
     pub unknown_field_validation: UnknownFieldValidation,
     /// Optional JavaScript built-ins of every script context.
     pub builtins: ScriptBuiltins,
+    /// How many times a script may run out of its time or memory budget while an event,
+    /// a timer or an answer is delivered to it before it is quarantined: its handlers and
+    /// timers stop running until it is reloaded or unloaded, and
+    /// [`Engine::quarantined_scripts`](crate::Engine::quarantined_scripts) lists it.
+    /// `0` never quarantines. A script that throws an ordinary error is not faulting.
+    pub max_script_faults: u32,
 }
 
 impl Default for EngineOptions {
@@ -135,6 +144,7 @@ impl Default for EngineOptions {
             contract_validation: ContractValidation::Disabled,
             unknown_field_validation: UnknownFieldValidation::Allow,
             builtins: ScriptBuiltins::ALL,
+            max_script_faults: 3,
         }
     }
 }

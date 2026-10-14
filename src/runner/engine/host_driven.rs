@@ -41,6 +41,10 @@ impl Engine {
         let _budget = self.budget();
         let mut fired = 0;
         let mut first_error = None;
+        // A quarantined script's timers never fire.
+        let due = |script: &super::EngineScript| {
+            !script.quarantined.get() && script.signals.next_timer.is_due(now)
+        };
         // Scripts that follow one another in load order and share a context are served
         // in one visit to it, as `emit` does.
         let count = self.scripts.len();
@@ -59,22 +63,26 @@ impl Engine {
             let any_due = (start..end).any(|index| {
                 self.scripts
                     .get_index(index)
-                    .is_some_and(|(_, script)| script.signals.next_timer.is_due(now))
+                    .is_some_and(|(_, script)| due(script))
             });
             if any_due {
                 first.context.with(|ctx| {
                     for index in start..end {
-                        let Some((_, script)) = self.scripts.get_index(index) else {
+                        let Some((script_id, script)) = self.scripts.get_index(index) else {
                             continue;
                         };
-                        if !script.signals.next_timer.is_due(now) {
+                        if !due(script) {
                             continue;
                         }
                         fired += 1;
-                        if let Err(error) = run_due_timers(&ctx, &script.hooks.timers_run, now) {
+                        self.begin_slice();
+                        let outcome = run_due_timers(&ctx, &script.hooks.timers_run, now);
+                        let judged =
+                            self.judge_slice(script_id, script, outcome, || "a timer".to_owned());
+                        if let Err(error) = judged {
                             first_error.get_or_insert(error);
                         }
-                        if self.execution.should_stop() {
+                        if self.execution.interrupt_requested() {
                             stopped = true;
                             break;
                         }
@@ -88,6 +96,7 @@ impl Engine {
         self.earliest_timer.set(
             self.scripts
                 .values()
+                .filter(|script| !script.quarantined.get())
                 .map(|script| script.signals.next_timer.due())
                 .fold(f64::INFINITY, f64::min),
         );
@@ -95,6 +104,8 @@ impl Engine {
             // No JavaScript ran, so there is no Promise job to settle.
             return Ok(0);
         }
+        // The jobs the timers queued run under a budget of their own.
+        self.begin_slice();
         self.attribute_interrupt(self.settle(first_error.map_or(Ok(fired), Err)))
     }
 
@@ -136,14 +147,15 @@ impl Engine {
         let _budget = self.budget();
         let mut first_error = None;
         let mut stopped = false;
-        for script in self.scripts.values() {
-            if self.execution.interrupted() {
+        for (script_id, script) in &self.scripts {
+            if self.execution.interrupt_requested() {
                 stopped = true;
                 break;
             }
-            if !script.host_promises.has_ready() {
+            if script.quarantined.get() || !script.host_promises.has_ready() {
                 continue;
             }
+            self.begin_slice();
             let result = script.context.with(|ctx| {
                 script
                     .host_promises
@@ -151,7 +163,10 @@ impl Engine {
                     .catch(&ctx)
                     .map_err(caught_js_error)
             });
-            if let Err(error) = result {
+            let judged = self.judge_slice(script_id, script, result.map(drop), || {
+                "a host answer".to_owned()
+            });
+            if let Err(error) = judged {
                 first_error.get_or_insert(error);
             }
         }
@@ -159,6 +174,8 @@ impl Engine {
             // Answers may still wait: the next pump looks again.
             self.host_wake.store(true, Ordering::Release);
         }
+        // The jobs the answers queued run under a budget of their own.
+        self.begin_slice();
         self.attribute_interrupt(self.settle(first_error.map_or(Ok(()), Err)))
     }
 

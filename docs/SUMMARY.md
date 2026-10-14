@@ -12,4 +12,5 @@
 - [Load Scripts And Projects](guides/load-scripts-and-projects.md)
 - [Use Native Bytes](guides/native-bytes.md)
 - [Runtime Guarantees](guides/runtime-guarantees.md)
+- [Untrusted Mods](guides/untrusted-mods.md)
 - [Migrate From rustts](guides/migrating-from-rustts.md)

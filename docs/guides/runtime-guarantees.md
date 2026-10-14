@@ -36,9 +36,10 @@ their internal module id, and that holds within a context group too.
 `EngineOptions::execution_timeout` defaults to 5 seconds. It limits each load,
 call, emit, request, deferred start, `pump`, and `advance_timers`, starting
 when that operation starts, after transpilation and module resolution: host
-function time and Promise jobs count. One `emit`, `request`, `pump` or
-`advance_timers` has one budget for all scripts it reaches. Suspended time
-between host operations does not consume a budget.
+function time and Promise jobs count. An `emit`, `request`, `pump` or
+`advance_timers` gives **each script it reaches a budget of its own**, so a script
+that never returns costs one timeout and the scripts after it still run. Suspended
+time between host operations does not consume a budget.
 
 QuickJS's interrupt handler stops JavaScript still running when the budget
 expires; the operation fails with `EngineError::Execution` and the engine stays
@@ -54,11 +55,22 @@ same QuickJS interrupt checks: the operation fails with `EngineError::Interrupte
 the engine stays usable. An interrupt requested while nothing runs has no effect on
 the next operation. Like the budget, it cannot stop a blocked Rust host function.
 
-An exhausted budget or an interrupt stops an `emit`, `request` or `advance_timers`
-at the handler or timer that hit it: the remaining handlers do not run, and the
-timers of the scripts not reached yet stay due for the next `advance_timers`. An
-interrupt that reaches a `ctx.hot.save` or `ctx.hot.dispose` callback also
+An exhausted budget makes the script fault, not the whole operation fail: the
+operation goes on with the next script and returns the first error, which names the
+script. A script that runs out of its time or memory
+`EngineOptions::max_script_faults` times (3 by default, 0 to disable) while an event,
+a timer or a host answer is delivered to it is **quarantined**: its handlers and timers
+no longer run, its pending host answers are dropped, and `Engine::quarantined_scripts`
+lists it. `call` still reaches its exports. Reloading it with `load_script` replaces it
+with a fresh script; unloading it also frees what it holds. An interrupt requested
+through an `InterruptHandle` still stops the whole `emit`, `request` or
+`advance_timers` at the handler or timer it reached, and is not a fault. An interrupt
+that reaches a `ctx.hot.save` or `ctx.hot.dispose` callback also
 surfaces as `EngineError::Interrupted`.
+
+The memory limit is one pool for the whole engine: a script cannot be given a quota
+inside it. See [Untrusted Mods](untrusted-mods.md) for what that means for code you do
+not trust.
 
 Deferred results are observed through `PendingCall`; only engine operations
 execute JavaScript. `HostResolver::resolve` and `reject` enqueue responses from

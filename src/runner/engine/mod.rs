@@ -35,6 +35,7 @@ use super::transpile::Transpiler;
 use super::web::WebBytecode;
 
 mod dispatch;
+mod faults;
 mod host_driven;
 mod invoke;
 mod lifecycle;
@@ -81,6 +82,7 @@ pub struct Engine {
     next_graph_id: u64,
     execution: Arc<ExecutionControl>,
     execution_timeout: Duration,
+    max_script_faults: u32,
     console: ConsoleSink,
     timer_clock: TimerClock,
     /// Which scripts listen to each event, for `emit` and `request`.
@@ -122,6 +124,12 @@ struct EngineScript {
     signals: ScriptSignals,
     module_ids: Vec<String>,
     origin: ScriptOrigin,
+    /// How many times the script ran out of its time or memory while an event, a timer or
+    /// an answer was delivered to it.
+    faults: Cell<u32>,
+    /// Whether it faulted `max_script_faults` times: its handlers and timers no longer
+    /// run. A reload makes a new script, which starts with none.
+    quarantined: Cell<bool>,
 }
 
 impl EngineScript {
@@ -213,6 +221,7 @@ impl Engine {
             next_graph_id: 0,
             execution,
             execution_timeout: options.execution_timeout,
+            max_script_faults: options.max_script_faults,
             console: ConsoleSink::default(),
             timer_clock: TimerClock::default(),
             earliest_timer: EarliestDue::default(),

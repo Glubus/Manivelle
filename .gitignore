@@ -6,3 +6,5 @@ node_modules/
 # Test fixtures ship their own packages.
 !tests/projects/**/node_modules/
 AGENTS.md
+# Local agent tooling (project-scoped plugins).
+.omp/
