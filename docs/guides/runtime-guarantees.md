@@ -24,7 +24,7 @@ context, its built-ins and its global object. A group is a trust boundary: put o
 scripts that trust each other in one (see
 [Context Groups](engine.md#context-groups)). Scripts of the same `Engine` share its
 QuickJS runtime: memory limit, stack limit and garbage collector. This is not
-process isolation or a per-script memory quota. Host functions are capabilities
+process isolation, and a per-script memory quota is optional accounting. Host functions are capabilities
 granted to every script of that engine.
 
 A script's imports resolve only to the registered host modules and to the modules of
@@ -69,9 +69,9 @@ through an `InterruptHandle` still stops the whole `emit`, `request` or
 that reaches a `ctx.hot.save` or `ctx.hot.dispose` callback also
 surfaces as `EngineError::Interrupted`.
 
-The memory limit is one pool for the whole engine: a script cannot be given a quota
-inside it. See [Untrusted Mods](untrusted-mods.md) for what that means for code you do
-not trust.
+The memory limit is one pool for the whole engine. A per-script quota inside it
+(`EngineOptions::script_memory_limit_bytes`) is accounting, not isolation: see
+[Untrusted Mods](untrusted-mods.md) for what it covers and for code you do not trust.
 
 Deferred results are observed through `PendingCall`; only engine operations
 execute JavaScript. `HostResolver::resolve` and `reject` enqueue responses from

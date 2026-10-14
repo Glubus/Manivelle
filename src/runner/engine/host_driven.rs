@@ -75,6 +75,7 @@ impl Engine {
         args: impl JsArgs,
     ) -> Result<PendingCall<R>, EngineError> {
         let script = self.script(script_id)?;
+        let _charge = self.charge_to(script);
         let _budget = self.budget();
         let result = script.context.with(|ctx| {
             let export = script.export(&self.export_atoms, &ctx, script_id, function)?;
@@ -192,6 +193,7 @@ impl Engine {
         for script in self.scripts.values() {
             let mut tasks = script.tasks.borrow_mut();
             if !tasks.is_empty() {
+                let _charge = self.charge_to(script);
                 let before = tasks.len();
                 script.context.with(|ctx| {
                     tasks.retain_mut(|task| !task.poll(&ctx, &self.rejections, &self.module_store));

@@ -30,7 +30,7 @@ cannot do, what it can do to the others, and how to run code you do not trust.
 | --- | --- |
 | A handler, timer or Promise job that never returns | Interrupted after `execution_timeout`, charged to the script that queued it; the scripts after it still run |
 | The same script, again and again | Quarantined after `max_script_faults` faults (3 by default) |
-| Allocating until the pool is full | The pool is one per engine, so the others can fail to allocate while it holds memory. Only the first script to fail for lack of memory in an operation is counted as faulting, so the victims are not all quarantined, but the one counted may be a victim if the hog catches the error |
+| Allocating until the pool is full | With `script_memory_limit_bytes` set, the script that goes over its quota fails alone: a fault of its own, counted and attributed, while the others keep their share (see below). Without a quota the pool is one per engine, so the others can fail to allocate while it holds memory; only the first script to fail for lack of memory in an operation is counted as faulting, so the victims are not all quarantined, but the one counted may be a victim if the hog catches the error |
 | Patching `Array.prototype`, `Object`, `JSON`... | Changes every script **of its context group**, and no script in a context of its own |
 | Reading or rewriting a neighbour's data and handlers in a context group | Possible: a group shares one global object. A neighbour can also cause a script to be quarantined |
 | Flooding the `console` | The sink receives every message untouched and at any size: a script can forge log lines and terminal escapes, and a slow sink slows the host |
@@ -42,13 +42,20 @@ cannot do, what it can do to the others, and how to run code you do not trust.
 1. **One context per untrusted script.** Use `load_script` and `load_project`, not
    `load_script_in`: a context group is a trust boundary, meant for scripts that trust
    each other (your own UI and HUD scripts, say).
-2. **One `Engine` per untrusted mod.** The memory limit
-   (`EngineOptions::memory_limit_bytes`) is one pool per engine, and QuickJS has no
-   per-script quota inside it. A mod that holds memory leaves less for the others of its
-   engine, and quarantine cannot tell the hog from its victims reliably. An `Engine` per
-   mod gives each its own pool, its own time budget and its own quarantine list; an
-   `Engine` costs one QuickJS runtime. Create it on the thread that will run it, and give
-   that thread a stack larger than `max_stack_size_bytes`.
+2. **Give each mod a quota, or an `Engine` of its own.** The memory limit
+   (`EngineOptions::memory_limit_bytes`) is one pool per engine. Set
+   `EngineOptions::script_memory_limit_bytes` and each script is charged for what it
+   allocates while it runs and credited when it frees it: a script over its quota fails
+   with an out of memory error of its own, counted as a fault (and quarantined at
+   `max_script_faults`), and `Engine::script_memory_bytes` tells you what it holds. The
+   quota costs nothing measurable and is off by default. It is a share of a pool, not a
+   wall: allocations made while no script runs are charged to none, what scripts share
+   (the atom table, the first compile of the runtime prelude) is charged to whoever
+   created it, and the pool's own limit still bounds the sum. For code you cannot afford
+   to have near the others, an `Engine` per mod gives each its own pool, its own time
+   budget and its own quarantine list at the cost of one QuickJS runtime (about 0.3 MiB
+   idle). Create it on the thread that will run it, and give that thread a stack larger
+   than `max_stack_size_bytes`.
 3. **Set the budgets for your frame, not for a batch job.** The default timeout is 5
    seconds, long enough to freeze a game. Pick something near what a frame can spare
    (`EngineOptions::execution_timeout`), and read `Engine::quarantined_scripts()` to tell

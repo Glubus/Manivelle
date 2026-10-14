@@ -4,6 +4,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -28,6 +29,7 @@ use super::interrupt::InterruptHandle;
 use super::memory::memory_stats;
 use super::module_loader::{MemoryModuleLoader, MemoryModuleResolver, ModuleStore, ScriptEnvs};
 use super::promise_rejections::UnhandledRejections;
+use super::quota::{Owner, Quota, QuotaAllocator};
 use super::retained::{KeptAtoms, Retained};
 use super::tasks::{RequestGuard, ScriptTask};
 use super::timers::{EarliestDue, NextTimer, TimerClock};
@@ -87,6 +89,8 @@ pub struct Engine {
     /// Whether a script already faulted for lack of memory in the running operation: the
     /// pool is shared, so the scripts that fail after the first are not counted.
     memory_fault_seen: Cell<bool>,
+    /// The books of the per-script memory quota; `None` when no quota is set.
+    quota: Option<Rc<Quota>>,
     console: ConsoleSink,
     timer_clock: TimerClock,
     /// Which scripts listen to each event, for `emit` and `request`.
@@ -131,6 +135,8 @@ struct EngineScript {
     /// How many times the script ran out of its time or memory while an event, a timer or
     /// an answer was delivered to it.
     faults: Cell<u32>,
+    /// The script's seat in the memory quota's books.
+    owner: Option<Owner>,
     /// Whether it faulted `max_script_faults` times: its handlers and timers no longer
     /// run. A reload makes a new script, which starts with none.
     quarantined: Cell<bool>,
@@ -213,7 +219,9 @@ impl Engine {
         let module_store = ModuleStore::default();
         let execution = Arc::new(ExecutionControl::default());
         let envs = ScriptEnvs::default();
-        let runtime = new_runtime(options, &module_store, &execution, &envs)?;
+        let quota = (options.script_memory_limit_bytes != usize::MAX)
+            .then(|| Quota::new(options.script_memory_limit_bytes));
+        let runtime = new_runtime(options, quota.as_ref(), &module_store, &execution, &envs)?;
         Ok(Self {
             scripts: IndexMap::default(),
             active_tasks: Cell::new(0),
@@ -228,6 +236,7 @@ impl Engine {
             execution_timeout: options.execution_timeout,
             max_script_faults: options.max_script_faults,
             memory_fault_seen: Cell::new(false),
+            quota,
             console: ConsoleSink::default(),
             timer_clock: TimerClock::default(),
             earliest_timer: EarliestDue::default(),
@@ -262,6 +271,16 @@ impl Engine {
     /// QuickJS memory counters for the whole engine.
     pub fn memory_stats(&self) -> MemoryStats {
         memory_stats(self.runtime.memory_usage())
+    }
+
+    /// The QuickJS memory, in bytes, the script holds against its quota
+    /// (`EngineOptions::script_memory_limit_bytes`): what it allocated while it ran and
+    /// has not freed, its context included. Cycles it left are counted until
+    /// [`Engine::run_gc`] collects them. `None` when the engine has no quota; an error
+    /// when the script is not loaded.
+    pub fn script_memory_bytes(&self, script_id: &str) -> Result<Option<u64>, EngineError> {
+        let script = self.script(script_id)?;
+        Ok(script.owner.as_ref().map(|owner| owner.used() as u64))
     }
 
     /// Collects now the garbage that reference counting cannot free: objects that only
@@ -344,11 +363,16 @@ impl EngineScript {
 
 fn new_runtime(
     options: &EngineOptions,
+    quota: Option<&Rc<Quota>>,
     module_store: &ModuleStore,
     execution: &Arc<ExecutionControl>,
     envs: &ScriptEnvs,
 ) -> Result<Runtime, EngineError> {
-    let runtime = Runtime::new().map_err(js_error)?;
+    let runtime = match quota {
+        Some(quota) => Runtime::new_with_alloc(QuotaAllocator::new(Rc::clone(quota))),
+        None => Runtime::new(),
+    }
+    .map_err(js_error)?;
     runtime.set_memory_limit(options.memory_limit_bytes);
     runtime.set_max_stack_size(options.max_stack_size_bytes);
     runtime.set_loader(

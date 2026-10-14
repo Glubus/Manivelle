@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2
+
+### Added
+
+- A per-script memory quota, `EngineOptions::script_memory_limit_bytes` (off by default,
+  and then free): the engine charges each script for what it allocates while it runs
+  and credits it when it frees it, so a script over its quota fails alone with an error
+  that names it, counted as a fault, while the others of the engine keep their share.
+  `Engine::script_memory_bytes` reads what a script holds. It is accounting inside one
+  pool, not isolation: see [Untrusted Mods](docs/guides/untrusted-mods.md).
+
 ## 0.1.1
 
 ### Added

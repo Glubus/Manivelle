@@ -452,6 +452,34 @@ raise `memory_limit_bytes` for more. A load that hits the limit fails with an er
 saying so (`out of memory: ... memory_limit_bytes`) and keeps the scripts already
 loaded.
 
+### Per-Script Quota
+
+`memory_limit_bytes` is one pool for every script. To keep one script from taking the
+others' share, set `EngineOptions::script_memory_limit_bytes`: the most one script may
+hold. The engine charges a script for what it allocates while it runs (its load, its
+calls, the events, timers and answers delivered to it) and credits it when the value is
+freed, the garbage collector's frees included. A script over its quota fails the
+operation that allocates, with an error naming it and the quota; in an emission, a
+timer pass or a pump that is also a fault, counted against `max_script_faults`.
+
+```rust
+let mut engine = Engine::new(&EngineOptions {
+    memory_limit_bytes: 256 * 1024 * 1024,
+    script_memory_limit_bytes: 16 * 1024 * 1024, // per mod
+    ..EngineOptions::default()
+})?;
+// ...
+let held = engine.script_memory_bytes("my_mod")?; // Some(bytes) with a quota
+```
+
+- A script's context counts: an empty one holds about 190 KiB with every built-in on.
+  `ScriptBuiltins` shrinks it.
+- Cycles a script drops count until `run_gc` (or the automatic collection) frees them.
+- It is off by default (`usize::MAX`), and then costs nothing. Measured on an
+  allocation-heavy script, a quota changes the time by less than the noise.
+- It is accounting inside one pool, not a security boundary; see
+  [Untrusted Mods](untrusted-mods.md).
+
 ### Script Built-ins
 
 Creating a context is the main cost of loading a script. By default a context has

@@ -9,6 +9,7 @@ use std::time::Duration;
 use rquickjs::{Ctx, qjs};
 
 use super::super::errors::{OUT_OF_MEMORY, pending_exception};
+use super::super::quota::ChargeGuard;
 use super::dispatch::NULL_EXCEPTION;
 use super::{Engine, EngineScript};
 use crate::error::EngineError;
@@ -20,6 +21,9 @@ enum Fault {
     Budget,
     /// It failed for lack of memory.
     Memory,
+    /// It went over its own memory quota, of this many bytes
+    /// (`EngineOptions::script_memory_limit_bytes`).
+    Quota(usize),
 }
 
 /// Where a script stands after a fault was counted against it.
@@ -61,10 +65,47 @@ impl Engine {
         what: impl FnOnce() -> String,
         body: impl FnOnce() -> Result<(), EngineError>,
     ) -> Result<(), EngineError> {
+        let _charge = self.charge_to(script);
         self.execution.restart_slice();
         let outcome = body();
         let jobs = drain_jobs(ctx);
         self.judge_slice(ctx, id, script, outcome.and(jobs), what)
+    }
+
+    /// Charges the memory the script allocates, until the guard drops, to its quota; `None`
+    /// when there is no quota.
+    pub(super) fn charge_to(&self, script: &EngineScript) -> Option<ChargeGuard<'_>> {
+        let (quota, owner) = (self.quota.as_ref()?, script.owner.as_ref()?);
+        Some(quota.charge_to(owner))
+    }
+
+    /// `result` with a failure for lack of memory named for what it is when the script
+    /// went over its own quota, for the operations that are not slices (a call): a slice
+    /// also counts the fault, a call does not.
+    pub(super) fn explain_quota<T>(
+        &self,
+        id: &str,
+        script: &EngineScript,
+        what: impl FnOnce() -> String,
+        result: Result<T, EngineError>,
+    ) -> Result<T, EngineError> {
+        let (Err(EngineError::Execution { details }), Some(quota), Some(owner)) =
+            (&result, &self.quota, &script.owner)
+        else {
+            return result;
+        };
+        if !looks_like_exhaustion(details) || !owner.take_refused() {
+            return result;
+        }
+        Err(EngineError::Execution {
+            details: fault_message(
+                id,
+                &what(),
+                Fault::Quota(quota.limit()),
+                Standing::Unlimited,
+                self.execution_timeout,
+            ),
+        })
     }
 
     /// Starts a budget for the work that follows a multi-script operation (its settling).
@@ -85,7 +126,7 @@ impl Engine {
         outcome: Result<(), EngineError>,
         what: impl FnOnce() -> String,
     ) -> Result<(), EngineError> {
-        let Some(fault) = self.fault_of(ctx, &outcome) else {
+        let Some(fault) = self.fault_of(ctx, script, &outcome) else {
             return outcome;
         };
         let standing = self.count_fault(script);
@@ -99,13 +140,27 @@ impl Engine {
     /// The memory pool is shared, so a script that fails to allocate may be the victim of
     /// another one that holds the memory. Only the first script to fail for lack of memory
     /// in an operation is counted: those after it are reported, but not faulted.
-    fn fault_of(&self, ctx: &Ctx<'_>, outcome: &Result<(), EngineError>) -> Option<Fault> {
+    fn fault_of(
+        &self,
+        ctx: &Ctx<'_>,
+        script: &EngineScript,
+        outcome: &Result<(), EngineError>,
+    ) -> Option<Fault> {
         if self.execution.slice_expired() {
             return Some(Fault::Budget);
         }
         let Err(EngineError::Execution { details }) = outcome else {
             return None;
         };
+        // A script over its own quota is the culprit whatever the pool holds.
+        if looks_like_exhaustion(details)
+            && script
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.take_refused())
+        {
+            return self.quota.as_ref().map(|quota| Fault::Quota(quota.limit()));
+        }
         let ran_out_of_memory = details.starts_with(OUT_OF_MEMORY)
             || (looks_like_exhaustion(details) && pool_nearly_full(ctx));
         (ran_out_of_memory && !self.memory_fault_seen.replace(true)).then_some(Fault::Memory)
@@ -175,6 +230,9 @@ fn fault_message(
     let cause = match fault {
         Fault::Budget => format!("ran out of its execution budget ({timeout:?})"),
         Fault::Memory => "ran out of memory".to_owned(),
+        Fault::Quota(limit) => format!(
+            "went over its memory quota ({limit} bytes, `EngineOptions::script_memory_limit_bytes`)"
+        ),
     };
     let consequence = match standing {
         Standing::Unlimited => String::new(),

@@ -21,6 +21,7 @@ use super::super::errors::{caught_js_error, js_error};
 use super::super::host_fn::HostFnClass;
 use super::super::host_promises::HostPromises;
 use super::super::module_loader::{ENV_SPECIFIER, ModuleStore, RuntimeModuleGraph};
+use super::super::quota::{Owner, Quota};
 use super::super::retained::Retained;
 use super::super::timers::timer_hooks;
 use super::super::web;
@@ -61,6 +62,7 @@ struct Mounted {
     signals: ScriptSignals,
     host_promises: HostPromises,
     hooks: ScriptHooks,
+    owner: Option<Owner>,
 }
 
 /// What a script is being mounted with: who it is, its module graph, what its context
@@ -325,6 +327,7 @@ impl Engine {
                         module_ids: graph.module_ids,
                         origin,
                         faults: Cell::new(0),
+                        owner: mounted.owner,
                         quarantined: Cell::new(false),
                     },
                 )
@@ -346,6 +349,7 @@ impl Engine {
             return Ok(None);
         };
         let _budget = self.budget();
+        let _charge = self.charge_to(script);
         let saved = script.context.with(|ctx| {
             call_hot_hook(&ctx, &script.hooks.hot_save).map(|data| Persistent::save(&ctx, data))
         });
@@ -374,6 +378,14 @@ impl Engine {
         // below borrows mutably.
         let execution = Arc::clone(&self.execution);
         let _budget = execution.enter(self.execution_timeout);
+        // Everything the mount allocates, the context included, is the script's. Held
+        // through a handle of its own: `self` is borrowed mutably below.
+        let quota = self.quota.clone();
+        let owner = quota.as_ref().map(Quota::new_owner);
+        let _charge = quota
+            .as_deref()
+            .zip(owner.as_ref())
+            .map(|(q, o)| q.charge_to(o));
         let created_group = group.is_some_and(|name| !self.groups.contains_key(name));
         let target = match self.target(group) {
             Ok(target) => target,
@@ -401,6 +413,7 @@ impl Engine {
                 signals,
                 host_promises,
                 hooks,
+                owner,
             }),
             Err(error) => {
                 self.roll_back_mount(graph, group.filter(|_| created_group));
@@ -688,6 +701,7 @@ impl Engine {
     /// Calls a retired version's `ctx.hot.dispose` callbacks, in registration order.
     fn dispose(&self, script: &EngineScript) -> Disposed {
         let _budget = self.budget();
+        let _charge = self.charge_to(script);
         let disposed = script
             .context
             .with(|ctx| call_hot_hook(&ctx, &script.hooks.hot_dispose).map(|_| ()));

@@ -11,6 +11,7 @@ mod interrupt;
 mod memory;
 mod module_loader;
 mod promise_rejections;
+mod quota;
 mod retained;
 mod tasks;
 mod timers;

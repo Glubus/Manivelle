@@ -30,6 +30,7 @@ impl Engine {
         args: impl JsArgs,
     ) -> Result<R, EngineError> {
         let script = self.script(script_id)?;
+        let _charge = self.charge_to(script);
         let _budget = self.budget();
         let result = script.context.with(|ctx| {
             let export = script.export(&self.export_atoms, &ctx, script_id, function)?;
@@ -47,6 +48,12 @@ impl Engine {
                 .catch(&ctx)
                 .map_err(caught_js_error)
         });
+        let result = self.explain_quota(
+            script_id,
+            script,
+            || format!("function `{function}`"),
+            result,
+        );
         self.attribute_interrupt(self.settle(result))
     }
 

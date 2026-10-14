@@ -137,6 +137,20 @@ pub struct EngineOptions {
     /// [`Engine::quarantined_scripts`](crate::Engine::quarantined_scripts) lists it.
     /// `0` never quarantines. A script that throws an ordinary error is not faulting.
     pub max_script_faults: u32,
+    /// The most QuickJS memory one script may hold, in bytes, inside the engine's
+    /// `memory_limit_bytes` pool: a script that asks for more fails with an out of memory
+    /// error of its own, counted as a fault (see `max_script_faults`), while the other
+    /// scripts keep their share. `usize::MAX` (the default) sets no quota, and the
+    /// engine then pays nothing for the accounting. `0` is refused.
+    ///
+    /// A script is charged for the allocations made while it runs (its load, its calls,
+    /// the events, timers and answers delivered to it) and credited when its values are
+    /// freed, the garbage collector's frees included. Its context, its built-ins and its
+    /// module graph count: with every built-in on, an empty script holds about 190 KiB.
+    /// Allocations made while no script runs are not charged to any, and the engine's
+    /// pool still bounds the total. A quota shares a pool; it is not a boundary against a
+    /// hostile script (see the Untrusted Mods guide).
+    pub script_memory_limit_bytes: usize,
 }
 
 impl EngineOptions {
@@ -162,6 +176,12 @@ impl EngineOptions {
                 "QuickJS would not limit memory; set a limit, or usize::MAX for none",
             );
         }
+        if self.script_memory_limit_bytes == 0 {
+            return refused(
+                "script_memory_limit_bytes",
+                "no script could allocate; set a quota, or usize::MAX for none",
+            );
+        }
         Ok(())
     }
 }
@@ -177,6 +197,7 @@ impl Default for EngineOptions {
             unknown_field_validation: UnknownFieldValidation::Allow,
             builtins: ScriptBuiltins::ALL,
             max_script_faults: 3,
+            script_memory_limit_bytes: usize::MAX,
         }
     }
 }
