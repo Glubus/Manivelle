@@ -33,7 +33,7 @@ enum Purpose {
 /// Integral numbers within the JavaScript safe range become integer JSON numbers, as
 /// `JSON.stringify` followed by `serde_json` would produce. Non-finite numbers fail.
 pub(crate) fn js_value_to_json<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Value> {
-    to_json(ctx, value, Purpose::Json)
+    to_json(ctx, value, Purpose::Json, 0)
 }
 
 /// Converts one QuickJS value into the snapshot contract validation checks.
@@ -46,7 +46,7 @@ pub(crate) fn js_value_to_validation_snapshot<'js>(
     ctx: &Ctx<'js>,
     value: JsValue<'js>,
 ) -> JsResult<Value> {
-    to_json(ctx, value, Purpose::Validation)
+    to_json(ctx, value, Purpose::Validation, 0)
 }
 
 /// The JavaScript number a snapshot number stands for, non-finite stand-ins included.
@@ -59,7 +59,26 @@ pub(crate) fn snapshot_number(number: &Number) -> Option<f64> {
     }
 }
 
-fn to_json<'js>(ctx: &Ctx<'js>, value: JsValue<'js>, purpose: Purpose) -> JsResult<Value> {
+/// How deeply arrays and objects may nest in a value that crosses into Rust as JSON: the
+/// limit `serde_json` puts on parsing. A script controls its values, and this walk
+/// recurses on the Rust stack, which QuickJS's stack limit does not cover: a cyclic array
+/// or a 100 000 level nesting would otherwise overflow the host's stack and abort it.
+const MAX_JSON_DEPTH: usize = 128;
+
+fn too_deep(value: &JsValue<'_>) -> JsError {
+    JsError::new_from_js_message(
+        value.type_name(),
+        "json",
+        "value is nested too deeply or contains a cycle",
+    )
+}
+
+fn to_json<'js>(
+    ctx: &Ctx<'js>,
+    value: JsValue<'js>,
+    purpose: Purpose,
+    depth: usize,
+) -> JsResult<Value> {
     if value.is_null() || value.is_undefined() {
         return Ok(Value::Null);
     }
@@ -76,16 +95,22 @@ fn to_json<'js>(ctx: &Ctx<'js>, value: JsValue<'js>, purpose: Purpose) -> JsResu
         return String::from_js(ctx, value).map(Value::String);
     }
     if value.is_array() {
-        return array_to_json(ctx, &Array::from_js(ctx, value)?, purpose);
+        if depth >= MAX_JSON_DEPTH {
+            return Err(too_deep(&value));
+        }
+        return array_to_json(ctx, &Array::from_js(ctx, value)?, purpose, depth + 1);
     }
     if value.is_object() {
+        if depth >= MAX_JSON_DEPTH {
+            return Err(too_deep(&value));
+        }
         let object = Object::from_js(ctx, value)?;
         if purpose == Purpose::Validation
             && let Some(bytes) = bytes_snapshot(&object)
         {
             return Ok(bytes);
         }
-        return object_to_json(ctx, &object, purpose);
+        return object_to_json(ctx, &object, purpose, depth + 1);
     }
     Err(JsError::new_from_js_message(
         value.type_name(),
@@ -94,23 +119,33 @@ fn to_json<'js>(ctx: &Ctx<'js>, value: JsValue<'js>, purpose: Purpose) -> JsResu
     ))
 }
 
-fn array_to_json<'js>(ctx: &Ctx<'js>, array: &Array<'js>, purpose: Purpose) -> JsResult<Value> {
+fn array_to_json<'js>(
+    ctx: &Ctx<'js>,
+    array: &Array<'js>,
+    purpose: Purpose,
+    depth: usize,
+) -> JsResult<Value> {
     let len = array_length(array, "json")?;
     let mut items = Vec::with_capacity(cautious_capacity::<Value>(len));
     for index in 0..len {
-        let item =
-            to_json(ctx, array.get(index)?, purpose).map_err(|error| at_index(error, index))?;
+        let item = to_json(ctx, array.get(index)?, purpose, depth)
+            .map_err(|error| at_index(error, index))?;
         items.push(item);
     }
     Ok(Value::Array(items))
 }
 
-fn object_to_json<'js>(ctx: &Ctx<'js>, object: &Object<'js>, purpose: Purpose) -> JsResult<Value> {
+fn object_to_json<'js>(
+    ctx: &Ctx<'js>,
+    object: &Object<'js>,
+    purpose: Purpose,
+    depth: usize,
+) -> JsResult<Value> {
     let mut map = Map::new();
     for property in object.own_props::<JsString<'js>, JsValue<'js>>(Filter::default()) {
         let (key, value) = property?;
         let key = key.to_string()?;
-        let value = to_json(ctx, value, purpose)
+        let value = to_json(ctx, value, purpose, depth)
             .map_err(|error| at_path(error, format_args!("[{key}]")))?;
         map.insert(key, value);
     }

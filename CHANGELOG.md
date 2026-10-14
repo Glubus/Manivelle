@@ -36,7 +36,12 @@ release 0.3.0); the history of `rustts` stays in that project's tags.
   `EngineOptions::max_script_faults` times (3 by default) is quarantined, and
   `Engine::quarantined_scripts` lists it. See
   [Untrusted Mods](docs/guides/untrusted-mods.md).
-- The `manivelle` tool: `manivelle init --from <program>` asks a program that opted in
+- The `manivelle` tool (feature `cli`, `cargo install manivelle --features cli`):
+  `manivelle init --from <program>` asks a program that opted in
   (`manivelle::export_sdk_if_requested`) for its scripting API and sets up a script
   project around the TypeScript declarations it gets; `manivelle sdk` writes them from
   a descriptors file.
+- Hardening for untrusted scripts: values crossing into Rust as JSON nest at most 128
+  levels (a cyclic value is an error, not a stack overflow), `TextEncoder` output counts
+  against `memory_limit_bytes`, Promise jobs are charged to the script that queued them,
+  and `EngineOptions` refuses a stack or memory limit of 0 (`EngineError::InvalidOptions`).

@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::error::EngineError;
+
 /// Host contract validation policy.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ContractValidation {
@@ -114,11 +116,14 @@ pub struct EngineOptions {
     /// whole budget; an emission, a timer pass or a pump gives each script it visits its
     /// own, so a script that never returns costs this much once and does not keep the
     /// scripts after it from their turn. Rust host handlers must return cooperatively;
-    /// they cannot be preempted.
+    /// they cannot be preempted. [`Duration::MAX`] means no limit, and `Duration::ZERO`
+    /// fails every operation at its first check.
     pub execution_timeout: Duration,
-    /// QuickJS memory limit in bytes.
+    /// QuickJS memory limit in bytes, for the whole engine: one pool that every script
+    /// shares. `0` is refused (QuickJS reads it as unlimited); `usize::MAX` is.
     pub memory_limit_bytes: usize,
-    /// QuickJS stack limit in bytes.
+    /// QuickJS stack limit in bytes. `0` is refused (QuickJS reads it as no limit). It must
+    /// fit in the stack of the thread that runs the engine, which is the host's to size.
     pub max_stack_size_bytes: usize,
     /// Host contract validation policy.
     pub contract_validation: ContractValidation,
@@ -132,6 +137,33 @@ pub struct EngineOptions {
     /// [`Engine::quarantined_scripts`](crate::Engine::quarantined_scripts) lists it.
     /// `0` never quarantines. A script that throws an ordinary error is not faulting.
     pub max_script_faults: u32,
+}
+
+impl EngineOptions {
+    /// Refuses the values that would turn a protection off rather than configure it: QuickJS
+    /// reads a stack limit of 0 as "no limit" (a script's runaway recursion would then
+    /// overflow the host's stack and abort it) and a memory limit of 0 as "unlimited".
+    /// An unlimited time budget is [`Duration::MAX`], which is explicit.
+    pub(crate) fn validate(&self) -> Result<(), EngineError> {
+        let refused = |option: &str, why: &str| {
+            Err(EngineError::InvalidOptions {
+                details: format!("`{option}` is 0: {why}"),
+            })
+        };
+        if self.max_stack_size_bytes == 0 {
+            return refused(
+                "max_stack_size_bytes",
+                "QuickJS would not limit the stack, and runaway recursion would overflow the host's",
+            );
+        }
+        if self.memory_limit_bytes == 0 {
+            return refused(
+                "memory_limit_bytes",
+                "QuickJS would not limit memory; set a limit, or usize::MAX for none",
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Default for EngineOptions {

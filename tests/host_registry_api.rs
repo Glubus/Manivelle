@@ -322,6 +322,7 @@ fn registry_writes_sdk_files() {
     assert!(sdk.contains("export const user = {"));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn manivelle_sdk_command_writes_files_from_descriptor_json() {
     let cache_dir = TestCacheDir::new("host-registry-sdk-bin");

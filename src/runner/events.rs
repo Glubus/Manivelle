@@ -4,12 +4,12 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use rquickjs::{Array, Ctx, Function, Value as JsValue, qjs};
+use rquickjs::{Array, Ctx, Function, Value as JsValue};
 use rustc_hash::FxBuildHasher;
 
-use super::errors::{js_error, pending_exception};
+use super::errors::js_error;
 use super::execution::ExecutionControl;
-use super::retained::Retained;
+use super::retained::{Retained, release_value, take_value};
 use crate::error::EngineError;
 
 /// Handler lists of one context, by event name, as the prelude hands them over: only
@@ -199,36 +199,8 @@ pub(super) fn deliver<'js>(
     mut on_return: impl FnMut(JsValue<'js>) -> Result<(), EngineError>,
 ) -> Result<(), EngineError> {
     let mut first_error = None;
-    let mut arguments = [payload.as_raw()];
     for handler in handlers {
-        // SAFETY: `handler.value` is a live function of this runtime and `arguments`
-        // holds the payload, a value of `ctx`: `JS_Call` borrows both, and `this` is
-        // `undefined`, which needs no release.
-        let returned = unsafe {
-            qjs::JS_Call(
-                ctx.as_raw().as_ptr(),
-                handler.raw(),
-                qjs::JS_UNDEFINED,
-                1,
-                arguments.as_mut_ptr(),
-            )
-        };
-        // SAFETY: `returned` is the value `JS_Call` just gave back.
-        let outcome = if unsafe { qjs::JS_IsException(returned) } {
-            Err(pending_exception(ctx))
-        } else if keep_results {
-            // SAFETY: `returned` is an owned value of `ctx`, which the wrapper releases.
-            on_return(unsafe { JsValue::from_raw(ctx.clone(), returned) })
-        } else {
-            // SAFETY: `returned` is an owned value of `ctx` that nothing else releases;
-            // `undefined`, the usual result, holds no reference and is skipped.
-            unsafe {
-                if !qjs::JS_IsUndefined(returned) {
-                    qjs::JS_FreeValue(ctx.as_raw().as_ptr(), returned);
-                }
-            }
-            Ok(())
-        };
+        let outcome = call_handler(ctx, handler, payload, keep_results, &mut on_return);
         if let Err(error) = outcome {
             first_error.get_or_insert(error);
         }
@@ -237,4 +209,24 @@ pub(super) fn deliver<'js>(
         }
     }
     first_error.map_or(Ok(()), Err)
+}
+
+/// Calls one handler with the payload, and hands what it returned to `on_return`, or drops
+/// it unread.
+fn call_handler<'js>(
+    ctx: &Ctx<'js>,
+    handler: &Retained,
+    payload: &JsValue<'js>,
+    keep_results: bool,
+    on_return: &mut impl FnMut(JsValue<'js>) -> Result<(), EngineError>,
+) -> Result<(), EngineError> {
+    let returned = handler.call(ctx, &mut [payload.as_raw()])?;
+    if keep_results {
+        // SAFETY: `returned` is the owned value `call` gave back, which nothing else holds.
+        on_return(unsafe { take_value(ctx, returned) })
+    } else {
+        // SAFETY: as above, and it is not used again.
+        unsafe { release_value(ctx, returned) };
+        Ok(())
+    }
 }

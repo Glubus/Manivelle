@@ -17,6 +17,13 @@ pub enum EngineError {
     /// A lock was poisoned by a panic while it was held, typically in a host handler.
     #[error("a lock was poisoned by a panic in a host handler")]
     LockPoisoned,
+    /// [`EngineOptions`](crate::EngineOptions) hold a value that would disable a protection
+    /// instead of setting it.
+    #[error("invalid engine options: {details}")]
+    InvalidOptions {
+        /// Which option, and why it is refused.
+        details: String,
+    },
     /// The requested script could not be found.
     #[error("script `{script_id}` is not loaded")]
     ScriptNotFound {

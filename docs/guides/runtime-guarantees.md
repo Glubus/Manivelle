@@ -62,7 +62,8 @@ script. A script that runs out of its time or memory
 a timer or a host answer is delivered to it is **quarantined**: its handlers and timers
 no longer run, its pending host answers are dropped, and `Engine::quarantined_scripts`
 lists it. `call` still reaches its exports. Reloading it with `load_script` replaces it
-with a fresh script; unloading it also frees what it holds. An interrupt requested
+with a fresh script (unless its `ctx.hot.save` throws, which keeps the previous version:
+unload it instead); unloading it also frees what it holds. An interrupt requested
 through an `InterruptHandle` still stops the whole `emit`, `request` or
 `advance_timers` at the handler or timer it reached, and is not a fault. An interrupt
 that reaches a `ctx.hot.save` or `ctx.hot.dispose` callback also

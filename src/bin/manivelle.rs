@@ -6,13 +6,14 @@
 //! - `manivelle sdk <descriptors.json> <dir>` writes the declarations and SDK from a
 //!   descriptors file.
 
-use std::env;
 use std::error::Error;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::path::{Component, Path, PathBuf};
+use std::process::{Child, Command as Process, ExitCode, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use clap::{Args, Parser, Subcommand};
 use manivelle::{
     DESCRIPTORS_FILE, EXPORT_SDK_ENV, HostContractDescriptor, SdkFileNames,
     write_host_sdk_files_with_names,
@@ -23,23 +24,6 @@ type Failure = Box<dyn Error>;
 /// Where `init` puts the files the program generated; they are rewritten on every run.
 const GENERATED_DIR: &str = "manivelle";
 
-/// How long `init` waits for the program to export before it gives up.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
-
-const TSCONFIG: &str = r#"{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ES2022",
-    "moduleResolution": "Bundler",
-    "lib": ["ES2023", "DOM"],
-    "strict": true,
-    "noEmit": true,
-    "skipLibCheck": true
-  },
-  "include": ["src", "manivelle/*.d.ts"]
-}
-"#;
-
 const MAIN_TS: &str = r#"import { console } from "manivelle:env";
 
 export function hello(): void {
@@ -47,8 +31,109 @@ export function hello(): void {
 }
 "#;
 
+#[derive(Parser)]
+#[command(
+    name = "manivelle",
+    version,
+    about = "Tools for Manivelle script projects"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Set up a script project from a program that opted in to exporting its API
+    ///
+    /// Runs the program (which must call `manivelle::export_sdk_if_requested`) and writes
+    /// its TypeScript declarations to DIR/manivelle/, plus a tsconfig.json and
+    /// src/main.ts when they are missing. Run it again to refresh the declarations.
+    /// Running a program means trusting it: only use `--from` on programs you would run
+    /// anyway.
+    Init(InitArgs),
+    /// Write the declarations and SDK module for a descriptors file
+    Sdk(SdkArgs),
+}
+
+#[derive(Args)]
+struct InitArgs {
+    /// The project directory
+    #[arg(default_value = ".")]
+    directory: PathBuf,
+    /// The program to export from, as a path (not looked up in PATH)
+    #[arg(long)]
+    from: PathBuf,
+    /// Seconds to wait for the program to export before giving up
+    #[arg(long, default_value_t = 30)]
+    timeout: u64,
+    #[command(flatten)]
+    names: FileNames,
+    /// Arguments for the program, after `--`
+    #[arg(last = true)]
+    program_args: Vec<String>,
+}
+
+#[derive(Args)]
+struct SdkArgs {
+    /// The descriptors file
+    descriptors: PathBuf,
+    /// Where to write the files
+    output: PathBuf,
+    #[command(flatten)]
+    names: FileNames,
+}
+
+/// The names of the generated files, plain file names that cannot leave their directory.
+#[derive(Args)]
+struct FileNames {
+    /// Declaration file name
+    #[arg(long, default_value = "manivelle.d.ts", value_parser = declaration_name)]
+    types: String,
+    /// SDK module file name
+    #[arg(long, default_value = "manivelle.sdk.ts", value_parser = module_name)]
+    sdk: String,
+}
+
+impl FileNames {
+    fn into_sdk_names(self) -> Result<SdkFileNames, Failure> {
+        if self.types == self.sdk {
+            return Err("--types and --sdk must name different files".into());
+        }
+        Ok(SdkFileNames {
+            types: self.types,
+            sdk: self.sdk,
+        })
+    }
+}
+
+fn declaration_name(value: &str) -> Result<String, String> {
+    plain_file_name(value, ".d.ts")
+}
+
+fn module_name(value: &str) -> Result<String, String> {
+    plain_file_name(value, ".ts")
+}
+
+/// `value` when it is one file name ending in `suffix`, with no directory in it: a name
+/// like `../x.d.ts` or `/etc/x.d.ts` would write outside the project.
+fn plain_file_name(value: &str, suffix: &str) -> Result<String, String> {
+    let mut components = Path::new(value).components();
+    let one_name = matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(name)), None) if name.to_str() == Some(value)
+    );
+    if one_name && value.len() > suffix.len() && value.ends_with(suffix) {
+        Ok(value.to_owned())
+    } else {
+        Err(format!(
+            "must be a file name ending in {suffix}, without a directory"
+        ))
+    }
+}
+
 fn main() -> ExitCode {
-    match run(env::args().skip(1).collect()) {
+    match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");
@@ -57,228 +142,182 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(args: Vec<String>) -> Result<(), Failure> {
-    let mut args = args.into_iter();
-    match args.next().as_deref() {
-        Some("init") => init(InitArgs::parse(args)?),
-        Some("sdk") => sdk(SdkArgs::parse(args)?),
-        Some("--help" | "-h" | "help") | None => {
-            println!("{}", usage());
-            Ok(())
-        }
-        Some(other) => Err(format!("unknown command `{other}`\n{}", usage()).into()),
-    }
-}
-
-fn usage() -> &'static str {
-    "usage:
-  manivelle init [DIR] --from <program> [--timeout <seconds>] [--types <name>] [--sdk <name>] [-- <program args>...]
-      Runs <program> (which must call `manivelle::export_sdk_if_requested`) and writes its
-      TypeScript declarations to DIR/manivelle/, plus a tsconfig.json and src/main.ts when
-      they are missing. Run it again to update the declarations.
-  manivelle sdk <descriptors.json> <output-dir> [--types <name>] [--sdk <name>]
-      Writes the declarations and SDK module for a descriptors file."
-}
-
-/// A flag's value, from `--flag=value` or from the next argument.
-fn flag_value(
-    flag: &str,
-    inline: Option<&str>,
-    rest: &mut impl Iterator<Item = String>,
-) -> Result<String, Failure> {
-    match inline {
-        Some(value) => Ok(value.to_owned()),
-        None => rest
-            .next()
-            .ok_or_else(|| format!("missing value for {flag}").into()),
-    }
-}
-
-struct InitArgs {
-    directory: PathBuf,
-    program: PathBuf,
-    program_args: Vec<String>,
-    timeout: Duration,
-    names: SdkFileNames,
-}
-
-impl InitArgs {
-    fn parse(args: impl Iterator<Item = String>) -> Result<Self, Failure> {
-        let mut args = args;
-        let mut directory = None;
-        let mut program = None;
-        let mut program_args = Vec::new();
-        let mut timeout = DEFAULT_TIMEOUT;
-        let mut names = SdkFileNames::default();
-        while let Some(argument) = args.next() {
-            let (flag, inline) = match argument.split_once('=') {
-                Some((flag, value)) if flag.starts_with("--") => (flag.to_owned(), Some(value)),
-                _ => (argument.clone(), None),
-            };
-            match flag.as_str() {
-                "--" => {
-                    program_args = args.by_ref().collect();
-                }
-                "--from" => program = Some(PathBuf::from(flag_value(&flag, inline, &mut args)?)),
-                "--timeout" => {
-                    let seconds: u64 = flag_value(&flag, inline, &mut args)?
-                        .parse()
-                        .map_err(|_| "--timeout takes a number of seconds")?;
-                    timeout = Duration::from_secs(seconds);
-                }
-                "--types" => names.types = flag_value(&flag, inline, &mut args)?,
-                "--sdk" => names.sdk = flag_value(&flag, inline, &mut args)?,
-                other if other.starts_with('-') => {
-                    return Err(format!("unknown argument `{other}`\n{}", usage()).into());
-                }
-                _ if directory.is_none() => directory = Some(PathBuf::from(argument)),
-                _ => return Err(format!("unexpected argument `{argument}`\n{}", usage()).into()),
-            }
-        }
-        Ok(Self {
-            directory: directory.unwrap_or_else(|| PathBuf::from(".")),
-            program: program.ok_or_else(|| format!("missing --from <program>\n{}", usage()))?,
-            program_args,
-            timeout,
-            names,
-        })
+fn run(cli: Cli) -> Result<(), Failure> {
+    match cli.command {
+        Command::Init(args) => init(args),
+        Command::Sdk(args) => sdk(args),
     }
 }
 
 fn init(args: InitArgs) -> Result<(), Failure> {
+    let names = args.names.into_sdk_names()?;
+    let program = fs::canonicalize(&args.from).map_err(|error| {
+        format!(
+            "cannot find {}: {error} (pass the path to the program, such as ./game)",
+            args.from.display()
+        )
+    })?;
     let exported = tempfile::tempdir()?;
-    run_program(&args, exported.path())?;
-    let descriptors: Vec<HostContractDescriptor> =
-        serde_json::from_str(&fs::read_to_string(exported.path().join(DESCRIPTORS_FILE))?)?;
+    run_program(
+        &program,
+        &args.program_args,
+        exported.path(),
+        Duration::from_secs(args.timeout),
+    )?;
+    let descriptors = read_descriptors(&exported.path().join(DESCRIPTORS_FILE))?;
 
     let generated = args.directory.join(GENERATED_DIR);
-    fs::create_dir_all(&generated)?;
-    let defaults = SdkFileNames::default();
-    for (from, to) in [
-        (&defaults.types, &args.names.types),
-        (&defaults.sdk, &args.names.sdk),
-    ] {
-        fs::copy(exported.path().join(from), generated.join(to))?;
-    }
+    copy_declarations(exported.path(), &generated, &names)?;
     println!(
         "{} contract(s) from {}: wrote {} and {} in {}",
         descriptors.len(),
-        args.program.display(),
-        args.names.types,
-        args.names.sdk,
+        program.display(),
+        names.types,
+        names.sdk,
         generated.display()
     );
-
-    let mut tsconfig = TSCONFIG.to_owned();
-    if args.names.types != defaults.types {
-        tsconfig = tsconfig.replace(
-            "manivelle/*.d.ts",
-            &format!("manivelle/{}", args.names.types),
-        );
-    }
-    write_if_missing(&args.directory.join("tsconfig.json"), &tsconfig)?;
-    write_if_missing(&args.directory.join("src").join("main.ts"), MAIN_TS)?;
-    Ok(())
+    scaffold_project(&args.directory, &names)
 }
 
-/// Starts the program with the export request in its environment and waits for it,
-/// until `args.timeout`.
-fn run_program(args: &InitArgs, directory: &Path) -> Result<(), Failure> {
-    let mut child = Command::new(&args.program)
-        .args(&args.program_args)
-        .env(EXPORT_SDK_ENV, directory)
+/// Starts the program with the export request in its environment, and waits for it until
+/// `timeout`; it must exit successfully having written its descriptors to `export_dir`.
+fn run_program(
+    program: &Path,
+    program_args: &[String],
+    export_dir: &Path,
+    timeout: Duration,
+) -> Result<(), Failure> {
+    println!("running {}", program.display());
+    let mut child = Process::new(program)
+        .args(program_args)
+        .env(EXPORT_SDK_ENV, export_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|error| format!("cannot start {}: {error}", args.program.display()))?;
+        .map_err(|error| format!("cannot start {}: {error}", program.display()))?;
+    let Some(status) = wait_or_kill(&mut child, timeout)? else {
+        return Err(format!(
+            "{} did not export its SDK within {} s: it must call \
+             `manivelle::export_sdk_if_requested` at startup and exit when it returns true",
+            program.display(),
+            timeout.as_secs()
+        )
+        .into());
+    };
+    check_exported(program, status, export_dir)
+}
+
+/// The exit status of `child`, or `None` once `timeout` passed and it was killed.
+fn wait_or_kill(child: &mut Child, timeout: Duration) -> io::Result<Option<ExitStatus>> {
     let started = Instant::now();
-    let status = loop {
+    loop {
         if let Some(status) = child.try_wait()? {
-            break status;
+            return Ok(Some(status));
         }
-        if started.elapsed() >= args.timeout {
+        if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!(
-                "{} did not export its SDK within {} s: it must call \
-                 `manivelle::export_sdk_if_requested` at startup and exit when it returns true",
-                args.program.display(),
-                args.timeout.as_secs()
-            )
-            .into());
+            return Ok(None);
         }
         std::thread::sleep(Duration::from_millis(20));
-    };
+    }
+}
+
+/// Whether the program that exited with `status` left its descriptors in `export_dir`.
+fn check_exported(program: &Path, status: ExitStatus, export_dir: &Path) -> Result<(), Failure> {
     if !status.success() {
         return Err(format!(
             "{} exited with {status}; run it with {EXPORT_SDK_ENV} set to a directory to see why",
-            args.program.display()
+            program.display()
         )
         .into());
     }
-    if !directory.join(DESCRIPTORS_FILE).is_file() {
+    if !export_dir.join(DESCRIPTORS_FILE).is_file() {
         return Err(format!(
             "{} exited without exporting its SDK: it must call \
              `manivelle::export_sdk_if_requested` at startup",
-            args.program.display()
+            program.display()
         )
         .into());
     }
     Ok(())
 }
 
-fn write_if_missing(path: &Path, content: &str) -> Result<(), Failure> {
-    if path.exists() {
-        return Ok(());
+fn read_descriptors(path: &Path) -> Result<Vec<HostContractDescriptor>, Failure> {
+    Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
+}
+
+/// Copies the declarations and SDK module the program wrote into the project.
+fn copy_declarations(
+    exported: &Path,
+    generated: &Path,
+    names: &SdkFileNames,
+) -> Result<(), Failure> {
+    fs::create_dir_all(generated)?;
+    let defaults = SdkFileNames::default();
+    for (from, to) in [(&defaults.types, &names.types), (&defaults.sdk, &names.sdk)] {
+        replace_file(&generated.join(to), &fs::read(exported.join(from))?)?;
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, content)?;
-    println!("created {}", path.display());
     Ok(())
 }
 
-struct SdkArgs {
-    descriptors_path: PathBuf,
-    output_dir: PathBuf,
-    names: SdkFileNames,
+/// Creates the `tsconfig.json` and `src/main.ts` a new project needs, when missing.
+fn scaffold_project(directory: &Path, names: &SdkFileNames) -> Result<(), Failure> {
+    let tsconfig = serde_json::to_string_pretty(&serde_json::json!({
+        "compilerOptions": {
+            "target": "ES2022",
+            "module": "ES2022",
+            "moduleResolution": "Bundler",
+            "lib": ["ES2023", "DOM"],
+            "strict": true,
+            "noEmit": true,
+            "skipLibCheck": true
+        },
+        "include": ["src", format!("{GENERATED_DIR}/{}", names.types)]
+    }))?;
+    create_if_missing(&directory.join("tsconfig.json"), &format!("{tsconfig}\n"))?;
+    create_if_missing(&directory.join("src").join("main.ts"), MAIN_TS)
 }
 
-impl SdkArgs {
-    fn parse(args: impl Iterator<Item = String>) -> Result<Self, Failure> {
-        let mut args = args;
-        let descriptors_path = args
-            .next()
-            .ok_or_else(|| format!("missing descriptors json path\n{}", usage()))?;
-        let output_dir = args
-            .next()
-            .ok_or_else(|| format!("missing output directory\n{}", usage()))?;
-        let mut names = SdkFileNames::default();
-        while let Some(argument) = args.next() {
-            let (flag, inline) = match argument.split_once('=') {
-                Some((flag, value)) => (flag.to_owned(), Some(value)),
-                None => (argument.clone(), None),
-            };
-            match flag.as_str() {
-                "--types" => names.types = flag_value(&flag, inline, &mut args)?,
-                "--sdk" => names.sdk = flag_value(&flag, inline, &mut args)?,
-                other => return Err(format!("unknown argument `{other}`\n{}", usage()).into()),
-            }
+/// Writes `content` to `path`, replacing what is there. The file is written beside it and
+/// renamed over it, so a symbolic link at `path` is replaced rather than followed to
+/// whatever it points at.
+fn replace_file(path: &Path, content: &[u8]) -> Result<(), Failure> {
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
+    file.write_all(content)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o644))?;
+    }
+    file.persist(path).map_err(|error| error.error)?;
+    Ok(())
+}
+
+/// Creates `path` with `content` unless something is there already, a dangling symbolic
+/// link included (`create_new` never follows one).
+fn create_if_missing(path: &Path, content: &str) -> Result<(), Failure> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(mut file) => {
+            file.write_all(content.as_bytes())?;
+            println!("created {}", path.display());
+            Ok(())
         }
-        Ok(Self {
-            descriptors_path: PathBuf::from(descriptors_path),
-            output_dir: PathBuf::from(output_dir),
-            names,
-        })
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error.into()),
     }
 }
 
 fn sdk(args: SdkArgs) -> Result<(), Failure> {
-    let source = fs::read_to_string(&args.descriptors_path)?;
-    let descriptors: Vec<HostContractDescriptor> = serde_json::from_str(&source)?;
-    let written = write_host_sdk_files_with_names(&args.output_dir, &descriptors, &args.names)?;
+    let names = args.names.into_sdk_names()?;
+    let descriptors = read_descriptors(&args.descriptors)?;
+    let written = write_host_sdk_files_with_names(&args.output, &descriptors, &names)?;
 
     println!("types: {}", written.types_path.display());
     println!("sdk: {}", written.sdk_path.display());

@@ -6,8 +6,7 @@ use rquickjs::{CatchResultExt, CaughtError, Ctx, Value as JsValue};
 use crate::contract::{JsArgs, JsDecode, JsEncode};
 use crate::error::EngineError;
 
-use super::super::errors::{caught_js_error, in_typescript, js_error};
-use super::super::events::deliver;
+use super::super::errors::{caught_js_error, in_typescript};
 use super::super::host_fn;
 use super::Engine;
 use super::invoke::invoke;
@@ -90,128 +89,6 @@ impl Engine {
             Ok(())
         })?;
         Ok(replies)
-    }
-
-    /// Runs every handler of `event` in load order, handing each returned value to
-    /// `on_return`; see [`Engine::emit`].
-    pub(super) fn dispatch<'a, P: JsEncode + ?Sized>(
-        &'a self,
-        event: &str,
-        payload: &P,
-        keep_results: bool,
-        mut on_return: impl for<'js> FnMut(&'a str, &Ctx<'js>, JsValue<'js>) -> Result<(), EngineError>,
-    ) -> Result<usize, EngineError> {
-        // Only the scripts listening to `event` are visited, in load order.
-        let Some(listeners) = self.event_index.listeners(
-            event,
-            self.scripts
-                .values()
-                .map(|script| (!script.quarantined.get()).then_some(&script.signals.events)),
-        ) else {
-            return Ok(0);
-        };
-        let _budget = self.budget();
-        let mut delivered = 0;
-        let mut first_error = None;
-        // Listeners that follow one another and share a context (a group's) are served
-        // in one visit to it: the context is entered once and the payload encoded once,
-        // instead of once per script. The order is the load order.
-        let mut start = 0;
-        // Set once the host interrupts the operation: no handler is entered after that,
-        // and the error is already recorded. A script that runs out of its own budget does
-        // not stop the others: it faults, and the next one starts with a budget of its own.
-        let mut stopped = false;
-        while start < listeners.len() && !stopped {
-            let Some((first_id, first)) = self.scripts.get_index(listeners[start]) else {
-                break;
-            };
-            let mut end = start + 1;
-            while end < listeners.len()
-                && let Some((_, next)) = self.scripts.get_index(listeners[end])
-                && first.shares_context(next)
-            {
-                end += 1;
-            }
-            if end - start == 1 {
-                // A context of its own: one look at the script's handlers decides
-                // whether to enter it (an earlier handler may have removed them).
-                if let Some(handlers) = first.signals.events.handlers(event) {
-                    delivered += 1;
-                    self.begin_slice();
-                    let outcome = first.context.with(|ctx| match payload.encode_js(&ctx) {
-                        Ok(payload) => deliver(
-                            &ctx,
-                            &handlers,
-                            &payload,
-                            keep_results,
-                            &self.execution,
-                            |returned| on_return(first_id, &ctx, returned),
-                        ),
-                        Err(error) => Err(js_error(error)),
-                    });
-                    let judged = self
-                        .judge_slice(first_id, first, outcome, || format!("a `{event}` handler"));
-                    if let Err(error) = judged {
-                        first_error.get_or_insert(error);
-                    }
-                    stopped = self.execution.interrupt_requested();
-                }
-                start = end;
-                continue;
-            }
-            first.context.with(|ctx| match payload.encode_js(&ctx) {
-                Ok(payload) => {
-                    for &position in &listeners[start..end] {
-                        let Some((script_id, script)) = self.scripts.get_index(position) else {
-                            continue;
-                        };
-                        let Some(handlers) = script.signals.events.handlers(event) else {
-                            continue;
-                        };
-                        delivered += 1;
-                        self.begin_slice();
-                        let outcome = deliver(
-                            &ctx,
-                            &handlers,
-                            &payload,
-                            keep_results,
-                            &self.execution,
-                            |returned| on_return(script_id, &ctx, returned),
-                        );
-                        let judged = self.judge_slice(script_id, script, outcome, || {
-                            format!("a `{event}` handler")
-                        });
-                        if let Err(error) = judged {
-                            first_error.get_or_insert(error);
-                        }
-                        if self.execution.interrupt_requested() {
-                            stopped = true;
-                            break;
-                        }
-                    }
-                }
-                Err(error) => {
-                    // Nothing to hand over: the scripts that listen fail together.
-                    first_error.get_or_insert(js_error(error));
-                    delivered += listeners[start..end]
-                        .iter()
-                        .filter(|&&position| {
-                            self.scripts
-                                .get_index(position)
-                                .is_some_and(|(_, script)| script.signals.events.listens(event))
-                        })
-                        .count();
-                }
-            });
-            start = end;
-        }
-        if delivered == 0 {
-            // No JavaScript ran, so there is no Promise job to settle.
-            return Ok(0);
-        }
-        // The jobs the handlers queued run under a budget of their own.
-        self.begin_slice();
-        self.attribute_interrupt(self.settle(first_error.map_or(Ok(delivered), Err)))
     }
 
     /// Awaits a Promise a script returned to the host, from an export or a request

@@ -128,7 +128,7 @@ user.onFound(event => {
 
 Mod authors need your declarations on their machine, in a project that type-checks.
 You do not have to ship a tool for that: your program can hand its scripting API to the
-`manivelle` command line tool. Install it with `cargo install manivelle`.
+`manivelle` command line tool. Install it with `cargo install manivelle --features cli`.
 
 Opt in by calling `export_sdk_if_requested` once, right after registering the contracts
 and before the program does anything else at startup:

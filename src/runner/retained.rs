@@ -6,6 +6,9 @@ use std::cell::{Cell, RefCell};
 use rquickjs::{Ctx, Value, qjs};
 use rustc_hash::FxHashMap;
 
+use super::errors::pending_exception;
+use crate::error::EngineError;
+
 /// A JavaScript value the engine keeps and uses without cloning anything.
 ///
 /// A `Persistent` has to be cloned and restored to be used, which takes and gives back two
@@ -38,6 +41,60 @@ impl Retained {
     /// The value, borrowed: valid while `self` is.
     pub(super) fn raw(&self) -> qjs::JSValue {
         self.value
+    }
+
+    /// Calls the function with `this` undefined and `arguments`, which are only borrowed,
+    /// and returns its result, an owned value of `ctx` the caller must hand to
+    /// [`take_value`] or [`release_value`]. A function that threw is an error: the pending
+    /// exception is taken from `ctx`.
+    pub(super) fn call(
+        &self,
+        ctx: &Ctx<'_>,
+        arguments: &mut [qjs::JSValue],
+    ) -> Result<qjs::JSValue, EngineError> {
+        let count = i32::try_from(arguments.len()).expect("a handful of arguments");
+        // SAFETY: `self` holds a live function of this runtime, `arguments` holds values
+        // of `ctx` that `JS_Call` only borrows, and `this` is `undefined`, which needs no
+        // release.
+        let returned = unsafe {
+            qjs::JS_Call(
+                ctx.as_raw().as_ptr(),
+                self.value,
+                qjs::JS_UNDEFINED,
+                count,
+                arguments.as_mut_ptr(),
+            )
+        };
+        // SAFETY: `returned` is the value `JS_Call` just gave back.
+        if unsafe { qjs::JS_IsException(returned) } {
+            return Err(pending_exception(ctx));
+        }
+        Ok(returned)
+    }
+}
+
+/// Wraps an owned value [`Retained::call`] returned, which the wrapper releases.
+///
+/// # Safety
+///
+/// `value` must be an owned value of `ctx` that nothing else releases.
+pub(super) unsafe fn take_value<'js>(ctx: &Ctx<'js>, value: qjs::JSValue) -> Value<'js> {
+    // SAFETY: the caller's contract: an owned value of `ctx`, released by the wrapper.
+    unsafe { Value::from_raw(ctx.clone(), value) }
+}
+
+/// Releases an owned value [`Retained::call`] returned and nobody wants; `undefined`, the
+/// usual result, holds no reference and is skipped.
+///
+/// # Safety
+///
+/// `value` must be an owned value of `ctx` that nothing else releases, and not used again.
+pub(super) unsafe fn release_value(ctx: &Ctx<'_>, value: qjs::JSValue) {
+    // SAFETY: the caller's contract.
+    unsafe {
+        if !qjs::JS_IsUndefined(value) {
+            qjs::JS_FreeValue(ctx.as_raw().as_ptr(), value);
+        }
     }
 }
 

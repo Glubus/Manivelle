@@ -8,6 +8,9 @@
 #![warn(clippy::complexity)]
 #![warn(clippy::perf)]
 #![warn(clippy::undocumented_unsafe_blocks)]
+// A clone of a reference-counted pointer says so (`Rc::clone(&x)`), so a reader sees at a
+// glance that no data is copied.
+#![warn(clippy::clone_on_ref_ptr)]
 #![warn(missing_docs)]
 
 mod cache;

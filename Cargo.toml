@@ -23,6 +23,8 @@ derive = ["dep:manivelle_macros"]
 uuid = ["dep:uuid"]
 chrono = ["dep:chrono"]
 glam = ["dep:glam"]
+# The `manivelle` command line tool (`cargo install manivelle --features cli`).
+cli = ["dep:clap"]
 # Builds QuickJS without its internal assertions: JavaScript runs faster, but a JavaScript
 # value the host leaks no longer aborts the process when the engine drops.
 disable-assertions = ["rquickjs/disable-assertions"]
@@ -43,11 +45,17 @@ manivelle_macros = { version = "0.1.0", path = "manivelle_macros", optional = tr
 uuid = { version = "1.26.1", optional = true, default-features = false, features = ["serde"] }
 chrono = { version = "0.4.45", optional = true, default-features = false, features = ["std", "serde"] }
 glam = { version = "0.33.9", optional = true, features = ["serde"] }
+clap = { version = "4.5", features = ["derive"], optional = true }
 
 [dev-dependencies]
 criterion = "0.8.2"
 trybuild = "1.0.111"
 mlua = { version = "0.12.1", features = ["lua54", "vendored", "serialize"] }
+
+[[bin]]
+name = "manivelle"
+path = "src/bin/manivelle.rs"
+required-features = ["cli"]
 
 [[bench]]
 name = "runtime"

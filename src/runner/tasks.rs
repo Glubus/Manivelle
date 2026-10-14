@@ -67,7 +67,7 @@ trait RequestLifetime {
 
 impl RequestGuard {
     pub(super) fn new<R: JsDecode + 'static>(state: &Rc<RefCell<RequestResults<R>>>) -> Self {
-        let lifetime: Rc<dyn RequestLifetime> = state.clone();
+        let lifetime = Rc::clone(state) as Rc<dyn RequestLifetime>;
         Self(Rc::downgrade(&lifetime))
     }
 

@@ -63,8 +63,11 @@ pub(super) fn loader<'js>(
 /// string.
 fn natives<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
     let natives = Object::new(ctx.clone())?;
+    // The bytes are copied into a buffer QuickJS allocates, so `memory_limit_bytes` counts
+    // them: handing it the Rust `Vec` would keep them out of its accounting, and a loop
+    // of `encode` calls would then grow the host's memory without bound.
     let encode = Function::new(ctx.clone(), |ctx: Ctx<'js>, text: String| {
-        TypedArray::<u8>::new(ctx, text.into_bytes())
+        TypedArray::<u8>::new_copy(ctx, text.as_bytes())
     })?;
     let decode = Function::new(
         ctx.clone(),

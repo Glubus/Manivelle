@@ -268,7 +268,7 @@ fn render_domain_exports(
     events: &ObjectTree<SdkEvent>,
 ) -> Vec<String> {
     let mut tree = ObjectTree::default();
-    push_function_domain_bindings(&mut tree, &functions.roots, String::new());
+    push_function_domain_bindings(&mut tree, &functions.roots, "");
     push_event_alias_domain_bindings(&mut tree, events);
     render_exported_tree(&tree, render_domain_binding)
 }
@@ -276,14 +276,14 @@ fn render_domain_exports(
 fn push_function_domain_bindings(
     output: &mut ObjectTree<SdkDomainBinding>,
     nodes: &BTreeMap<String, ObjectNode<SdkFunction>>,
-    prefix: String,
+    prefix: &str,
 ) {
     for (name, node) in nodes {
-        let path = child_path(&prefix, name);
+        let path = child_path(prefix, name);
         if let Some(function) = &node.binding {
             output.insert(&path, SdkDomainBinding::Function(function.clone()));
         }
-        push_function_domain_bindings(output, &node.children, path);
+        push_function_domain_bindings(output, &node.children, &path);
     }
 }
 
@@ -292,18 +292,20 @@ fn push_event_alias_domain_bindings(
     events: &ObjectTree<SdkEvent>,
 ) {
     for (root, node) in &events.roots {
-        push_event_aliases_for_root(output, root, node, Vec::new());
+        push_event_aliases_for_root(output, root, node, &mut Vec::new());
     }
 }
 
+/// Adds the alias of every event under `node`; `segments` is the path from the root to
+/// `node`, extended in place for each child and restored after it.
 fn push_event_aliases_for_root(
     output: &mut ObjectTree<SdkDomainBinding>,
     root: &str,
     node: &ObjectNode<SdkEvent>,
-    segments: Vec<String>,
+    segments: &mut Vec<String>,
 ) {
     if let Some(event) = &node.binding
-        && let Some(alias) = event_alias_path(root, &segments)
+        && let Some(alias) = event_alias_path(root, segments)
     {
         output.insert(
             &alias,
@@ -314,9 +316,9 @@ fn push_event_aliases_for_root(
     }
 
     for (name, child) in &node.children {
-        let mut child_segments = segments.clone();
-        child_segments.push(name.clone());
-        push_event_aliases_for_root(output, root, child, child_segments);
+        segments.push(name.clone());
+        push_event_aliases_for_root(output, root, child, segments);
+        segments.pop();
     }
 }
 

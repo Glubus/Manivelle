@@ -1,4 +1,4 @@
-#![cfg(feature = "derive")]
+#![cfg(all(feature = "derive", feature = "cli"))]
 
 //! `manivelle init --from <program>`: the tool starts a program that opted in, takes its
 //! scripting API and sets up a script project.
@@ -221,4 +221,98 @@ fn a_program_that_never_exits_is_stopped_at_the_timeout() {
         stderr(&output)
     );
     assert!(!project.exists());
+}
+
+#[test]
+fn file_names_that_could_leave_the_project_are_refused() {
+    let dir = TestCacheDir::new("cli-init-bad-names");
+    let project = dir.path().join("my-mod");
+
+    for bad in [
+        "../escaped.d.ts",
+        "/tmp/escaped.d.ts",
+        "sub/dir.d.ts",
+        "plain.txt",
+    ] {
+        let output = init(&project, "export_child", &["--types", bad]);
+
+        assert!(!output.status.success(), "{bad} was accepted");
+        assert!(!project.exists(), "{bad} left files behind");
+    }
+    let same = init(
+        &project,
+        "export_child",
+        &["--types", "same.d.ts", "--sdk", "same.d.ts"],
+    );
+    assert!(!same.status.success());
+}
+
+#[test]
+fn the_program_is_a_path_and_is_not_looked_up_in_path() {
+    let dir = TestCacheDir::new("cli-init-no-path-lookup");
+    let project = dir.path().join("my-mod");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_manivelle"))
+        .arg("init")
+        .arg(&project)
+        .args(["--from", "ls"])
+        .current_dir(dir.path())
+        .output()
+        .expect("run manivelle");
+
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("pass the path to the program"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_in_the_project_is_replaced_and_never_followed() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TestCacheDir::new("cli-init-symlinks");
+    let project = dir.path().join("my-mod");
+    let victim = dir.path().join("victim.txt");
+    let created = dir.path().join("must-not-exist.txt");
+    fs::write(&victim, "PRECIOUS").expect("victim");
+    fs::create_dir_all(project.join("manivelle")).expect("project");
+    symlink(&victim, project.join("manivelle/manivelle.d.ts")).expect("link to a file");
+    symlink(&created, project.join("tsconfig.json")).expect("dangling link");
+
+    let output = init(&project, "export_child", &[]);
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(fs::read_to_string(&victim).expect("victim"), "PRECIOUS");
+    assert!(
+        !created.exists(),
+        "a dangling link must not be written through"
+    );
+    let declarations = project.join("manivelle/manivelle.d.ts");
+    assert!(
+        !fs::symlink_metadata(&declarations)
+            .expect("declarations")
+            .file_type()
+            .is_symlink(),
+        "the link itself is replaced by a file"
+    );
+    assert!(
+        fs::read_to_string(&declarations)
+            .expect("declarations")
+            .contains("math")
+    );
+}
+
+#[test]
+fn help_describes_both_commands() {
+    let output = Command::new(env!("CARGO_BIN_EXE_manivelle"))
+        .arg("--help")
+        .output()
+        .expect("run manivelle");
+
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success());
+    assert!(help.contains("init") && help.contains("sdk"), "{help}");
 }

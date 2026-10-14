@@ -5,6 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::sync::Arc;
 
+use rquickjs::module::{Declared, Evaluated};
 use rquickjs::{
     CatchResultExt, Context, Ctx, Function, Module, Object, Persistent, Runtime, Value as JsValue,
     WriteOptions, qjs,
@@ -60,6 +61,16 @@ struct Mounted {
     signals: ScriptSignals,
     host_promises: HostPromises,
     hooks: ScriptHooks,
+}
+
+/// What a script is being mounted with: who it is, its module graph, what its context
+/// reports to the engine, and whether its context is its own.
+struct Mounting<'a> {
+    script_id: &'a str,
+    graph: &'a RuntimeModuleGraph,
+    signals: &'a ScriptSignals,
+    host_promises: &'a HostPromises,
+    own_context: bool,
 }
 
 impl Engine {
@@ -373,32 +384,16 @@ impl Engine {
         }
         let signals = ScriptSignals::new(&self.event_index);
         let host_promises = HostPromises::with_wake(Arc::clone(&self.host_wake));
-        let mounted = target.context.with(|ctx| {
-            let (env, hooks) = self.build_env(
-                &ctx,
-                &target.prelude,
-                script_id,
-                &signals,
-                &host_promises,
-                hot_data,
-            )?;
-            if group.is_none() {
-                target
-                    .prelude
-                    .install_globals
-                    .clone()
-                    .restore(&ctx)
-                    .map_err(js_error)?
-                    .call::<_, ()>((env,))
-                    .catch(&ctx)
-                    .map_err(caught_js_error)?;
-            } else {
-                self.envs
-                    .insert(graph.graph_id, Persistent::save(&ctx, env));
-            }
-            let exports = import_exports(&ctx, &self.module_store, &graph.entry_module_id)?;
-            Ok((exports, hooks))
-        });
+        let mounting = Mounting {
+            script_id,
+            graph,
+            signals: &signals,
+            host_promises: &host_promises,
+            own_context: group.is_none(),
+        };
+        let mounted = target
+            .context
+            .with(|ctx| self.mount_in(&ctx, &target.prelude, &mounting, hot_data));
         match self.attribute_interrupt(self.settle(mounted)) {
             Ok((exports, hooks)) => Ok(Mounted {
                 context: target.context,
@@ -408,12 +403,57 @@ impl Engine {
                 hooks,
             }),
             Err(error) => {
-                self.envs.remove(graph.graph_id);
-                if let Some(name) = group.filter(|_| created_group) {
-                    self.groups.remove(name);
-                }
+                self.roll_back_mount(graph, group.filter(|_| created_group));
                 Err(error)
             }
+        }
+    }
+
+    /// The part of mounting that runs JavaScript, in the script's context: builds its
+    /// environment, exposes it, and imports the entry module.
+    fn mount_in<'js>(
+        &self,
+        ctx: &Ctx<'js>,
+        prelude: &Prelude,
+        mounting: &Mounting<'_>,
+        hot_data: Option<HotData>,
+    ) -> Result<(Retained, ScriptHooks), EngineError> {
+        let (env, hooks) = self.build_env(ctx, prelude, mounting, hot_data)?;
+        self.expose_env(ctx, prelude, mounting, env)?;
+        let exports = import_exports(ctx, &self.module_store, &mounting.graph.entry_module_id)?;
+        Ok((exports, hooks))
+    }
+
+    /// Makes the script's environment reachable by the script: as globals in a context of
+    /// its own, or through its `manivelle:env` module in a group's, whose context has no
+    /// per-script globals.
+    fn expose_env<'js>(
+        &self,
+        ctx: &Ctx<'js>,
+        prelude: &Prelude,
+        mounting: &Mounting<'_>,
+        env: Object<'js>,
+    ) -> Result<(), EngineError> {
+        if !mounting.own_context {
+            self.envs
+                .insert(mounting.graph.graph_id, Persistent::save(ctx, env));
+            return Ok(());
+        }
+        prelude
+            .install_globals
+            .clone()
+            .restore(ctx)
+            .map_err(js_error)?
+            .call::<_, ()>((env,))
+            .catch(ctx)
+            .map_err(caught_js_error)
+    }
+
+    /// Undoes what a failed mount left: the script's environment, and the group it created.
+    fn roll_back_mount(&mut self, graph: &RuntimeModuleGraph, created_group: Option<&str>) {
+        self.envs.remove(graph.graph_id);
+        if let Some(name) = created_group {
+            self.groups.remove(name);
         }
     }
 
@@ -441,26 +481,22 @@ impl Engine {
         Ok(Target { context, prelude })
     }
 
-    /// Runs the context prelude in `ctx`. The first call compiles it and keeps the
-    /// bytecode; every later context loads that instead of parsing and compiling the
-    /// source again, which was most of the cost of mounting a script.
+    /// Runs the context prelude in `ctx` and declares the web APIs it can load.
     fn run_prelude(&self, ctx: &Ctx<'_>) -> Result<Prelude, EngineError> {
-        let declared =
-            match self.prelude.get() {
-                // SAFETY: QuickJS does not verify bytecode. These bytes were written by this
-                // process, from the crate's own prelude, by the same QuickJS build.
-                Some(bytecode) => unsafe { Module::load(ctx.clone(), bytecode) },
-                None => {
-                    let declared = Module::declare(ctx.clone(), PRELUDE_MODULE, CONTEXT_PRELUDE);
-                    if let Ok(bytecode) = declared.as_ref().map_err(|_| ()).and_then(|declared| {
-                        declared.write(WriteOptions::default()).map_err(|_| ())
-                    }) {
-                        // Only this thread sets it, once: the first mount.
-                        let _ = self.prelude.set(bytecode.into_boxed_slice());
-                    }
-                    declared
-                }
-            }
+        let module = self.evaluate_prelude(ctx)?;
+        if self.builtins.web {
+            self.declare_web_apis(ctx, &module)?;
+        }
+        Ok(Prelude {
+            make_env: export_function(ctx, &module, "makeEnv")?,
+            install_globals: export_function(ctx, &module, "installGlobals")?,
+        })
+    }
+
+    /// Evaluates the prelude module in `ctx`.
+    fn evaluate_prelude<'js>(&self, ctx: &Ctx<'js>) -> Result<Module<'js, Evaluated>, EngineError> {
+        let declared = self
+            .declare_prelude(ctx)
             .catch(ctx)
             .map_err(caught_js_error)?;
         let (module, evaluated) = declared.eval().catch(ctx).map_err(caught_js_error)?;
@@ -468,98 +504,65 @@ impl Engine {
             .finish::<()>()
             .catch(ctx)
             .map_err(caught_js_error)?;
-        let export = |name: &str| {
-            module
-                .get::<_, Function<'_>>(name)
-                .map(|function| Persistent::save(ctx, function))
-                .map_err(js_error)
-        };
-        if self.builtins.web {
-            let names = if self.builtins.typed_arrays {
-                vec!["structuredClone", "TextEncoder", "TextDecoder"]
-            } else {
-                vec!["structuredClone"]
-            };
-            module
-                .get::<_, Function<'_>>("installWebApis")
-                .map_err(js_error)?
-                .call::<_, ()>((web::loader(ctx, &self.web_bytecode)?, names))
-                .catch(ctx)
-                .map_err(caught_js_error)?;
-        }
-        Ok(Prelude {
-            make_env: export("makeEnv")?,
-            install_globals: export("installGlobals")?,
-        })
+        Ok(module)
     }
 
-    /// Builds the environment of script `script_id`: its host functions, bound to its id,
-    /// the hooks through which its handlers and timers report to `signals`, its `console`
-    /// sink and the state the previous version saved. Returns it with the functions the
-    /// engine calls.
+    /// The prelude module, declared from the bytecode the first mount kept, or compiled
+    /// from the source when there is none yet: every later context loads the bytecode
+    /// instead of parsing and compiling the source again, which was most of the cost of
+    /// mounting a script.
+    fn declare_prelude<'js>(&self, ctx: &Ctx<'js>) -> rquickjs::Result<Module<'js, Declared>> {
+        if let Some(bytecode) = self.prelude.get() {
+            // SAFETY: QuickJS does not verify bytecode. These bytes were written by this
+            // process, from the crate's own prelude, by the same QuickJS build.
+            return unsafe { Module::load(ctx.clone(), bytecode) };
+        }
+        let declared = Module::declare(ctx.clone(), PRELUDE_MODULE, CONTEXT_PRELUDE)?;
+        if let Ok(bytecode) = declared.write(WriteOptions::default()) {
+            // Only this thread sets it, once: the first mount.
+            let _ = self.prelude.set(bytecode.into_boxed_slice());
+        }
+        Ok(declared)
+    }
+
+    /// Declares the web globals as lazy accessors that load their module on first use.
+    fn declare_web_apis<'js>(
+        &self,
+        ctx: &Ctx<'js>,
+        prelude: &Module<'js, Evaluated>,
+    ) -> Result<(), EngineError> {
+        prelude
+            .get::<_, Function<'_>>("installWebApis")
+            .map_err(js_error)?
+            .call::<_, ()>((
+                web::loader(ctx, &self.web_bytecode)?,
+                self.web_global_names(),
+            ))
+            .catch(ctx)
+            .map_err(caught_js_error)
+    }
+
+    /// The web globals this engine's built-ins provide: `TextEncoder` and `TextDecoder`
+    /// need typed arrays.
+    fn web_global_names(&self) -> Vec<&'static str> {
+        let mut names = vec!["structuredClone"];
+        if self.builtins.typed_arrays {
+            names.extend(["TextEncoder", "TextDecoder"]);
+        }
+        names
+    }
+
+    /// Builds the environment of a script: its host functions, bound to its id, the hooks
+    /// through which its handlers and timers report, its `console` sink and the state the
+    /// previous version saved. Returns it with the functions the engine calls.
     fn build_env<'js>(
         &self,
         ctx: &Ctx<'js>,
         prelude: &Prelude,
-        script_id: &str,
-        signals: &ScriptSignals,
-        host_promises: &HostPromises,
+        mounting: &Mounting<'_>,
         hot_data: Option<HotData>,
     ) -> Result<(Object<'js>, ScriptHooks), EngineError> {
-        let functions = Object::new(ctx.clone()).map_err(js_error)?;
-        let class = match self.host_class.get() {
-            Some(class) => *class,
-            None => {
-                let class = HostFnClass::register(ctx).map_err(js_error)?;
-                *self.host_class.get_or_init(|| class)
-            }
-        };
-        self.registry
-            .install_native_functions(
-                &functions,
-                script_id,
-                host_promises,
-                &NativeContext {
-                    execution: Arc::clone(&self.execution),
-                    class,
-                },
-            )
-            .map_err(js_error)?;
-        // rquickjs gives every native function the `Function.prototype` of the first
-        // context that created one, for the whole runtime: left alone, a script that
-        // patches its `Function.prototype` would change the host functions of every
-        // other script, and `hostFunction instanceof Function` would be false in all
-        // but that first script.
-        let function_prototype = Function::prototype(ctx.clone());
-        for entry in functions.props::<String, Function>() {
-            let (_, function) = entry.map_err(js_error)?;
-            function
-                .set_prototype(Some(&function_prototype))
-                .map_err(js_error)?;
-        }
-        let timers = timer_hooks(
-            ctx,
-            &self.timer_clock,
-            &signals.next_timer,
-            &self.earliest_timer,
-        )?;
-        let hooks = Object::new(ctx.clone()).map_err(js_error)?;
-        hooks.set("native", functions).map_err(js_error)?;
-        hooks
-            .set("handlers", signals.events.hook(ctx)?)
-            .map_err(js_error)?;
-        hooks
-            .set(
-                "console",
-                self.console.writer(ctx, script_id, &self.module_store)?,
-            )
-            .map_err(js_error)?;
-        hooks.set("now", timers.now).map_err(js_error)?;
-        hooks.set("schedule", timers.schedule).map_err(js_error)?;
-        if let Some(hot_data) = hot_data {
-            let data = hot_data.restore(ctx).map_err(js_error)?;
-            hooks.set("hotData", data).map_err(js_error)?;
-        }
+        let hooks = self.env_hooks(ctx, mounting, hot_data)?;
         let env = prelude
             .make_env
             .clone()
@@ -568,21 +571,72 @@ impl Engine {
             .call::<_, Object<'js>>((hooks,))
             .catch(ctx)
             .map_err(caught_js_error)?;
-        let hook = |name: &str| {
-            env.get::<_, Function<'js>>(name)
-                .map(|function| Persistent::save(ctx, function))
-                .map_err(js_error)
-        };
-        let script_hooks = ScriptHooks {
-            hot_save: hook("hotSave")?,
-            hot_dispose: hook("hotDispose")?,
-            timers_run: Retained::new(
-                env.get::<_, Function<'js>>("timersRun")
-                    .map_err(js_error)?
-                    .as_value(),
-            ),
-        };
+        let script_hooks = read_script_hooks(ctx, &env)?;
         Ok((env, script_hooks))
+    }
+
+    /// The object `makeEnv` of the prelude receives: what the engine bound to the script.
+    fn env_hooks<'js>(
+        &self,
+        ctx: &Ctx<'js>,
+        mounting: &Mounting<'_>,
+        hot_data: Option<HotData>,
+    ) -> Result<Object<'js>, EngineError> {
+        let signals = mounting.signals;
+        let timers = timer_hooks(
+            ctx,
+            &self.timer_clock,
+            &signals.next_timer,
+            &self.earliest_timer,
+        )?;
+        let hooks = Object::new(ctx.clone()).map_err(js_error)?;
+        let set = |name: &str, value: JsValue<'js>| hooks.set(name, value).map_err(js_error);
+        set("native", self.host_functions(ctx, mounting)?.into_value())?;
+        set("handlers", signals.events.hook(ctx)?.into_value())?;
+        set(
+            "console",
+            self.console
+                .writer(ctx, mounting.script_id, &self.module_store)?
+                .into_value(),
+        )?;
+        set("now", timers.now.into_value())?;
+        set("schedule", timers.schedule.into_value())?;
+        if let Some(hot_data) = hot_data {
+            set("hotData", hot_data.restore(ctx).map_err(js_error)?)?;
+        }
+        Ok(hooks)
+    }
+
+    /// The script's host functions, by contract name, each bound to the script's id.
+    fn host_functions<'js>(
+        &self,
+        ctx: &Ctx<'js>,
+        mounting: &Mounting<'_>,
+    ) -> Result<Object<'js>, EngineError> {
+        let functions = Object::new(ctx.clone()).map_err(js_error)?;
+        let native_context = NativeContext {
+            execution: Arc::clone(&self.execution),
+            class: self.host_fn_class(ctx)?,
+        };
+        self.registry
+            .install_native_functions(
+                &functions,
+                mounting.script_id,
+                mounting.host_promises,
+                &native_context,
+            )
+            .map_err(js_error)?;
+        use_context_function_prototype(ctx, &functions)?;
+        Ok(functions)
+    }
+
+    /// The callable class of host functions, registered by the first script that mounts.
+    fn host_fn_class(&self, ctx: &Ctx<'_>) -> Result<HostFnClass, EngineError> {
+        if let Some(class) = self.host_class.get() {
+            return Ok(*class);
+        }
+        let class = HostFnClass::register(ctx).map_err(js_error)?;
+        Ok(*self.host_class.get_or_init(|| class))
     }
 
     /// Swaps `script` in, then retires the version it replaces, whose failed `dispose`
@@ -737,4 +791,51 @@ fn new_context(runtime: &Runtime, builtins: ScriptBuiltins) -> Result<Context, E
     } else {
         Ok(context)
     }
+}
+
+/// The function `name` the prelude module exports, kept for the engine to call.
+fn export_function<'js>(
+    ctx: &Ctx<'js>,
+    module: &Module<'js, Evaluated>,
+    name: &str,
+) -> Result<Persistent<Function<'static>>, EngineError> {
+    module
+        .get::<_, Function<'_>>(name)
+        .map(|function| Persistent::save(ctx, function))
+        .map_err(js_error)
+}
+
+/// The functions of a script's environment the engine keeps: `ctx.hot`'s `save` and
+/// `dispose`, and the one that fires the script's due timers.
+fn read_script_hooks<'js>(ctx: &Ctx<'js>, env: &Object<'js>) -> Result<ScriptHooks, EngineError> {
+    let hook = |name: &str| {
+        env.get::<_, Function<'js>>(name)
+            .map(|function| Persistent::save(ctx, function))
+            .map_err(js_error)
+    };
+    let timers_run = env.get::<_, Function<'js>>("timersRun").map_err(js_error)?;
+    Ok(ScriptHooks {
+        hot_save: hook("hotSave")?,
+        hot_dispose: hook("hotDispose")?,
+        timers_run: Retained::new(timers_run.as_value()),
+    })
+}
+
+/// rquickjs gives every native function the `Function.prototype` of the first context that
+/// created one, for the whole runtime: left alone, a script that patches its
+/// `Function.prototype` would change the host functions of every other script, and
+/// `hostFunction instanceof Function` would be false in all but that first script. Gives
+/// the functions of `functions` the prototype of `ctx`.
+fn use_context_function_prototype<'js>(
+    ctx: &Ctx<'js>,
+    functions: &Object<'js>,
+) -> Result<(), EngineError> {
+    let function_prototype = Function::prototype(ctx.clone());
+    for entry in functions.props::<String, Function>() {
+        let (_, function) = entry.map_err(js_error)?;
+        function
+            .set_prototype(Some(&function_prototype))
+            .map_err(js_error)?;
+    }
+    Ok(())
 }

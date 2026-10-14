@@ -1,9 +1,10 @@
 //! Work the host drives: timers, Promise pumping and deferred calls and requests.
 
+use std::ops::Range;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use rquickjs::{CatchResultExt, Value as JsValue};
+use rquickjs::{CatchResultExt, Ctx, Value as JsValue};
 
 use super::invoke::invoke;
 use crate::contract::{JsArgs, JsDecode, JsEncode};
@@ -13,7 +14,7 @@ use crate::types::ScriptId;
 use super::super::errors::caught_js_error;
 use super::super::tasks::{PendingCall, RequestGuard, RequestResults, ScriptTask};
 use super::super::timers::run_due_timers;
-use super::Engine;
+use super::{Engine, EngineScript};
 
 impl Engine {
     /// Moves the engine clock forward by `elapsed` and fires the timers now due, script
@@ -39,60 +40,22 @@ impl Engine {
             return Ok(0);
         }
         let _budget = self.budget();
-        let mut fired = 0;
-        let mut first_error = None;
-        // A quarantined script's timers never fire.
-        let due = |script: &super::EngineScript| {
-            !script.quarantined.get() && script.signals.next_timer.is_due(now)
+        let mut pass = TimerPass {
+            engine: self,
+            now,
+            fired: 0,
+            first_error: None,
+            stopped: false,
         };
-        // Scripts that follow one another in load order and share a context are served
-        // in one visit to it, as `emit` does.
-        let count = self.scripts.len();
-        let mut start = 0;
-        let mut stopped = false;
-        while start < count && !stopped {
-            let Some((_, first)) = self.scripts.get_index(start) else {
-                break;
-            };
-            let mut end = start + 1;
-            while let Some((_, next)) = self.scripts.get_index(end)
-                && first.shares_context(next)
-            {
-                end += 1;
-            }
-            let any_due = (start..end).any(|index| {
-                self.scripts
-                    .get_index(index)
-                    .is_some_and(|(_, script)| due(script))
-            });
-            if any_due {
-                first.context.with(|ctx| {
-                    for index in start..end {
-                        let Some((script_id, script)) = self.scripts.get_index(index) else {
-                            continue;
-                        };
-                        if !due(script) {
-                            continue;
-                        }
-                        fired += 1;
-                        self.begin_slice();
-                        let outcome = run_due_timers(&ctx, &script.hooks.timers_run, now);
-                        let judged =
-                            self.judge_slice(script_id, script, outcome, || "a timer".to_owned());
-                        if let Err(error) = judged {
-                            first_error.get_or_insert(error);
-                        }
-                        if self.execution.interrupt_requested() {
-                            stopped = true;
-                            break;
-                        }
-                    }
-                });
-            }
-            start = end;
-        }
-        // What the scripts report now, exactly: the next call looks at them only once the
-        // clock gets there.
+        pass.visit();
+        self.refresh_earliest_timer();
+        pass.finish()
+    }
+
+    /// What the scripts report now, exactly: the next `advance_timers` looks at them only
+    /// once the clock gets there. A quarantined script's timers never fire, so they do not
+    /// count.
+    fn refresh_earliest_timer(&self) {
         self.earliest_timer.set(
             self.scripts
                 .values()
@@ -100,13 +63,6 @@ impl Engine {
                 .map(|script| script.signals.next_timer.due())
                 .fold(f64::INFINITY, f64::min),
         );
-        if fired == 0 {
-            // No JavaScript ran, so there is no Promise job to settle.
-            return Ok(0);
-        }
-        // The jobs the timers queued run under a budget of their own.
-        self.begin_slice();
-        self.attribute_interrupt(self.settle(first_error.map_or(Ok(fired), Err)))
     }
 
     /// Starts an exported function without requiring its Promise to settle in this
@@ -147,26 +103,12 @@ impl Engine {
         let _budget = self.budget();
         let mut first_error = None;
         let mut stopped = false;
-        for (script_id, script) in &self.scripts {
+        for (id, script) in &self.scripts {
             if self.execution.interrupt_requested() {
                 stopped = true;
                 break;
             }
-            if script.quarantined.get() || !script.host_promises.has_ready() {
-                continue;
-            }
-            self.begin_slice();
-            let result = script.context.with(|ctx| {
-                script
-                    .host_promises
-                    .poll(&ctx)
-                    .catch(&ctx)
-                    .map_err(caught_js_error)
-            });
-            let judged = self.judge_slice(script_id, script, result.map(drop), || {
-                "a host answer".to_owned()
-            });
-            if let Err(error) = judged {
+            if let Err(error) = self.pump_script(id, script) {
                 first_error.get_or_insert(error);
             }
         }
@@ -174,9 +116,31 @@ impl Engine {
             // Answers may still wait: the next pump looks again.
             self.host_wake.store(true, Ordering::Release);
         }
-        // The jobs the answers queued run under a budget of their own.
-        self.begin_slice();
+        self.begin_settle_slice();
         self.attribute_interrupt(self.settle(first_error.map_or(Ok(()), Err)))
+    }
+
+    /// Delivers the host answers waiting for one script, under a slice of its own.
+    fn pump_script(&self, id: &str, script: &EngineScript) -> Result<(), EngineError> {
+        if script.quarantined.get() || !script.host_promises.has_ready() {
+            return Ok(());
+        }
+        script.context.with(|ctx| {
+            self.run_slice(
+                &ctx,
+                id,
+                script,
+                || "a host answer".to_owned(),
+                || {
+                    script
+                        .host_promises
+                        .poll(&ctx)
+                        .catch(&ctx)
+                        .map_err(caught_js_error)
+                        .map(drop)
+                },
+            )
+        })
     }
 
     /// Starts a request whose handlers may reply in later host-driven operations.
@@ -238,5 +202,95 @@ impl Engine {
                 .borrow_mut()
                 .retain(RequestGuard::is_pending);
         }
+    }
+}
+
+/// A timer pass in progress: which timers are due, and what happened so far.
+struct TimerPass<'a> {
+    engine: &'a Engine,
+    now: f64,
+    /// The scripts whose timers fired.
+    fired: usize,
+    /// The first error of a script, as the pass reports it.
+    first_error: Option<EngineError>,
+    /// Set once the host interrupts the pass: no timer fires after that.
+    stopped: bool,
+}
+
+impl TimerPass<'_> {
+    /// Fires the due timers, one context visit per run of scripts that share a context, as
+    /// `emit` does.
+    fn visit(&mut self) {
+        let engine = self.engine;
+        let count = engine.scripts.len();
+        let mut start = 0;
+        while start < count && !self.stopped {
+            let Some((_, first)) = engine.scripts.get_index(start) else {
+                return;
+            };
+            let end = engine.context_run_end(first, start, count, |index| index);
+            if (start..end).any(|position| self.is_due(position)) {
+                self.fire_run(first, start..end);
+            }
+            start = end;
+        }
+    }
+
+    /// Whether the script at `position` has a timer due. A quarantined script's never is.
+    fn is_due(&self, position: usize) -> bool {
+        self.engine
+            .scripts
+            .get_index(position)
+            .is_some_and(|(_, script)| {
+                !script.quarantined.get() && script.signals.next_timer.is_due(self.now)
+            })
+    }
+
+    fn fire_run(&mut self, first: &EngineScript, run: Range<usize>) {
+        first.context.with(|ctx| {
+            for position in run {
+                if self.is_due(position) {
+                    self.fire(position, &ctx);
+                }
+                if self.stopped {
+                    break;
+                }
+            }
+        });
+    }
+
+    /// Fires the due timers of the script at `position`, under a slice of its own.
+    fn fire(&mut self, position: usize, ctx: &Ctx<'_>) {
+        let engine = self.engine;
+        let now = self.now;
+        let Some((id, script)) = engine.scripts.get_index(position) else {
+            return;
+        };
+        self.fired += 1;
+        let outcome = engine.run_slice(
+            ctx,
+            id,
+            script,
+            || "a timer".to_owned(),
+            || run_due_timers(ctx, &script.hooks.timers_run, now),
+        );
+        if let Err(error) = outcome {
+            self.first_error.get_or_insert(error);
+        }
+        self.stopped = engine.execution.interrupt_requested();
+    }
+
+    /// Settles what the timers left, and reports the pass's result.
+    fn finish(self) -> Result<usize, EngineError> {
+        if self.fired == 0 {
+            // No JavaScript ran, so there is no Promise job to settle.
+            return Ok(0);
+        }
+        // The work left to settle runs under a budget of its own.
+        self.engine.begin_settle_slice();
+        self.engine.attribute_interrupt(
+            self.engine
+                .settle(self.first_error.map_or(Ok(self.fired), Err)),
+        )
     }
 }

@@ -136,7 +136,7 @@ Manivelle provides:
 - native Rust ↔ JavaScript value conversion with `serde_json` semantics
 - generated TypeScript declarations and SDK helpers, and a `manivelle` tool that
   sets up a mod project from a program that opted in
-  (`manivelle init --from game.exe`)
+  (`manivelle init --from game.exe`, `cargo install manivelle --features cli`)
 - optional contract validation
 - native `Uint8Array` in both directions through `NativeBytes`
 - web APIs QuickJS lacks, loaded only when a script uses them: `structuredClone`,

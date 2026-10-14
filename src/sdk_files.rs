@@ -118,7 +118,7 @@ pub fn write_host_sdk_files_with_names(
 pub fn export_sdk_if_requested(
     registry: &InMemoryHostContractRegistry,
 ) -> Result<bool, EngineError> {
-    let Some(directory) = std::env::var_os(EXPORT_SDK_ENV) else {
+    let Some(directory) = std::env::var_os(EXPORT_SDK_ENV).filter(|value| !value.is_empty()) else {
         return Ok(false);
     };
     let directory = PathBuf::from(directory);

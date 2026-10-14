@@ -34,6 +34,7 @@ use super::timers::{EarliestDue, NextTimer, TimerClock};
 use super::transpile::Transpiler;
 use super::web::WebBytecode;
 
+mod delivery;
 mod dispatch;
 mod faults;
 mod host_driven;
@@ -83,6 +84,9 @@ pub struct Engine {
     execution: Arc<ExecutionControl>,
     execution_timeout: Duration,
     max_script_faults: u32,
+    /// Whether a script already faulted for lack of memory in the running operation: the
+    /// pool is shared, so the scripts that fail after the first are not counted.
+    memory_fault_seen: Cell<bool>,
     console: ConsoleSink,
     timer_clock: TimerClock,
     /// Which scripts listen to each event, for `emit` and `request`.
@@ -205,6 +209,7 @@ impl Engine {
     /// Creates an engine on the current thread using the memory, stack, cache and
     /// validation settings from `options`.
     pub fn new(options: &EngineOptions) -> Result<Self, EngineError> {
+        options.validate()?;
         let module_store = ModuleStore::default();
         let execution = Arc::new(ExecutionControl::default());
         let envs = ScriptEnvs::default();
@@ -222,6 +227,7 @@ impl Engine {
             execution,
             execution_timeout: options.execution_timeout,
             max_script_faults: options.max_script_faults,
+            memory_fault_seen: Cell::new(false),
             console: ConsoleSink::default(),
             timer_clock: TimerClock::default(),
             earliest_timer: EarliestDue::default(),
@@ -294,6 +300,7 @@ impl Engine {
 
     /// Starts the execution budget for one operation; it ends when the guard drops.
     fn budget(&self) -> ExecutionGuard<'_> {
+        self.memory_fault_seen.set(false);
         self.execution.enter(self.execution_timeout)
     }
 }
@@ -348,7 +355,7 @@ fn new_runtime(
         MemoryModuleResolver::new(module_store.clone()),
         MemoryModuleLoader::new(module_store.clone(), envs.handle()),
     );
-    let interrupt = execution.clone();
+    let interrupt = Arc::clone(execution);
     runtime.set_interrupt_handler(Some(Box::new(move || interrupt.interrupted())));
     Ok(runtime)
 }

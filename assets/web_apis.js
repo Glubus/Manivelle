@@ -3,8 +3,10 @@
 // once per engine and loaded into a context only when a script first reads one of the
 // globals (see `installWebApis` in the context prelude), so a context that never uses
 // them pays nothing for their code. `natives` is the pair of UTF-8 conversions the engine
-// provides. Built-ins are captured here, so a script that patches `Map.prototype` later
-// cannot change what these do.
+// provides. The built-ins these use are captured when the module loads, that is at the
+// first read of one of the globals, so a script that patches `Map.prototype` before that
+// first read changes what they do: in a context of its own that is the script's own
+// business, in a context group a neighbour can do it.
 
 // Returns the implementations, by global name.
 export function create(natives) {

@@ -8,7 +8,7 @@ use syn::Ident;
 
 use super::field::{decoder, encoder};
 use super::shape::{Scope, decode_payload, encode_fields_into, encode_payload};
-use crate::model::{Container, Style, Tagging, Variant};
+use crate::model::{Container, Shape, Style, Tagging, Variant};
 
 /// Body of `encode_js` for an enum.
 pub(super) fn encode_body(container: &Container<'_>, variants: &[Variant<'_>]) -> TokenStream {
@@ -57,44 +57,74 @@ fn encode_variant(
     variant: &Variant<'_>,
     accessors: &[TokenStream],
 ) -> TokenStream {
-    let shape = &variant.shape;
-    let key = &variant.name.serialize;
     let scope = variant_scope(container, rust);
     match container.tagging() {
-        Tagging::External if shape.style == Style::Unit => {
-            quote!(<str as ::manivelle::JsEncode>::encode_js(#key, __ctx))
-        }
-        Tagging::External => {
-            let payload = encode_payload(&scope, shape, accessors);
-            quote!({
-                let __payload = #payload?;
-                let __object = ::manivelle::js::Object::new(__ctx.clone())?;
-                __object.set(#key, __payload)?;
-                ::manivelle::js::Result::Ok(__object.into_value())
-            })
-        }
-        Tagging::Internal { tag } => {
-            let fields = match shape.style {
-                Style::Newtype => {
-                    let encode = encoder(&shape.fields[0]);
-                    let access = &accessors[0];
-                    vec![quote! {
-                        ::manivelle::__derive::merge_object(&__object, (#encode)(#access, __ctx)?, #rust)?;
-                    }]
-                }
-                _ => encode_fields_into(&scope, shape, accessors),
-            };
-            tagged_object(tag, key, &fields)
-        }
+        Tagging::External => encode_external(&scope, variant, accessors),
+        Tagging::Internal { tag } => encode_internal(&scope, rust, tag, variant, accessors),
         Tagging::Adjacent { tag, content } => {
-            let content = (shape.style != Style::Unit).then(|| {
-                let payload = encode_payload(&scope, shape, accessors);
-                quote!(__object.set(#content, #payload?)?;)
-            });
-            tagged_object(tag, key, &Vec::from_iter(content))
+            encode_adjacent(&scope, (tag, content), variant, accessors)
         }
-        Tagging::Untagged => encode_payload(&scope, shape, accessors),
+        Tagging::Untagged => encode_payload(&scope, &variant.shape, accessors),
     }
+}
+
+/// `"Name"` for a unit variant, `{ Name: payload }` otherwise.
+fn encode_external(
+    scope: &Scope<'_>,
+    variant: &Variant<'_>,
+    accessors: &[TokenStream],
+) -> TokenStream {
+    let key = &variant.name.serialize;
+    if variant.shape.style == Style::Unit {
+        return quote!(<str as ::manivelle::JsEncode>::encode_js(#key, __ctx));
+    }
+    let payload = encode_payload(scope, &variant.shape, accessors);
+    quote!({
+        let __payload = #payload?;
+        let __object = ::manivelle::js::Object::new(__ctx.clone())?;
+        __object.set(#key, __payload)?;
+        ::manivelle::js::Result::Ok(__object.into_value())
+    })
+}
+
+/// `{ [tag]: "Name", ...fields }`: the variant's fields sit next to the tag.
+fn encode_internal(
+    scope: &Scope<'_>,
+    rust: &str,
+    tag: &str,
+    variant: &Variant<'_>,
+    accessors: &[TokenStream],
+) -> TokenStream {
+    let key = &variant.name.serialize;
+    let fields = match variant.shape.style {
+        Style::Newtype => vec![merge_newtype_payload(&variant.shape, rust, accessors)],
+        _ => encode_fields_into(scope, &variant.shape, accessors),
+    };
+    tagged_object(tag, key, &fields)
+}
+
+/// The statement merging an internally tagged newtype variant's payload into `__object`.
+fn merge_newtype_payload(shape: &Shape<'_>, rust: &str, accessors: &[TokenStream]) -> TokenStream {
+    let encode = encoder(&shape.fields[0]);
+    let access = &accessors[0];
+    quote! {
+        ::manivelle::__derive::merge_object(&__object, (#encode)(#access, __ctx)?, #rust)?;
+    }
+}
+
+/// `{ [tag]: "Name", [content]: payload }`, without `content` for a unit variant.
+fn encode_adjacent(
+    scope: &Scope<'_>,
+    (tag, content): (&str, &str),
+    variant: &Variant<'_>,
+    accessors: &[TokenStream],
+) -> TokenStream {
+    let key = &variant.name.serialize;
+    let content_statement = (variant.shape.style != Style::Unit).then(|| {
+        let payload = encode_payload(scope, &variant.shape, accessors);
+        quote!(__object.set(#content, #payload?)?;)
+    });
+    tagged_object(tag, key, &Vec::from_iter(content_statement))
 }
 
 /// `{ [tag]: key, ...statements }` built into `__object`.
@@ -196,30 +226,7 @@ fn decode_adjacent(
 ) -> TokenStream {
     let arms = variants.iter().map(|variant| {
         let pattern = name_pattern(variant);
-        let ident = variant.ident;
-        let body = match variant.shape.style {
-            Style::Unit => quote!({
-                let __content = ::manivelle::__derive::field_value(&__object, &[#content])?;
-                ::manivelle::__derive::unit_payload(__ctx, __content)
-                    .map_err(|__error| ::manivelle::__codec_at_path(__error, #content))?;
-                ::manivelle::js::Result::Ok(Self::#ident)
-            }),
-            Style::Newtype => {
-                let decode = decoder(&variant.shape.fields[0]);
-                quote! {
-                    ::manivelle::js::Result::Ok(Self::#ident {
-                        0: ::manivelle::__derive::decode_field(__ctx, &__object, &[#content], #decode)?,
-                    })
-                }
-            }
-            Style::Tuple | Style::Struct => {
-                let helper = helper_ident(variant);
-                quote! {
-                    Self::#helper(__ctx, ::manivelle::__derive::require_field(&__object, #content, #rust)?)
-                        .map_err(|__error| ::manivelle::__codec_at_path(__error, #content))
-                }
-            }
-        };
+        let body = decode_adjacent_body(variant, rust, content);
         quote!(#pattern => #body,)
     });
     let reject_unknown = container.attrs.deny_unknown_fields.then(
@@ -233,6 +240,44 @@ fn decode_adjacent(
             #(#arms)*
             __other => ::manivelle::js::Result::Err(::manivelle::__codec_at_path(#unknown, #tag)),
         }
+    }
+}
+
+/// What an adjacently tagged variant decodes to, from the `content` field of `__object`.
+fn decode_adjacent_body(variant: &Variant<'_>, rust: &str, content: &str) -> TokenStream {
+    match variant.shape.style {
+        Style::Unit => decode_adjacent_unit(variant, content),
+        Style::Newtype => decode_adjacent_newtype(variant, content),
+        Style::Tuple | Style::Struct => decode_adjacent_payload(variant, rust, content),
+    }
+}
+
+fn decode_adjacent_unit(variant: &Variant<'_>, content: &str) -> TokenStream {
+    let ident = variant.ident;
+    quote!({
+        let __content = ::manivelle::__derive::field_value(&__object, &[#content])?;
+        ::manivelle::__derive::unit_payload(__ctx, __content)
+            .map_err(|__error| ::manivelle::__codec_at_path(__error, #content))?;
+        ::manivelle::js::Result::Ok(Self::#ident)
+    })
+}
+
+fn decode_adjacent_newtype(variant: &Variant<'_>, content: &str) -> TokenStream {
+    let ident = variant.ident;
+    let decode = decoder(&variant.shape.fields[0]);
+    quote! {
+        ::manivelle::js::Result::Ok(Self::#ident {
+            0: ::manivelle::__derive::decode_field(__ctx, &__object, &[#content], #decode)?,
+        })
+    }
+}
+
+/// A tuple or struct variant: its payload is decoded as a whole by the variant's helper.
+fn decode_adjacent_payload(variant: &Variant<'_>, rust: &str, content: &str) -> TokenStream {
+    let helper = helper_ident(variant);
+    quote! {
+        Self::#helper(__ctx, ::manivelle::__derive::require_field(&__object, #content, #rust)?)
+            .map_err(|__error| ::manivelle::__codec_at_path(__error, #content))
     }
 }
 

@@ -19,13 +19,13 @@ jobs:
       - run: rustup show
       - run: cargo fmt --all --check
       # Every feature but `disable-assertions`: tests run with QuickJS assertions on.
-      - run: cargo clippy --workspace --features derive,uuid,chrono,glam --all-targets -- -D warnings
-      - run: cargo test --workspace --features derive,uuid,chrono,glam
+      - run: cargo clippy --workspace --features derive,uuid,chrono,glam,cli --all-targets -- -D warnings
+      - run: cargo test --workspace --features derive,uuid,chrono,glam,cli
       - run: cargo test --workspace --no-default-features
       - run: cargo check --workspace --all-features --all-targets
       - run: cargo run --example getting_started --features derive
       - run: cargo package -p manivelle_macros
-      - run: cargo doc --workspace --no-deps --features derive,uuid,chrono,glam
+      - run: cargo doc --workspace --no-deps --features derive,uuid,chrono,glam,cli
         env:
           RUSTDOCFLAGS: -D warnings
       - uses: peaceiris/actions-mdbook@v2
