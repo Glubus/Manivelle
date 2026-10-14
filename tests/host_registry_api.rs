@@ -323,7 +323,7 @@ fn registry_writes_sdk_files() {
 }
 
 #[test]
-fn manivelle_sdk_binary_writes_files_from_descriptor_json() {
+fn manivelle_sdk_command_writes_files_from_descriptor_json() {
     let cache_dir = TestCacheDir::new("host-registry-sdk-bin");
     let descriptors_path = cache_dir.path().join("descriptors.json");
     let output_dir = cache_dir.path().join("out");
@@ -339,15 +339,16 @@ fn manivelle_sdk_binary_writes_files_from_descriptor_json() {
     )
     .expect("write descriptors");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_manivelle-sdk"))
+    let output = Command::new(env!("CARGO_BIN_EXE_manivelle"))
+        .arg("sdk")
         .arg(&descriptors_path)
         .arg(&output_dir)
         .output()
-        .expect("run manivelle-sdk");
+        .expect("run manivelle");
 
     assert!(
         output.status.success(),
-        "manivelle-sdk failed\nstdout:\n{}\nstderr:\n{}",
+        "manivelle sdk failed\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );

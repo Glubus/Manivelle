@@ -18,7 +18,7 @@ Rename, in this order:
 | `import ... from "rustts:env"` | `import ... from "manivelle:env"` |
 | `rustts.d.ts`, `rustts.sdk.ts` (default SDK file names) | `manivelle.d.ts`, `manivelle.sdk.ts` |
 | `rusttsSdk` (SDK export object) | `manivelleSdk` |
-| `rustts-sdk` (binary) | `manivelle-sdk` |
+| `rustts-sdk <descriptors> <dir>` (binary) | `manivelle sdk <descriptors> <dir>` |
 | `RUSTTS_REQUIRE_TSC` | `MANIVELLE_REQUIRE_TSC` |
 
 Existing transpile cache directories are rebuilt once: the artifact header changed.

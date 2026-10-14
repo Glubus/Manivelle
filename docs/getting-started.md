@@ -78,6 +78,10 @@ fn main() -> Result<(), EngineError> {
     let mut engine = Engine::new(&EngineOptions::default())?;
 
     engine.registry().function::<Add>()?;
+    // `manivelle init --from <this program>` asks for the declarations here.
+    if manivelle::export_sdk_if_requested(engine.registry())? {
+        return Ok(());
+    }
     engine.registry().write_sdk_files_with_names(
         "target/generated",
         &SdkFileNames {
@@ -169,6 +173,13 @@ import { math } from "my_sdk";
 That requires setting `HostContract::IMPORT_MODULE = "my_sdk"` and
 `HostContract::EXPORT_PATH = &["math", "add"]` on the Rust contract. See
 [Generate TypeScript SDK Files](guides/generate-sdk-files.md).
+
+## For Mod Authors
+
+The lines with `export_sdk_if_requested` let people who write scripts for your program
+get its declarations without access to your source: they run
+`manivelle init my-mod --from path/to/your-program` and get a type-checking project.
+See [Generate TypeScript SDK Files](guides/generate-sdk-files.md#give-mod-authors-the-declarations-manivelle-init).
 
 ## Next
 

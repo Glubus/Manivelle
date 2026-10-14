@@ -124,17 +124,52 @@ user.onFound(event => {
 });
 ```
 
-## Application Tooling
+## Give Mod Authors The Declarations: `manivelle init`
 
-Most applications should wrap this in their own CLI. A game SDK might expose:
+Mod authors need your declarations on their machine, in a project that type-checks.
+You do not have to ship a tool for that: your program can hand its scripting API to the
+`manivelle` command line tool. Install it with `cargo install manivelle`.
 
-```text
-my-sdk init my-mod
-my-sdk generate-sdk
-my-sdk check
-my-sdk build
+Opt in by calling `export_sdk_if_requested` once, right after registering the contracts
+and before the program does anything else at startup:
+
+```rust
+let engine = Engine::new(&EngineOptions::default())?;
+engine.registry().function::<FindUser>()?.callback::<UserFound>()?;
+
+if manivelle::export_sdk_if_requested(engine.registry())? {
+    return Ok(()); // the tool asked for the SDK: it is written, nothing else to do
+}
+// ... open the window, load the assets, run the game
 ```
 
-That CLI can call `write_sdk_files_with_names(...)`, create `tsconfig.json`, and
-decide where generated files live. `Manivelle` only owns the
-registry-to-TypeScript generation.
+Without the request it returns `false` at once. The program is never inspected from
+outside: only a program that calls this function can be exported.
+
+A mod author then runs, with your executable (a game, an editor, a server):
+
+```text
+manivelle init my-mod --from "path/to/game.exe"
+```
+
+The tool starts the program with the environment variable `MANIVELLE_EXPORT_SDK` set to
+a temporary directory, waits for it to exit (30 seconds by default, `--timeout` changes
+it), and creates:
+
+```text
+my-mod/
+  manivelle/manivelle.d.ts      # your contracts, always refreshed
+  manivelle/manivelle.sdk.ts    # the typed SDK module
+  tsconfig.json                 # created only when missing
+  src/main.ts                   # created only when missing
+```
+
+Run the same command again after a game update to refresh `manivelle/`; the author's
+`tsconfig.json` and scripts are never overwritten. `--types` and `--sdk` rename the
+generated files, and arguments after `--` are passed to the program (a game that needs
+`--headless`, say). Running a program means trusting it: only use `--from` on programs you
+would run anyway.
+
+`manivelle sdk descriptors.json out-dir` writes the same files from a descriptors file,
+for build scripts that never start the program: the descriptors are
+`engine.registry().descriptors()` serialized as JSON.

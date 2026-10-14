@@ -26,6 +26,28 @@ pub(crate) fn run_tsc(path: &std::path::Path) -> Option<std::process::Output> {
     )
 }
 
+/// Type-checks the project whose `tsconfig.json` is in `directory`.
+#[allow(dead_code)]
+pub(crate) fn run_tsc_project(directory: &std::path::Path) -> Option<std::process::Output> {
+    let compiler =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("node_modules/typescript/bin/tsc");
+    let required =
+        std::env::var_os("CI").is_some() || std::env::var_os("MANIVELLE_REQUIRE_TSC").is_some();
+    if !compiler.is_file() {
+        assert!(!required, "TypeScript is required in CI: run npm ci first");
+        eprintln!("TypeScript check skipped locally: run npm ci to enable it");
+        return None;
+    }
+    Some(
+        std::process::Command::new("node")
+            .arg(compiler)
+            .arg("-p")
+            .arg(directory.join("tsconfig.json"))
+            .output()
+            .expect("could not execute the pinned TypeScript compiler with node"),
+    )
+}
+
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct TestCacheDir {

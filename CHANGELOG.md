@@ -18,7 +18,7 @@ release 0.3.0); the history of `rustts` stays in that project's tags.
   own thread through `Engine`, with no threads and no event loop.
 - Typed host contracts (`HostFunction`, `HostCallback`, `HostContext`, `HostRequest`)
   registered through `TsSchema` and `JsEncode` / `JsDecode`, and the scripts'
-  declarations and SDK generated from them (`manivelle-sdk` for descriptors).
+  declarations and SDK generated from them (the `manivelle` command line tool).
 - `#[derive(TsSchema)]` (feature `derive`) mirroring serde's wire format natively,
   with `#[manivelle(...)]` attributes for codec directions, the JSON opt-in, custom
   native codecs and schema overrides.
@@ -36,3 +36,7 @@ release 0.3.0); the history of `rustts` stays in that project's tags.
   `EngineOptions::max_script_faults` times (3 by default) is quarantined, and
   `Engine::quarantined_scripts` lists it. See
   [Untrusted Mods](docs/guides/untrusted-mods.md).
+- The `manivelle` tool: `manivelle init --from <program>` asks a program that opted in
+  (`manivelle::export_sdk_if_requested`) for its scripting API and sets up a script
+  project around the TypeScript declarations it gets; `manivelle sdk` writes them from
+  a descriptors file.

@@ -1,7 +1,5 @@
 //! The program of the [Getting Started](../docs/getting-started.md) guide: one Rust
-//! function exposed to a TypeScript script.
-//!
-//! Run: `cargo run --example getting_started --features derive`
+//! function exposed to a TypeScript script. It also opts in to `manivelle init`.
 
 use manivelle::{
     Engine, EngineError, EngineOptions, HostContract, HostContractKind, HostFunction,
@@ -50,6 +48,10 @@ fn main() -> Result<(), EngineError> {
     let mut engine = Engine::new(&EngineOptions::default())?;
 
     engine.registry().function::<Add>()?;
+    // `manivelle init --from <this program>` asks for the declarations here.
+    if manivelle::export_sdk_if_requested(engine.registry())? {
+        return Ok(());
+    }
     engine.registry().write_sdk_files_with_names(
         "target/generated",
         &SdkFileNames {

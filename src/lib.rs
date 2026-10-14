@@ -49,6 +49,7 @@ pub use registry::{
 };
 pub use runner::{ConsoleLevel, Engine, InterruptHandle, PendingCall};
 pub use sdk_files::{
-    GeneratedSdkFiles, SdkFileNames, write_host_sdk_files, write_host_sdk_files_with_names,
+    DESCRIPTORS_FILE, EXPORT_SDK_ENV, GeneratedSdkFiles, SdkFileNames, export_sdk_if_requested,
+    write_host_sdk_files, write_host_sdk_files_with_names,
 };
 pub use types::{MemoryStats, ReloadReport, ScriptId};
