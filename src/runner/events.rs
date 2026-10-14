@@ -10,7 +10,7 @@ use rustc_hash::FxBuildHasher;
 use super::errors::{js_error, pending_exception};
 use super::execution::ExecutionControl;
 use super::retained::Retained;
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// Handler lists of one context, by event name, as the prelude hands them over: only
 /// events with at least one handler are listed. Each list is kept as a snapshot of
@@ -72,7 +72,7 @@ impl ListenedEvents {
     }
 
     /// The hook the prelude hands handler lists to.
-    pub(super) fn hook<'js>(&self, ctx: &Ctx<'js>) -> Result<Function<'js>, VmError> {
+    pub(super) fn hook<'js>(&self, ctx: &Ctx<'js>) -> Result<Function<'js>, EngineError> {
         let events = Rc::downgrade(&self.list);
         let stale = Rc::clone(&self.stale);
         Function::new(
@@ -192,8 +192,8 @@ pub(super) fn deliver<'js>(
     payload: &JsValue<'js>,
     keep_results: bool,
     execution: &ExecutionControl,
-    mut on_return: impl FnMut(JsValue<'js>) -> Result<(), VmError>,
-) -> Result<(), VmError> {
+    mut on_return: impl FnMut(JsValue<'js>) -> Result<(), EngineError>,
+) -> Result<(), EngineError> {
     let mut first_error = None;
     let mut arguments = [payload.as_raw()];
     for handler in handlers {

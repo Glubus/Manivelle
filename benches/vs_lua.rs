@@ -12,8 +12,8 @@ use criterion::{
     BenchmarkGroup, Criterion, criterion_group, criterion_main, measurement::WallTime,
 };
 use manivelle::{
-    Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
-    VmError, VmOptions,
+    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostFunction,
+    HostFunctionSignature,
 };
 use mlua::{Lua, LuaSerdeExt};
 use rquickjs::{Context, Ctx, Function, Object, Runtime, Value as JsValue, prelude::Func};
@@ -103,7 +103,7 @@ impl HostFunctionSignature for Inc {
 }
 
 impl HostFunction for Inc {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(input + 1.0)
     }
 }
@@ -170,7 +170,7 @@ fn js_function<'js>(ctx: &Ctx<'js>, name: &str) -> Function<'js> {
 }
 
 fn manivelle_engine() -> Engine {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create manivelle engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create manivelle engine");
     engine
         .registry()
         .function::<Inc>()

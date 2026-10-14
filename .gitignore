@@ -1,5 +1,4 @@
 /target
-/.ts-embed-cache
 book/
 Cargo.lock
 .idea/

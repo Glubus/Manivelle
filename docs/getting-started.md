@@ -26,14 +26,16 @@ cargo add serde_json
 
 ## Create Your First Contract
 
-Replace `src/main.rs` with:
+Replace `src/main.rs` with the following (it is
+[`examples/getting_started.rs`](https://github.com/Glubus/Manivelle/blob/main/examples/getting_started.rs),
+which CI builds and runs):
 
 ```rust
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use manivelle::{
     Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
-    SdkFileNames, TsSchema, VmError, VmOptions,
+    SdkFileNames, TsSchema, EngineError, EngineOptions,
 };
 
 #[derive(Deserialize, TsSchema)]
@@ -65,15 +67,15 @@ impl HostFunctionSignature for Add {
 }
 
 impl HostFunction for Add {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(AddOutput {
             value: input.left + input.right,
         })
     }
 }
 
-fn main() -> Result<(), VmError> {
-    let mut engine = Engine::new(&VmOptions::default())?;
+fn main() -> Result<(), EngineError> {
+    let mut engine = Engine::new(&EngineOptions::default())?;
 
     engine.registry().function::<Add>()?;
     engine.registry().write_sdk_files_with_names(

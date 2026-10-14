@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use manivelle::{
-    Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
-    InMemoryHostContractRegistry, VmContractValidation, VmError, VmOptions,
+    ContractValidation, Engine, EngineError, EngineOptions, HostContract, HostContractKind,
+    HostFunction, HostFunctionSignature, InMemoryHostContractRegistry,
 };
 
 /// `counter.bump(name)`: counts calls, returns the running total.
@@ -60,19 +60,19 @@ impl HostFunctionSignature for Lookup {
 }
 
 impl HostFunction for Lookup {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(format!("user-{input}"))
     }
 }
 
 fn engine() -> Engine {
-    Engine::new(&VmOptions::default()).expect("create engine")
+    Engine::new(&EngineOptions::default()).expect("create engine")
 }
 
 fn validating_engine() -> Engine {
-    Engine::new(&VmOptions {
-        contract_validation: VmContractValidation::InputsAndOutputs,
-        ..VmOptions::default()
+    Engine::new(&EngineOptions {
+        contract_validation: ContractValidation::InputsAndOutputs,
+        ..EngineOptions::default()
     })
     .expect("create engine")
 }
@@ -114,7 +114,7 @@ fn closure_errors_are_catchable_in_scripts() {
     engine
         .registry()
         .function_with::<Bump>(|name| {
-            Err(VmError::Execution {
+            Err(EngineError::Execution {
                 details: format!("{name} may not bump"),
             })
         })
@@ -137,7 +137,7 @@ fn closure_errors_are_catchable_in_scripts() {
 
     assert!(caught.contains("mallory may not bump"), "{caught}");
     assert!(
-        matches!(uncaught, Err(VmError::Execution { ref details }) if details.contains("eve may not bump")),
+        matches!(uncaught, Err(EngineError::Execution { ref details }) if details.contains("eve may not bump")),
         "{uncaught:?}"
     );
 }
@@ -206,7 +206,7 @@ fn stateful_typed_closures_run_when_validating() {
 
     assert_eq!(second, 2);
     assert!(
-        matches!(invalid, Err(VmError::Execution { .. })),
+        matches!(invalid, Err(EngineError::Execution { .. })),
         "{invalid:?}"
     );
     assert_eq!(total.load(Ordering::SeqCst), 2);
@@ -271,7 +271,7 @@ fn a_panicking_host_function_panics_out_of_the_call_and_leaves_the_engine_usable
 fn generated(
     register: impl FnOnce(
         &InMemoryHostContractRegistry,
-    ) -> Result<&InMemoryHostContractRegistry, VmError>,
+    ) -> Result<&InMemoryHostContractRegistry, EngineError>,
 ) -> (String, String) {
     let registry = InMemoryHostContractRegistry::new();
     register(&registry).expect("register contract");

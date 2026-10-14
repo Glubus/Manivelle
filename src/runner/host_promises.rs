@@ -13,7 +13,7 @@ use rquickjs::{
 use rustc_hash::FxHashMap;
 
 use crate::contract::{EncodeReply, HostResolver, ReplyInbox, Settlement};
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// The async host calls of one script version, from start to settlement.
 ///
@@ -24,7 +24,7 @@ use crate::error::VmError;
 ///
 /// Resolvers queue settlements from any thread; [`Self::poll`] turns them into Promise
 /// settlements on the engine thread. [`Self::cancel`], and dropping, retire the scope:
-/// its functions reject every new call with [`VmError::Cancelled`], its resolvers report
+/// its functions reject every new call with [`EngineError::Cancelled`], its resolvers report
 /// cancelled and queue nothing, and the Promises still waiting are released unsettled.
 #[derive(Default)]
 pub(crate) struct HostPromises {
@@ -96,7 +96,7 @@ impl HostPromises {
         Ok(settled)
     }
 
-    /// Retires the scope: new calls reject with [`VmError::Cancelled`], resolvers report
+    /// Retires the scope: new calls reject with [`EngineError::Cancelled`], resolvers report
     /// cancelled and queue nothing, queued answers are discarded, and the waiting
     /// Promises are released unsettled.
     ///
@@ -134,11 +134,11 @@ impl WeakHostPromises {
         contract: &'static str,
         encode: &EncodeReply<T>,
         input: impl FnOnce() -> JsResult<I>,
-        handler: impl FnOnce(I, HostResolver<T>) -> Result<(), VmError>,
+        handler: impl FnOnce(I, HostResolver<T>) -> Result<(), EngineError>,
     ) -> JsResult<JsValue<'js>> {
         let (promise, resolve, reject) = Promise::new(ctx)?;
         let Some(scope) = self.0.upgrade().filter(|scope| !scope.inbox.is_cancelled()) else {
-            reject.call::<_, ()>((error_value(ctx, &VmError::Cancelled.to_string())?,))?;
+            reject.call::<_, ()>((error_value(ctx, &EngineError::Cancelled.to_string())?,))?;
             return Ok(promise.into_value());
         };
         let input = match input() {
@@ -221,7 +221,7 @@ mod tests {
 
     use super::{HostPromises, WeakHostPromises};
     use crate::contract::{EncodeReply, HostResolver, ReplyValue};
-    use crate::error::VmError;
+    use crate::error::EngineError;
 
     struct Number(f64);
 
@@ -235,7 +235,7 @@ mod tests {
     fn encode() -> EncodeReply<f64> {
         Arc::new(|value: f64| {
             if value < 0.0 {
-                return Err(VmError::ContractValidation {
+                return Err(EngineError::ContractValidation {
                     contract_name: "test.score".to_owned(),
                     direction: "output",
                     details: "negative".to_owned(),
@@ -321,7 +321,7 @@ mod tests {
             let (rejected, resolver) = start(&ctx, &weak);
             resolver
                 .expect("resolver")
-                .reject(VmError::Execution {
+                .reject(EngineError::Execution {
                     details: "no score".to_owned(),
                 })
                 .expect("queue rejection");
@@ -343,7 +343,7 @@ mod tests {
             let error = resolver.expect("resolver").resolve(-1.0);
 
             assert!(
-                matches!(error, Err(VmError::ContractValidation { .. })),
+                matches!(error, Err(EngineError::ContractValidation { .. })),
                 "{error:?}"
             );
             assert_eq!(promises.poll(&ctx).expect("poll"), 1);
@@ -365,7 +365,7 @@ mod tests {
                     || Ok(()),
                     |(), resolver| {
                         escaped = Some(resolver);
-                        Err(VmError::Execution {
+                        Err(EngineError::Execution {
                             details: "busy".to_owned(),
                         })
                     },
@@ -393,7 +393,7 @@ mod tests {
             promises.cancel();
 
             assert!(second.is_cancelled(), "cancel reaches unsettled resolvers");
-            assert!(matches!(second.resolve(2.0), Err(VmError::Cancelled)));
+            assert!(matches!(second.resolve(2.0), Err(EngineError::Cancelled)));
             assert_eq!(
                 promises.poll(&ctx).expect("poll"),
                 0,
@@ -403,7 +403,7 @@ mod tests {
             assert!(waiting.result::<f64>().is_none());
             let (late, resolver) = start(&ctx, &weak);
             assert!(resolver.is_none(), "a cancelled scope runs no handler");
-            assert!(rejection_message(&ctx, &late).contains(&VmError::Cancelled.to_string()));
+            assert!(rejection_message(&ctx, &late).contains(&EngineError::Cancelled.to_string()));
         });
     }
 
@@ -419,12 +419,12 @@ mod tests {
 
             assert!(resolver.is_cancelled());
             assert!(matches!(
-                resolver.reject(VmError::Cancelled),
-                Err(VmError::Cancelled)
+                resolver.reject(EngineError::Cancelled),
+                Err(EngineError::Cancelled)
             ));
             let (late, handler_ran) = start(&ctx, &weak);
             assert!(handler_ran.is_none(), "a dropped scope runs no handler");
-            assert!(rejection_message(&ctx, &late).contains(&VmError::Cancelled.to_string()));
+            assert!(rejection_message(&ctx, &late).contains(&EngineError::Cancelled.to_string()));
         });
     }
 }

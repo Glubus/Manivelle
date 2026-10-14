@@ -13,7 +13,7 @@ use oxc::transformer::{Module, TransformOptions};
 use super::diagnostics::transpile_error;
 use super::imports::validate_static_module_graph;
 use super::source_map::SourceMap;
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// JavaScript transpiled from one TypeScript module, with its source map.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +53,7 @@ impl CompilerService {
         source_text: &str,
         source_type: SourceType,
         source_path: &Path,
-    ) -> Result<TranspiledModule, VmError> {
+    ) -> Result<TranspiledModule, EngineError> {
         self.compile(source_text, source_type, source_path);
 
         if self.errors.is_empty() {
@@ -72,10 +72,11 @@ impl CompilerService {
         &mut self,
         source_text: &str,
         source_path: &Path,
-    ) -> Result<TranspiledModule, VmError> {
-        let source_type = SourceType::from_path(source_path).map_err(|error| VmError::Resolve {
-            details: error.to_string(),
-        })?;
+    ) -> Result<TranspiledModule, EngineError> {
+        let source_type =
+            SourceType::from_path(source_path).map_err(|error| EngineError::Resolve {
+                details: error.to_string(),
+            })?;
         self.execute(source_text, source_type.with_module(true), source_path)
     }
 
@@ -84,7 +85,7 @@ impl CompilerService {
         &mut self,
         source_text: &str,
         source_path: &Path,
-    ) -> Result<TranspiledModule, VmError> {
+    ) -> Result<TranspiledModule, EngineError> {
         validate_static_module_graph(source_text, source_path)?;
         self.execute(source_text, SourceType::ts().with_module(true), source_path)
     }

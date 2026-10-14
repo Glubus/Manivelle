@@ -15,6 +15,7 @@ mod retained;
 mod tasks;
 mod timers;
 mod transpile;
+mod web;
 
 pub use console::ConsoleLevel;
 pub use engine::Engine;

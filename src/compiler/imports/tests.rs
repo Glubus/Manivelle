@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use super::extract_static_import_requests;
-use crate::error::VmError;
+use crate::error::EngineError;
 
 #[test]
 fn extracts_value_import_forms() {
@@ -77,7 +77,7 @@ fn rejects_dynamic_imports() {
 
     assert!(matches!(
         error,
-        VmError::Resolve { details }
+        EngineError::Resolve { details }
             if details.contains("dynamic import() is not supported; use a static import")
     ));
 }

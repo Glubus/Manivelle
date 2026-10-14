@@ -19,9 +19,9 @@ host function resumed by [`pump`](#deferred-script-results), and a reload that
 ## Load And Call
 
 ```rust
-use manivelle::{Engine, VmOptions};
+use manivelle::{Engine, EngineOptions};
 
-let mut engine = Engine::new(&VmOptions::default())?;
+let mut engine = Engine::new(&EngineOptions::default())?;
 engine
     .registry()
     .function::<FindUser>()?
@@ -40,9 +40,9 @@ engine.emit("user.found", &UserFoundPayload { user_id: 7 })?;
   values implementing [`JsEncode`](type-mapping.md), and decodes the result with
   `JsDecode`. `engine.call::<serde_json::Value>(id, name, vec![json])` keeps a
   JSON-shaped API.
-- Calling a script that is not loaded fails with `VmError::ScriptNotFound`; calling
-  an export the script does not have fails with `VmError::FunctionNotFound`. An
-  exception thrown by the script is returned as `VmError::Execution` with its
+- Calling a script that is not loaded fails with `EngineError::ScriptNotFound`; calling
+  an export the script does not have fails with `EngineError::FunctionNotFound`. An
+  exception thrown by the script is returned as `EngineError::Execution` with its
   message and stack, located in the TypeScript source (see
   [Error Locations](#error-locations)).
 
@@ -156,7 +156,7 @@ if let Some(result) = beat.take() {
 registration order even when answers arrive in another order. A handler error is
 returned through the handle once all replies finish; other handlers still run.
 If a participating script is replaced or unloaded while the request is pending,
-the request yields `VmError::Cancelled` instead of mixing versions. A failed
+the request yields `EngineError::Cancelled` instead of mixing versions. A failed
 reload leaves old tasks running; a successful reload cancels them, including late
 host replies. `ctx.hot` transfers opted-in data, not suspended async stacks.
 
@@ -217,7 +217,7 @@ Stack locations in logged errors point at the TypeScript source, as in
 ## Error Locations
 
 Errors point at the TypeScript you wrote. Each script frame of a
-`VmError::Execution` stack names its file and its TypeScript line and column:
+`EngineError::Execution` stack names its file and its TypeScript line and column:
 
 ```text
 javascript execution failed: division by zero
@@ -234,7 +234,7 @@ javascript execution failed: division by zero
 - Errors from top-level code during a load, calls, `async` exports, event and
   request handlers, timer callbacks, Promise jobs and unhandled rejections are all
   located. Frames outside script modules, such as `native` ones, stay as they are.
-- A syntax error fails the load with `VmError::Transpile`, one diagnostic per line
+- A syntax error fails the load with `EngineError::Transpile`, one diagnostic per line
   as `path:line:column: message`, followed by its labels and help, indented.
 - Each module's source map is built when it is transpiled, kept with it in memory
   and in the disk cache, and only read when an error is reported: successful calls
@@ -327,7 +327,7 @@ export function add(points: number): number {
   registration order, even after one throws. A reload whose new version fails to
   load does not dispose the old one.
 - A throwing `dispose` does not undo the reload: the new version stays loaded and
-  the load call (`load_script`, `load_project`) returns `VmError::Execution` saying
+  the load call (`load_script`, `load_project`) returns `EngineError::Execution` saying
   the previous version's `ctx.hot.dispose` failed and the new version is loaded.
   `reload_changed` lists that script both in `reloaded` and in `dispose_failed`.
   `unload_script` returns the error too, and the script is unloaded all the same.
@@ -344,13 +344,13 @@ export function add(points: number): number {
 ## Execution Budget
 
 Every load, call, emit, request, deferred call or request, `pump`, and
-`advance_timers` runs under `VmOptions::execution_timeout` (5 seconds by
+`advance_timers` runs under `EngineOptions::execution_timeout` (5 seconds by
 default). The budget starts when the operation first reaches a QuickJS check or a
 Rust host function, so time spent in host functions counts against it and an
 operation that reaches neither (a short handler) never reads the clock; suspended
 time between host calls does not count. QuickJS
 checks about every ten thousand interpreter steps: JavaScript still running at
-the first check after expiry is interrupted with `VmError::Execution`. The
+the first check after expiry is interrupted with `EngineError::Execution`. The
 budget is cooperative: it cannot preempt a blocked Rust function, and JavaScript
 that finishes before the next check is not stopped. A synchronous loop cannot
 be paused and resumed: interruption aborts it.
@@ -365,7 +365,7 @@ std::thread::spawn(move || {
     std::thread::sleep(std::time::Duration::from_millis(200));
     handle.interrupt();
 });
-// Fails with VmError::Interrupted if still running after 200 ms.
+// Fails with EngineError::Interrupted if still running after 200 ms.
 let result = engine.call::<()>("rules", "simulate", ());
 ```
 
@@ -374,20 +374,20 @@ let result = engine.call::<()>("rules", "simulate", ());
 no effect on the next operation. An `emit`, `request` or `advance_timers` stops at
 the handler or timer the interrupt or the exhausted budget reached; later ones do
 not run. An interrupt that reaches a `ctx.hot.save` or `ctx.hot.dispose` callback
-is reported as `VmError::Interrupted` by the load or `unload_script` that ran it.
+is reported as `EngineError::Interrupted` by the load or `unload_script` that ran it.
 
 ## Transpilation Cache
 
-`VmOptions::cache_dir` is `None` by default: every load transpiles the TypeScript
+`EngineOptions::cache_dir` is `None` by default: every load transpiles the TypeScript
 in memory. Set it to a directory to keep the transpiled JavaScript and its source
 map on disk and reuse them across reloads and runs:
 
 ```rust
-use manivelle::{Engine, VmOptions};
+use manivelle::{Engine, EngineOptions};
 
-let engine = Engine::new(&VmOptions {
+let engine = Engine::new(&EngineOptions {
     cache_dir: Some("target/manivelle-cache".into()),
-    ..VmOptions::default()
+    ..EngineOptions::default()
 })?;
 ```
 
@@ -417,7 +417,7 @@ unchanged module.
 
 `memory_stats()` returns the QuickJS counters for the whole engine as a
 `MemoryStats`: allocated bytes (`malloc_size_bytes`), the limit
-(`malloc_limit_bytes`, from `VmOptions::memory_limit_bytes`), bytes used by live
+(`malloc_limit_bytes`, from `EngineOptions::memory_limit_bytes`), bytes used by live
 values (`memory_used_bytes`), and allocation, atom, string, object and function
 counts. A call that exceeds the memory limit fails, and the engine stays usable.
 
@@ -430,22 +430,23 @@ loaded.
 ### Script Built-ins
 
 Creating a context is the main cost of loading a script. By default a context has
-every QuickJS built-in; `VmOptions::builtins` (`ScriptBuiltins`) turns off the
+every QuickJS built-in; `EngineOptions::builtins` (`ScriptBuiltins`) turns off the
 optional ones a game's scripts do not use: `RegExp`, `Date`, `Proxy`, typed arrays,
-`WeakRef` and `FinalizationRegistry`, and `atob`, `btoa` and `performance`.
+`WeakRef` and `FinalizationRegistry`, and the web APIs (`atob`, `btoa`,
+`performance.now()`, `structuredClone`, `TextEncoder` and `TextDecoder`).
 
 ```rust
-use manivelle::{ScriptBuiltins, VmOptions};
+use manivelle::{ScriptBuiltins, EngineOptions};
 
-let options = VmOptions {
+let options = EngineOptions {
     // Scripts parse no text and keep no clock: they get the cheapest context.
     builtins: ScriptBuiltins::NONE,
-    ..VmOptions::default()
+    ..EngineOptions::default()
 };
 // Or keep what the scripts use.
-let options = VmOptions {
+let options = EngineOptions {
     builtins: ScriptBuiltins { regexp: true, ..ScriptBuiltins::NONE },
-    ..VmOptions::default()
+    ..EngineOptions::default()
 };
 ```
 
@@ -456,6 +457,25 @@ memory (on a loaded laptop, an empty script loaded in about 480 to 590 µs inste
 disabled built-in fails with a `ReferenceError` where it runs, never at load, so test
 your scripts with the options you ship. Keep `typed_arrays` on when host functions use
 `NativeBytes`.
+
+### Web APIs
+
+With `ScriptBuiltins::web` on (the default), a context also has the web APIs mod code
+and npm packages expect and QuickJS lacks:
+
+- `structuredClone(value)`: a deep copy that keeps cycles and shared references and
+  copies primitives and their wrappers, `Date`, `RegExp`, `Map`, `Set`, arrays,
+  `ArrayBuffer`, typed arrays, `DataView`, errors and plain objects. A class instance
+  becomes a plain object; a function, a symbol, a `Promise` or a weak collection throws
+  a `DataCloneError`. Transferring (`{ transfer }`) is not supported.
+- `TextEncoder` (`encode`, `encodeInto`) and `TextDecoder` (`fatal`, `ignoreBOM`), UTF-8
+  only: another label throws a `RangeError`, and `{ stream: true }` a `TypeError`. They
+  need `typed_arrays` too. Conversions run in Rust, so large buffers are cheap.
+
+They are defined once per context, so the scripts of a [context group](#context-groups)
+share them like any other built-in. The TypeScript types come from the `DOM` (or
+`@types/node`) library of your `tsconfig.json`: Manivelle's generated declarations do
+not redeclare them.
 
 ### Context Groups
 
@@ -536,7 +556,7 @@ engine.set_gc_threshold(Some(256 * 1024));
   threshold (256 KiB by default). After each automatic collection QuickJS moves it
   to 1.5 times the memory still in use.
 - While it is off, cycles accumulate: watch `memory_stats()`. Reaching
-  `VmOptions::memory_limit_bytes` fails the operation that allocates.
+  `EngineOptions::memory_limit_bytes` fails the operation that allocates.
 - Scripts that avoid creating cycles every frame never need collecting mid-song.
 
 ## Threading
@@ -549,19 +569,19 @@ dedicated thread and send it work over a channel:
 use std::sync::mpsc;
 use std::thread;
 
-use manivelle::{Engine, VmError, VmOptions};
+use manivelle::{Engine, EngineError, EngineOptions};
 
 type Job = Box<dyn FnOnce(&mut Engine) + Send>;
 
 let (jobs, inbox) = mpsc::channel::<Job>();
 thread::spawn(move || {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     for job in inbox {
         job(&mut engine);
     }
 });
 
-let (reply, answer) = mpsc::channel::<Result<f64, VmError>>();
+let (reply, answer) = mpsc::channel::<Result<f64, EngineError>>();
 jobs.send(Box::new(move |engine| {
     let _ = reply.send(engine.call("rules", "score", (3, 4)));
 }))

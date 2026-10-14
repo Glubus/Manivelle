@@ -3,8 +3,8 @@
 mod support;
 
 use manivelle::{
-    Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
-    TsSchema, VmError, VmOptions,
+    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostFunction,
+    HostFunctionSignature, TsSchema,
 };
 use serde::{Deserialize, Serialize};
 
@@ -86,7 +86,7 @@ impl HostFunctionSignature for DogfoodFindUser {
 }
 
 impl HostFunction for DogfoodFindUser {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(DogfoodFindUserOutput {
             user_id: input.user_id,
             display_name: format!("user-{}", input.user_id),
@@ -137,7 +137,7 @@ fn engine_runs_a_script_built_on_the_generated_sdk() {
 }
 
 fn dogfood_engine() -> Engine {
-    let engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .registry()
         .function::<DogfoodFindUser>()

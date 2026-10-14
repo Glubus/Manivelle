@@ -7,7 +7,7 @@ use rquickjs::{CatchResultExt, Value as JsValue};
 
 use super::invoke::invoke;
 use crate::contract::{JsArgs, JsDecode, JsEncode};
-use crate::error::VmError;
+use crate::error::EngineError;
 use crate::types::ScriptId;
 
 use super::super::errors::caught_js_error;
@@ -32,7 +32,7 @@ impl Engine {
     ///
     /// A call that finds no timer due, which is most frames, is one comparison however
     /// many scripts are loaded.
-    pub fn advance_timers(&self, elapsed: Duration) -> Result<usize, VmError> {
+    pub fn advance_timers(&self, elapsed: Duration) -> Result<usize, EngineError> {
         let now = self.timer_clock.advance(elapsed);
         if now < self.earliest_timer.get() {
             // No script has a timer due yet: nothing to look at, in any context.
@@ -106,7 +106,7 @@ impl Engine {
         script_id: &str,
         function: &str,
         args: impl JsArgs,
-    ) -> Result<PendingCall<R>, VmError> {
+    ) -> Result<PendingCall<R>, EngineError> {
         let script = self.script(script_id)?;
         let _budget = self.budget();
         let result = script.context.with(|ctx| {
@@ -128,7 +128,7 @@ impl Engine {
     /// jobs under one execution budget. The host clock is not advanced. A call with no
     /// answer queued, which is most frames, is one atomic read however many scripts
     /// are loaded; only a script with an answer waiting is entered.
-    pub fn pump(&self) -> Result<(), VmError> {
+    pub fn pump(&self) -> Result<(), EngineError> {
         if !self.host_wake.swap(false, Ordering::AcqRel) {
             // No resolver queued an answer since the last pump.
             return Ok(());
@@ -169,7 +169,7 @@ impl Engine {
         &self,
         event: &str,
         payload: &P,
-    ) -> Result<PendingCall<Vec<(ScriptId, R)>>, VmError> {
+    ) -> Result<PendingCall<Vec<(ScriptId, R)>>, EngineError> {
         let handle = PendingCall::new();
         let replies = RequestResults::new(handle.clone());
         let delivery = self.dispatch(event, payload, true, |script_id, ctx, value| {

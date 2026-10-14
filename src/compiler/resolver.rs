@@ -8,7 +8,7 @@ use oxc_resolver::{
     TsconfigReferences,
 };
 
-use crate::error::VmError;
+use crate::error::EngineError;
 
 const MODULE_EXTENSIONS: &[&str] = &[".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs"];
 
@@ -29,8 +29,8 @@ pub(crate) struct ResolvedModule {
 }
 
 impl ModuleResolver {
-    pub(crate) fn for_entry(entry_path: &Path) -> Result<Self, VmError> {
-        let entry_dir = entry_path.parent().ok_or_else(|| VmError::Resolve {
+    pub(crate) fn for_entry(entry_path: &Path) -> Result<Self, EngineError> {
+        let entry_dir = entry_path.parent().ok_or_else(|| EngineError::Resolve {
             details: format!("entry has no parent directory: {}", entry_path.display()),
         })?;
         let tsconfig_path = find_tsconfig(entry_dir);
@@ -64,12 +64,12 @@ impl ModuleResolver {
         &self,
         from_path: &Path,
         request: &str,
-    ) -> Result<ResolvedModule, VmError> {
+    ) -> Result<ResolvedModule, EngineError> {
         let base_dir = parent_dir(from_path)?;
         let resolution =
             self.resolver
                 .resolve(base_dir, request)
-                .map_err(|error| VmError::Resolve {
+                .map_err(|error| EngineError::Resolve {
                     details: format!(
                         "unable to resolve import `{request}` from {}: {error}",
                         from_path.display()
@@ -89,13 +89,13 @@ impl ModuleResolver {
         &self,
         request: &str,
         resolved_path: &Path,
-    ) -> Result<PathBuf, VmError> {
-        let canonical_resolved_path = resolved_path.canonicalize().map_err(VmError::from)?;
+    ) -> Result<PathBuf, EngineError> {
+        let canonical_resolved_path = resolved_path.canonicalize().map_err(EngineError::from)?;
         if canonical_resolved_path.starts_with(&self.project_root) {
             return Ok(canonical_resolved_path);
         }
 
-        Err(VmError::Resolve {
+        Err(EngineError::Resolve {
             details: format!(
                 "resolved import `{request}` outside project root {}: {}",
                 self.project_root.display(),
@@ -133,8 +133,8 @@ fn resolve_options(tsconfig_path: Option<&Path>) -> ResolveOptions {
     }
 }
 
-fn parent_dir(path: &Path) -> Result<&Path, VmError> {
-    path.parent().ok_or_else(|| VmError::Resolve {
+fn parent_dir(path: &Path) -> Result<&Path, EngineError> {
+    path.parent().ok_or_else(|| EngineError::Resolve {
         details: format!("module has no parent directory: {}", path.display()),
     })
 }
@@ -195,13 +195,13 @@ fn extended_config_file(path: &Path) -> PathBuf {
     PathBuf::from(file)
 }
 
-fn project_root(entry_dir: &Path, tsconfig_path: Option<&Path>) -> Result<PathBuf, VmError> {
+fn project_root(entry_dir: &Path, tsconfig_path: Option<&Path>) -> Result<PathBuf, EngineError> {
     let root = match tsconfig_path {
         Some(path) => parent_dir(path)?,
         None => entry_dir,
     };
 
-    root.canonicalize().map_err(VmError::from)
+    root.canonicalize().map_err(EngineError::from)
 }
 
 #[cfg(test)]
@@ -263,7 +263,7 @@ mod tests {
             .resolve_request(&root.join("main.ts"), "missing-pkg")
             .expect_err("reject unresolved package import");
 
-        assert!(matches!(error, VmError::Resolve { .. }));
+        assert!(matches!(error, EngineError::Resolve { .. }));
     }
 
     #[test]
@@ -320,7 +320,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            VmError::Resolve { details }
+            EngineError::Resolve { details }
                 if details.contains("outside project root")
         ));
     }

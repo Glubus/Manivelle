@@ -1,6 +1,6 @@
-//! `VmOptions::builtins`: which optional JavaScript built-ins a script context has.
+//! `EngineOptions::builtins`: which optional JavaScript built-ins a script context has.
 
-use manivelle::{Engine, ScriptBuiltins, VmOptions};
+use manivelle::{Engine, EngineOptions, ScriptBuiltins};
 
 /// The switch of one optional built-in.
 type Switch = fn(&mut ScriptBuiltins) -> &mut bool;
@@ -20,13 +20,17 @@ const OPTIONAL: [(&str, Switch, &[&str]); 6] = [
         |b| &mut b.weak_ref,
         &["WeakRef", "FinalizationRegistry"],
     ),
-    ("web", |b| &mut b.web, &["atob", "btoa", "performance"]),
+    (
+        "web",
+        |b| &mut b.web,
+        &["atob", "btoa", "performance", "structuredClone"],
+    ),
 ];
 
 fn engine(builtins: ScriptBuiltins) -> Engine {
-    Engine::new(&VmOptions {
+    Engine::new(&EngineOptions {
         builtins,
-        ..VmOptions::default()
+        ..EngineOptions::default()
     })
     .expect("create engine")
 }
@@ -39,7 +43,7 @@ fn visible_globals(builtins: ScriptBuiltins) -> Vec<&'static str> {
             "probe",
             r#"
             const names = ["RegExp", "Date", "Proxy", "ArrayBuffer", "Uint8Array", "DataView",
-              "WeakRef", "FinalizationRegistry", "atob", "btoa", "performance"];
+              "WeakRef", "FinalizationRegistry", "atob", "btoa", "performance", "structuredClone"];
             export function visible(): string[] {
               return names.filter((name) => typeof (globalThis as any)[name] !== "undefined");
             }

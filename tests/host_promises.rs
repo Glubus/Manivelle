@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use manivelle::{
-    Engine, HostContract, HostContractAbi, HostContractKind, HostFunctionSignature, HostResolver,
-    InMemoryHostContractRegistry, VmContractValidation, VmError, VmOptions,
+    ContractValidation, Engine, EngineError, EngineOptions, HostContract, HostContractAbi,
+    HostContractKind, HostFunctionSignature, HostResolver, InMemoryHostContractRegistry,
 };
 use serde_json::json;
 use support::TestCacheDir;
@@ -59,16 +59,16 @@ export async function doubled(name: string): Promise<number> {
 export function observed(): number[] { return seen; }
 "#;
 
-fn validating() -> VmOptions {
-    VmOptions {
-        contract_validation: VmContractValidation::InputsAndOutputs,
-        ..VmOptions::default()
+fn validating() -> EngineOptions {
+    EngineOptions {
+        contract_validation: ContractValidation::InputsAndOutputs,
+        ..EngineOptions::default()
     }
 }
 
 /// An engine whose `scores.lookup` keeps every call's input and resolver for the test
 /// to settle.
-fn score_engine(options: &VmOptions) -> (Engine, Calls<String, u32>) {
+fn score_engine(options: &EngineOptions) -> (Engine, Calls<String, u32>) {
     let engine = Engine::new(options).expect("create engine");
     let calls: Calls<String, u32> = Arc::default();
     let kept = Arc::clone(&calls);
@@ -87,9 +87,9 @@ fn last_call<I, O>(calls: &Calls<I, O>) -> (I, HostResolver<O>) {
     calls.lock().expect("calls").pop().expect("a started call")
 }
 
-fn assert_failed_with<T: Debug>(result: Option<Result<T, VmError>>, expected: &str) {
+fn assert_failed_with<T: Debug>(result: Option<Result<T, EngineError>>, expected: &str) {
     match result {
-        Some(Err(VmError::Execution { details })) => {
+        Some(Err(EngineError::Execution { details })) => {
             assert!(details.contains(expected), "{expected:?} not in {details}");
         }
         other => panic!("expected a failure mentioning {expected:?}, got {other:?}"),
@@ -98,7 +98,7 @@ fn assert_failed_with<T: Debug>(result: Option<Result<T, VmError>>, expected: &s
 
 #[test]
 fn a_resolution_reaches_the_script_only_when_the_engine_pumps() {
-    let (mut engine, calls) = score_engine(&VmOptions::default());
+    let (mut engine, calls) = score_engine(&EngineOptions::default());
     engine
         .load_script("game", SCORE_SCRIPT)
         .expect("load script");
@@ -130,7 +130,7 @@ fn a_resolution_reaches_the_script_only_when_the_engine_pumps() {
 
 #[test]
 fn rejected_and_abandoned_calls_reject_the_script_promise() {
-    let (mut engine, calls) = score_engine(&VmOptions::default());
+    let (mut engine, calls) = score_engine(&EngineOptions::default());
     engine
         .load_script("game", SCORE_SCRIPT)
         .expect("load script");
@@ -140,7 +140,7 @@ fn rejected_and_abandoned_calls_reject_the_script_promise() {
         .expect("start rejected call");
     last_call(&calls)
         .1
-        .reject(VmError::Execution {
+        .reject(EngineError::Execution {
             details: "eve is banned".to_owned(),
         })
         .expect("queue the rejection");
@@ -158,11 +158,11 @@ fn rejected_and_abandoned_calls_reject_the_script_promise() {
 
 #[test]
 fn failed_calls_reject_at_once_instead_of_throwing() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .registry()
         .async_function_with::<Score>(|name, _resolver| {
-            Err(VmError::Execution {
+            Err(EngineError::Execution {
                 details: format!("{name} is unknown"),
             })
         })
@@ -204,7 +204,7 @@ fn failed_calls_reject_at_once_instead_of_throwing() {
 
 #[test]
 fn typed_async_functions_resolve_natively_and_when_validating() {
-    for options in [VmOptions::default(), validating()] {
+    for options in [EngineOptions::default(), validating()] {
         let (mut engine, calls) = score_engine(&options);
         engine
             .load_script("game", SCORE_SCRIPT)
@@ -224,7 +224,7 @@ fn typed_async_functions_resolve_natively_and_when_validating() {
 /// synchronous one: a script's `try`/`catch` cannot swallow it.
 #[test]
 fn a_panicking_async_handler_panics_out_of_the_call_and_leaves_the_engine_usable() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .registry()
         .async_function_with::<Score>(|_name, _resolver| panic!("async handler panicked"))
@@ -277,7 +277,7 @@ fn ids_resolved_by(engine: &mut Engine) -> [String; 2] {
 
 #[test]
 fn caller_handlers_see_the_calling_script() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .registry()
         .async_function_with_caller::<WhoAmI>(|caller, (), resolver| {
@@ -290,7 +290,7 @@ fn caller_handlers_see_the_calling_script() {
 
 #[test]
 fn replacing_a_script_cancels_its_calls_and_retired_functions_refuse_new_ones() {
-    let (mut engine, calls) = score_engine(&VmOptions::default());
+    let (mut engine, calls) = score_engine(&EngineOptions::default());
     engine
         .load_script(
             "game",
@@ -324,10 +324,10 @@ fn replacing_a_script_cancels_its_calls_and_retired_functions_refuse_new_ones() 
         .expect("load second version");
 
     assert!(resolver.is_cancelled());
-    assert!(matches!(resolver.resolve(21), Err(VmError::Cancelled)));
-    assert!(matches!(pending.take(), Some(Err(VmError::Cancelled))));
+    assert!(matches!(resolver.resolve(21), Err(EngineError::Cancelled)));
+    assert!(matches!(pending.take(), Some(Err(EngineError::Cancelled))));
     let stale: String = engine.call("game", "viaStale", ()).expect("call");
-    assert_eq!(stale, VmError::Cancelled.to_string());
+    assert_eq!(stale, EngineError::Cancelled.to_string());
     assert!(
         calls.lock().expect("calls").is_empty(),
         "a retired version's function starts no call"
@@ -343,7 +343,7 @@ fn replacing_a_script_cancels_its_calls_and_retired_functions_refuse_new_ones() 
 
 #[test]
 fn a_failed_reload_keeps_the_running_version_calls() {
-    let (mut engine, calls) = score_engine(&VmOptions::default());
+    let (mut engine, calls) = score_engine(&EngineOptions::default());
     engine
         .load_script("game", SCORE_SCRIPT)
         .expect("load script");
@@ -363,7 +363,7 @@ fn a_failed_reload_keeps_the_running_version_calls() {
 
 #[test]
 fn unloading_or_dropping_the_engine_cancels_waiting_resolvers() {
-    let (mut engine, calls) = score_engine(&VmOptions::default());
+    let (mut engine, calls) = score_engine(&EngineOptions::default());
     engine.load_script("unloaded", SCORE_SCRIPT).expect("load");
     engine.load_script("kept", SCORE_SCRIPT).expect("load");
     let _unloaded_call = engine
@@ -383,12 +383,12 @@ fn unloading_or_dropping_the_engine_cancels_waiting_resolvers() {
     drop(engine);
 
     assert!(kept.is_cancelled());
-    assert!(matches!(kept.resolve(1), Err(VmError::Cancelled)));
+    assert!(matches!(kept.resolve(1), Err(EngineError::Cancelled)));
 }
 
 #[test]
 fn settled_calls_release_their_promises() {
-    let (mut engine, calls) = score_engine(&VmOptions::default());
+    let (mut engine, calls) = score_engine(&EngineOptions::default());
     engine
         .load_script("game", SCORE_SCRIPT)
         .expect("load script");

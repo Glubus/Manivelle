@@ -24,7 +24,7 @@ mod types;
 #[doc(hidden)]
 pub use serde as __serde;
 
-pub use config::{ScriptBuiltins, VmContractValidation, VmOptions, VmUnknownFieldValidation};
+pub use config::{ContractValidation, EngineOptions, ScriptBuiltins, UnknownFieldValidation};
 pub use contract::{
     Caller, HostFunctionSignature, HostRequest, HostResolver, JsArgs, JsDecode, JsEncode,
 };
@@ -40,7 +40,7 @@ pub use contract::{
     expect_object as __codec_expect_object, push_schema_dependency as __push_schema_dependency,
     schema_type_ref as __schema_type_ref,
 };
-pub use error::VmError;
+pub use error::EngineError;
 #[cfg(feature = "derive")]
 pub use manivelle_macros::TsSchema;
 pub use registry::{

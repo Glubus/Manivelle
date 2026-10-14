@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use rquickjs::{Ctx, Error, Module, Result as JsResult};
 
 use crate::compiler::{CompiledModule, ModuleOrigin};
-use crate::error::VmError;
+use crate::error::EngineError;
 
 use super::graph::RuntimeModuleGraph;
 
@@ -21,15 +21,15 @@ mod tests;
 use inner::ModuleStoreInner;
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct WorkerModuleStore {
+pub(crate) struct ModuleStore {
     inner: Arc<Mutex<ModuleStoreInner>>,
 }
 
-impl WorkerModuleStore {
+impl ModuleStore {
     pub(crate) fn insert_host_modules(
         &self,
         modules: BTreeMap<String, String>,
-    ) -> std::result::Result<(), VmError> {
+    ) -> std::result::Result<(), EngineError> {
         let mut guard = self.lock_store()?;
         insertion::insert_host_modules(&mut guard, modules);
         Ok(())
@@ -39,7 +39,7 @@ impl WorkerModuleStore {
     pub(crate) fn insert_group_host_modules(
         &self,
         modules: BTreeMap<String, String>,
-    ) -> std::result::Result<(), VmError> {
+    ) -> std::result::Result<(), EngineError> {
         let mut guard = self.lock_store()?;
         insertion::insert_group_host_modules(&mut guard, modules);
         Ok(())
@@ -47,7 +47,7 @@ impl WorkerModuleStore {
 
     /// Marks graph `graph_id` as loaded into a context group; removing its modules
     /// clears the mark.
-    pub(crate) fn mark_grouped(&self, graph_id: u64) -> std::result::Result<(), VmError> {
+    pub(crate) fn mark_grouped(&self, graph_id: u64) -> std::result::Result<(), EngineError> {
         self.lock_store()?.grouped_graphs.insert(graph_id);
         Ok(())
     }
@@ -58,7 +58,7 @@ impl WorkerModuleStore {
         source: String,
         origin: ModuleOrigin,
         graph_id: u64,
-    ) -> std::result::Result<RuntimeModuleGraph, VmError> {
+    ) -> std::result::Result<RuntimeModuleGraph, EngineError> {
         let mut guard = self.lock_store()?;
         Ok(insertion::insert_inline(
             &mut guard, script_id, source, origin, graph_id,
@@ -70,12 +70,15 @@ impl WorkerModuleStore {
         entry_module_id: &str,
         modules: Vec<CompiledModule>,
         graph_id: u64,
-    ) -> std::result::Result<RuntimeModuleGraph, VmError> {
+    ) -> std::result::Result<RuntimeModuleGraph, EngineError> {
         let mut guard = self.lock_store()?;
         insertion::insert_project(&mut guard, entry_module_id, modules, graph_id)
     }
 
-    pub(crate) fn remove_modules(&self, module_ids: &[String]) -> std::result::Result<(), VmError> {
+    pub(crate) fn remove_modules(
+        &self,
+        module_ids: &[String],
+    ) -> std::result::Result<(), EngineError> {
         let mut guard = self.lock_store()?;
         removal::remove_modules(&mut guard, module_ids);
         Ok(())
@@ -96,7 +99,7 @@ impl WorkerModuleStore {
         &self,
         module_id: &str,
         import: impl FnOnce() -> T,
-    ) -> std::result::Result<T, VmError> {
+    ) -> std::result::Result<T, EngineError> {
         self.lock_store()?.host_import = Some(module_id.to_owned());
         let imported = import();
         self.lock_store()?.host_import = None;
@@ -124,7 +127,7 @@ impl WorkerModuleStore {
 
     fn lock_store(
         &self,
-    ) -> std::result::Result<std::sync::MutexGuard<'_, ModuleStoreInner>, VmError> {
-        self.inner.lock().map_err(|_| VmError::LockPoisoned)
+    ) -> std::result::Result<std::sync::MutexGuard<'_, ModuleStoreInner>, EngineError> {
+        self.inner.lock().map_err(|_| EngineError::LockPoisoned)
     }
 }

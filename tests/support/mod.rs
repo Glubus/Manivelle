@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use manivelle::VmOptions;
+use manivelle::EngineOptions;
 
 #[allow(dead_code)]
 pub(crate) fn run_tsc(path: &std::path::Path) -> Option<std::process::Output> {
@@ -41,10 +41,10 @@ impl TestCacheDir {
 
     /// Engine options caching transpiled artifacts in [`TestCacheDir::cache_path`].
     #[allow(dead_code)]
-    pub(crate) fn engine_options(&self) -> VmOptions {
-        VmOptions {
+    pub(crate) fn engine_options(&self) -> EngineOptions {
+        EngineOptions {
             cache_dir: Some(self.cache_path()),
-            ..VmOptions::default()
+            ..EngineOptions::default()
         }
     }
 

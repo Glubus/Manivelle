@@ -9,7 +9,7 @@ use crate::contract::{
     HostFunctionSignature, HostMetadata, Schema, TsEnumVariant, TsField, TsLiteral, TsRecordKey,
     TsSchema, TsType,
 };
-use crate::error::VmError;
+use crate::error::EngineError;
 
 struct DemoFunction;
 struct GeneratedFunction;
@@ -39,7 +39,7 @@ impl HostFunctionSignature for DemoFunction {
 }
 
 impl HostFunction for DemoFunction {
-    fn call(_input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(())
     }
 }
@@ -60,7 +60,7 @@ impl HostFunctionSignature for GeneratedFunction {
 }
 
 impl HostFunction for GeneratedFunction {
-    fn call(_input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(())
     }
 }
@@ -320,7 +320,7 @@ fn demo_callback() -> HostContractDescriptor {
 }
 
 impl HostFunction for ComplexGeneratedFunction {
-    fn call(_input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(())
     }
 }

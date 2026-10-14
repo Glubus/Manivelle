@@ -5,7 +5,7 @@ use std::time::Duration;
 
 /// Host contract validation policy.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum VmContractValidation {
+pub enum ContractValidation {
     /// Do not validate host function payloads against registered schemas.
     #[default]
     Disabled,
@@ -15,7 +15,7 @@ pub enum VmContractValidation {
     InputsAndOutputs,
 }
 
-impl VmContractValidation {
+impl ContractValidation {
     pub(crate) fn validates_inputs(self) -> bool {
         matches!(self, Self::Inputs | Self::InputsAndOutputs)
     }
@@ -27,7 +27,7 @@ impl VmContractValidation {
 
 /// Unknown object field validation policy for schema-backed host contracts.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum VmUnknownFieldValidation {
+pub enum UnknownFieldValidation {
     /// Allow object fields that are not declared by the registered schema.
     #[default]
     Allow,
@@ -35,14 +35,14 @@ pub enum VmUnknownFieldValidation {
     Reject,
 }
 
-impl VmUnknownFieldValidation {
+impl UnknownFieldValidation {
     pub(crate) fn rejects_unknown_fields(self) -> bool {
         matches!(self, Self::Reject)
     }
 }
 
 /// The optional JavaScript built-ins each script context gets, chosen with
-/// [`VmOptions::builtins`].
+/// [`EngineOptions::builtins`].
 ///
 /// Every context has ECMAScript's core (`Object`, `Array`, `String`, `Number`, `Math`,
 /// `Symbol`, `BigInt`, `Reflect`, errors, ...), module support, `JSON`, `Map` and
@@ -70,7 +70,8 @@ pub struct ScriptBuiltins {
     pub typed_arrays: bool,
     /// `WeakRef` and `FinalizationRegistry`.
     pub weak_ref: bool,
-    /// `atob`, `btoa` and `performance.now()`.
+    /// `atob`, `btoa`, `performance.now()`, `structuredClone`, and `TextEncoder` and
+    /// `TextDecoder` (which also need `typed_arrays`).
     pub web: bool,
 }
 
@@ -101,10 +102,10 @@ impl Default for ScriptBuiltins {
 /// Configuration for [`crate::Engine`].
 ///
 /// New fields may be added in minor releases, so build options with struct update
-/// syntax, such as `VmOptions { execution_timeout, ..VmOptions::default() }`, rather
+/// syntax, such as `EngineOptions { execution_timeout, ..EngineOptions::default() }`, rather
 /// than listing every field.
 #[derive(Debug, Clone)]
-pub struct VmOptions {
+pub struct EngineOptions {
     /// Directory for transpiled JavaScript artifacts, reused across runs and reloads.
     /// `None` (the default) transpiles in memory on every load.
     pub cache_dir: Option<PathBuf>,
@@ -117,22 +118,22 @@ pub struct VmOptions {
     /// QuickJS stack limit in bytes.
     pub max_stack_size_bytes: usize,
     /// Host contract validation policy.
-    pub contract_validation: VmContractValidation,
+    pub contract_validation: ContractValidation,
     /// Unknown object field validation policy for schema-backed host contracts.
-    pub unknown_field_validation: VmUnknownFieldValidation,
+    pub unknown_field_validation: UnknownFieldValidation,
     /// Optional JavaScript built-ins of every script context.
     pub builtins: ScriptBuiltins,
 }
 
-impl Default for VmOptions {
+impl Default for EngineOptions {
     fn default() -> Self {
         Self {
             cache_dir: None,
             execution_timeout: Duration::from_secs(5),
             memory_limit_bytes: 16 * 1024 * 1024,
             max_stack_size_bytes: 512 * 1024,
-            contract_validation: VmContractValidation::Disabled,
-            unknown_field_validation: VmUnknownFieldValidation::Allow,
+            contract_validation: ContractValidation::Disabled,
+            unknown_field_validation: UnknownFieldValidation::Allow,
             builtins: ScriptBuiltins::ALL,
         }
     }

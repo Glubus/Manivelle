@@ -8,17 +8,17 @@ use rquickjs::prelude::Func;
 use rquickjs::{CatchResultExt, Ctx, Persistent, Promise, Value as JsValue};
 
 use crate::contract::JsDecode;
-use crate::error::VmError;
+use crate::error::EngineError;
 
 use super::errors::{caught_js_error, in_typescript, js_error};
-use super::module_loader::WorkerModuleStore;
+use super::module_loader::ModuleStore;
 use super::promise_rejections::UnhandledRejections;
 
 /// A script result that can complete after a later host-driven operation. Polling or
 /// taking the result never executes JavaScript; the engine drives it through `pump`,
 /// `advance_timers`, and other script operations.
 pub struct PendingCall<R> {
-    result: Rc<RefCell<Option<Result<R, VmError>>>>,
+    result: Rc<RefCell<Option<Result<R, EngineError>>>>,
 }
 
 impl<R> Clone for PendingCall<R> {
@@ -36,7 +36,7 @@ impl<R> PendingCall<R> {
         }
     }
 
-    pub(super) fn complete(&self, value: Result<R, VmError>) {
+    pub(super) fn complete(&self, value: Result<R, EngineError>) {
         let mut result = self.result.borrow_mut();
         if result.is_none() {
             *result = Some(value);
@@ -51,7 +51,7 @@ impl<R> PendingCall<R> {
 
     /// Takes the finished result once, or returns `None` while it is still pending or
     /// after another clone of the handle has taken it.
-    pub fn take(&self) -> Option<Result<R, VmError>> {
+    pub fn take(&self) -> Option<Result<R, EngineError>> {
         self.result.borrow_mut().take()
     }
 }
@@ -91,7 +91,7 @@ impl<R: JsDecode + 'static> RequestLifetime for RefCell<RequestResults<R>> {
         let mut request = self.borrow_mut();
         if !request.finished {
             request.finished = true;
-            request.handle.complete(Err(VmError::Cancelled));
+            request.handle.complete(Err(EngineError::Cancelled));
         }
     }
 }
@@ -100,7 +100,7 @@ impl<R: JsDecode + 'static> RequestLifetime for RefCell<RequestResults<R>> {
 /// happens in another order. All handlers run before the result is published.
 pub(super) struct RequestResults<R> {
     handle: PendingCall<Vec<(String, R)>>,
-    replies: Vec<Option<Result<(String, R), VmError>>>,
+    replies: Vec<Option<Result<(String, R), EngineError>>>,
     active: bool,
     finished: bool,
 }
@@ -120,7 +120,7 @@ impl<R: JsDecode + 'static> RequestResults<R> {
         ctx: &Ctx<'js>,
         script_id: &str,
         value: JsValue<'js>,
-    ) -> Result<Option<ScriptTask>, VmError> {
+    ) -> Result<Option<ScriptTask>, EngineError> {
         let slot = {
             let mut state = state.borrow_mut();
             let slot = state.replies.len();
@@ -140,11 +140,11 @@ impl<R: JsDecode + 'static> RequestResults<R> {
                     .borrow_mut()
                     .record(slot, reply.map(|reply| (id, reply)));
             }),
-            Box::new(move || cancelled.complete(Err(VmError::Cancelled))),
+            Box::new(move || cancelled.complete(Err(EngineError::Cancelled))),
         )
     }
 
-    pub(super) fn fail(&mut self, error: VmError) {
+    pub(super) fn fail(&mut self, error: EngineError) {
         self.replies.push(Some(Err(error)));
         self.complete_if_ready();
     }
@@ -154,7 +154,7 @@ impl<R: JsDecode + 'static> RequestResults<R> {
         self.complete_if_ready();
     }
 
-    fn record(&mut self, slot: usize, result: Result<(String, R), VmError>) {
+    fn record(&mut self, slot: usize, result: Result<(String, R), EngineError>) {
         self.replies[slot] = Some(result);
         self.complete_if_ready();
     }
@@ -179,7 +179,7 @@ impl<R: JsDecode + 'static> RequestResults<R> {
     }
 }
 
-type TaskFinish = Box<dyn for<'js> FnOnce(&Ctx<'js>, Result<JsValue<'js>, VmError>)>;
+type TaskFinish = Box<dyn for<'js> FnOnce(&Ctx<'js>, Result<JsValue<'js>, EngineError>)>;
 
 pub(super) struct ScriptTask {
     promise: Persistent<Promise<'static>>,
@@ -192,7 +192,7 @@ impl ScriptTask {
         ctx: &Ctx<'js>,
         value: JsValue<'js>,
         handle: &PendingCall<R>,
-    ) -> Result<Option<Self>, VmError> {
+    ) -> Result<Option<Self>, EngineError> {
         let result = handle.clone();
         let cancelled = handle.clone();
         Self::watch(
@@ -203,7 +203,7 @@ impl ScriptTask {
                     R::decode_js(ctx, value).catch(ctx).map_err(caught_js_error)
                 }));
             }),
-            Box::new(move || cancelled.complete(Err(VmError::Cancelled))),
+            Box::new(move || cancelled.complete(Err(EngineError::Cancelled))),
         )
     }
 
@@ -212,7 +212,7 @@ impl ScriptTask {
         value: JsValue<'js>,
         finish: TaskFinish,
         cancel: Box<dyn FnOnce()>,
-    ) -> Result<Option<Self>, VmError> {
+    ) -> Result<Option<Self>, EngineError> {
         let Some(promise) = value.as_promise() else {
             finish(ctx, Ok(value));
             return Ok(None);
@@ -239,7 +239,7 @@ impl ScriptTask {
         &mut self,
         ctx: &Ctx<'_>,
         rejections: &UnhandledRejections,
-        modules: &WorkerModuleStore,
+        modules: &ModuleStore,
     ) -> bool {
         let promise = match self.promise.clone().restore(ctx) {
             Ok(promise) => promise,

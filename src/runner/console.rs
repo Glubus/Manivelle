@@ -8,8 +8,8 @@ use rquickjs::{Ctx, Function};
 
 use super::errors::{js_error, locations_in_typescript};
 use super::host_fn;
-use super::module_loader::WorkerModuleStore;
-use crate::error::VmError;
+use super::module_loader::ModuleStore;
+use crate::error::EngineError;
 
 /// Severity of one `console` call, from the method a script called.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -81,8 +81,8 @@ impl ConsoleSink {
         &self,
         ctx: &Ctx<'js>,
         script_id: &str,
-        modules: &WorkerModuleStore,
-    ) -> Result<Function<'js>, VmError> {
+        modules: &ModuleStore,
+    ) -> Result<Function<'js>, EngineError> {
         let sink = Rc::clone(&self.0);
         let script_id = Box::<str>::from(script_id);
         let modules = modules.clone();

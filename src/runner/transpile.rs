@@ -9,7 +9,7 @@ use crate::compiler::{
     CompiledModule, CompilerService, ModuleOrigin, ProjectFailure, ProjectState, TranspiledModule,
     WatchedFiles, discover_project, extract_static_import_requests,
 };
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// Source type of inline scripts, which have no file extension.
 const INLINE_SOURCE_TYPE: &str = "ts";
@@ -50,7 +50,7 @@ pub(crate) struct TranspiledProject {
 }
 
 impl Transpiler {
-    pub(crate) fn new(cache_dir: Option<&Path>) -> Result<Self, VmError> {
+    pub(crate) fn new(cache_dir: Option<&Path>) -> Result<Self, EngineError> {
         Ok(Self {
             compiler: CompilerService::default(),
             cache: cache_dir.map(ScriptCache::new).transpose()?,
@@ -61,7 +61,11 @@ impl Transpiler {
 
     /// Transpiles one inline script. Only successful compilations are remembered, so
     /// a rejected script (dynamic import, syntax error) fails on every load.
-    pub(crate) fn inline(&mut self, id: &str, source: &str) -> Result<TranspiledScript, VmError> {
+    pub(crate) fn inline(
+        &mut self,
+        id: &str,
+        source: &str,
+    ) -> Result<TranspiledScript, EngineError> {
         let module_key = module_cache_key(source, INLINE_SOURCE_TYPE);
         let path = format!("{id}.{INLINE_SOURCE_TYPE}");
         let transpiled = self.transpiled(&module_key, |compiler| {
@@ -149,8 +153,8 @@ impl Transpiler {
     fn transpiled(
         &mut self,
         module_key: &str,
-        compile: impl FnOnce(&mut CompilerService) -> Result<TranspiledModule, VmError>,
-    ) -> Result<TranspiledModule, VmError> {
+        compile: impl FnOnce(&mut CompilerService) -> Result<TranspiledModule, EngineError>,
+    ) -> Result<TranspiledModule, EngineError> {
         if let Some(transpiled) = self.remembered(module_key) {
             return Ok(transpiled);
         }

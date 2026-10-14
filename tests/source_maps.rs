@@ -3,7 +3,7 @@ mod support;
 use std::fs;
 use std::path::Path;
 
-use manivelle::{Engine, VmError, VmOptions};
+use manivelle::{Engine, EngineError, EngineOptions};
 use serde_json::json;
 
 use support::TestCacheDir;
@@ -33,7 +33,7 @@ export const run = (): number => explode({ x: 1, y: 2 });
 "#;
 
 fn engine() -> Engine {
-    Engine::new(&VmOptions::default()).expect("create engine")
+    Engine::new(&EngineOptions::default()).expect("create engine")
 }
 
 /// `line:column` of the first `needle` in `source`, 1-based, in UTF-16 units.
@@ -46,16 +46,16 @@ fn position_of(source: &str, needle: &str) -> String {
     format!("{line}:{column}")
 }
 
-fn execution_details<T: std::fmt::Debug>(result: Result<T, VmError>) -> String {
+fn execution_details<T: std::fmt::Debug>(result: Result<T, EngineError>) -> String {
     match result {
-        Err(VmError::Execution { details }) => details,
+        Err(EngineError::Execution { details }) => details,
         other => panic!("expected an execution error, got {other:?}"),
     }
 }
 
-fn transpile_details<T: std::fmt::Debug>(result: Result<T, VmError>) -> String {
+fn transpile_details<T: std::fmt::Debug>(result: Result<T, EngineError>) -> String {
     match result {
-        Err(VmError::Transpile { details }) => details,
+        Err(EngineError::Transpile { details }) => details,
         other => panic!("expected a transpile error, got {other:?}"),
     }
 }

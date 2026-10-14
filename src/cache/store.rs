@@ -6,11 +6,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::compiler::{SourceMap, TranspiledModule};
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// First line of an artifact, before the BLAKE3 hash of the rest. The rest is the
 /// source map `mappings` line, then the JavaScript.
-const ARTIFACT_HEADER: &str = "// manivelle-cache-v3 ";
+const ARTIFACT_HEADER: &str = "// manivelle-cache-v1 ";
 
 #[derive(Debug, Clone)]
 pub(crate) struct ScriptCache {
@@ -18,7 +18,7 @@ pub(crate) struct ScriptCache {
 }
 
 impl ScriptCache {
-    pub(crate) fn new(root: impl Into<PathBuf>) -> Result<Self, VmError> {
+    pub(crate) fn new(root: impl Into<PathBuf>) -> Result<Self, EngineError> {
         let root = root.into();
         fs::create_dir_all(&root)?;
         Ok(Self { root })
@@ -32,7 +32,11 @@ impl ScriptCache {
         verified_payload(&artifact).and_then(transpiled_module)
     }
 
-    pub(crate) fn store(&self, cache_key: &str, module: &TranspiledModule) -> Result<(), VmError> {
+    pub(crate) fn store(
+        &self,
+        cache_key: &str,
+        module: &TranspiledModule,
+    ) -> Result<(), EngineError> {
         let payload = artifact_payload(module);
         let mut temporary = tempfile::NamedTempFile::new_in(&self.root)?;
         writeln!(
@@ -139,23 +143,15 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_and_legacy_entries_are_cache_misses() {
+    fn corrupt_entries_are_cache_misses() {
         let root = tempfile::tempdir().unwrap();
         let cache = ScriptCache::new(root.path()).unwrap();
-        let legacy_js = "export const answer = 42;";
-        let legacy_v2 = format!(
-            "// rustts-cache-v2 {}\n{legacy_js}",
-            blake3::hash(legacy_js.as_bytes()).to_hex()
-        );
-        for content in [
-            "legacy",
-            "// manivelle-cache-v3 invalid\npartial",
-            legacy_v2.as_str(),
-        ] {
+        let js = "export const answer = 42;";
+        for content in ["not an artifact", "// manivelle-cache-v1 invalid\npartial"] {
             fs::write(cache.js_path("broken"), content).unwrap();
             assert_eq!(cache.load("broken"), None);
         }
-        cache.store("broken", &module(legacy_js)).unwrap();
-        assert_eq!(cache.load("broken").unwrap(), module(legacy_js));
+        cache.store("broken", &module(js)).unwrap();
+        assert_eq!(cache.load("broken").unwrap(), module(js));
     }
 }

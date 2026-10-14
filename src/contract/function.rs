@@ -1,7 +1,7 @@
 //! Host function contract traits.
 
 use super::HostContract;
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// Input and output of a host function: what scripts see, whatever implements it.
 ///
@@ -19,5 +19,5 @@ pub trait HostFunctionSignature: HostContract {
 /// Host function implemented by a static Rust function.
 pub trait HostFunction: HostFunctionSignature {
     /// Executes the host function from Rust.
-    fn call(input: Self::Input) -> Result<Self::Output, VmError>;
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError>;
 }

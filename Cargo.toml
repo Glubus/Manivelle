@@ -7,6 +7,12 @@ description = "Embedded TypeScript runtime for Rust with typed host contracts an
 repository = "https://github.com/Glubus/Manivelle"
 readme = "README.md"
 license = "MIT"
+keywords = ["typescript", "scripting", "quickjs", "embedded", "gamedev"]
+categories = ["game-development", "development-tools", "api-bindings"]
+exclude = [".github", ".cargo", "package.json", "package-lock.json", "book.toml"]
+
+[package.metadata.docs.rs]
+features = ["derive", "uuid", "chrono", "glam"]
 
 [workspace]
 members = [".", "manivelle_macros"]
@@ -56,6 +62,10 @@ required-features = ["derive"]
 [[bench]]
 name = "vs_lua"
 harness = false
+
+[[example]]
+name = "getting_started"
+required-features = ["derive"]
 
 [[example]]
 name = "game_loop"

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::contract::HostContractDescriptor;
-use crate::error::VmError;
+use crate::error::EngineError;
 use crate::registry::{
     render_typescript_declarations_for_descriptors, render_typescript_sdk_for_descriptors,
 };
@@ -44,7 +44,7 @@ pub struct GeneratedSdkFiles {
 pub fn write_host_sdk_files(
     directory: impl AsRef<Path>,
     descriptors: &[HostContractDescriptor],
-) -> Result<GeneratedSdkFiles, VmError> {
+) -> Result<GeneratedSdkFiles, EngineError> {
     write_host_sdk_files_with_names(directory, descriptors, &SdkFileNames::default())
 }
 
@@ -57,7 +57,7 @@ pub fn write_host_sdk_files_with_names(
     directory: impl AsRef<Path>,
     descriptors: &[HostContractDescriptor],
     names: &SdkFileNames,
-) -> Result<GeneratedSdkFiles, VmError> {
+) -> Result<GeneratedSdkFiles, EngineError> {
     let directory = directory.as_ref();
     fs::create_dir_all(directory)?;
 

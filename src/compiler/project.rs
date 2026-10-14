@@ -8,11 +8,12 @@ use std::path::{Path, PathBuf};
 use super::resolver::ModuleResolver;
 use super::source_map::ModuleOrigin;
 use super::stamp::{FileStamp, WatchedFiles};
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// Returns the static import requests of one module source. The path is the module's
 /// display path: it names the module in diagnostics and gives its source type.
-pub(crate) type ImportsOf<'a> = dyn FnMut(&str, &Path) -> Result<BTreeSet<String>, VmError> + 'a;
+pub(crate) type ImportsOf<'a> =
+    dyn FnMut(&str, &Path) -> Result<BTreeSet<String>, EngineError> + 'a;
 
 /// One transpiled module, ready for the module store.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,13 +44,13 @@ pub(crate) struct DiscoveredModule {
 /// them may fix the load, so they are watched like the files of a loaded version.
 #[derive(Debug)]
 pub(crate) struct ProjectFailure {
-    pub(crate) error: VmError,
+    pub(crate) error: EngineError,
     pub(crate) watched: WatchedFiles,
 }
 
-impl From<VmError> for ProjectFailure {
+impl From<EngineError> for ProjectFailure {
     /// A failure before any project file was looked at.
-    fn from(error: VmError) -> Self {
+    fn from(error: EngineError) -> Self {
         Self {
             error,
             watched: WatchedFiles::default(),
@@ -182,7 +183,7 @@ struct Discovery<'a> {
 impl Discovery<'_> {
     /// `path` is canonical: the entry is canonicalized once and resolution returns
     /// canonical paths, so it is also the module id.
-    fn visit(&mut self, path: PathBuf) -> Result<(), VmError> {
+    fn visit(&mut self, path: PathBuf) -> Result<(), EngineError> {
         if self.modules.contains_key(&path) {
             return Ok(());
         }
@@ -207,7 +208,7 @@ impl Discovery<'_> {
                 self.resolve_module(&path, stamp, known.source)
             }
             _ => fs::read_to_string(&path)
-                .map_err(VmError::from)
+                .map_err(EngineError::from)
                 .and_then(|source| self.resolve_module(&path, stamp, source)),
         };
         let module = match module {
@@ -235,7 +236,7 @@ impl Discovery<'_> {
         path: &Path,
         stamp: Option<FileStamp>,
         source: String,
-    ) -> Result<KnownModule, VmError> {
+    ) -> Result<KnownModule, EngineError> {
         let display_path = display_path(self.resolver.project_root(), path);
         let requests = (self.imports_of)(&source, Path::new(&display_path))?;
         let mut resolved_requests = BTreeMap::new();
@@ -264,14 +265,14 @@ impl Discovery<'_> {
     }
 }
 
-fn normalize_entry_path(entry_path: &Path) -> Result<PathBuf, VmError> {
+fn normalize_entry_path(entry_path: &Path) -> Result<PathBuf, EngineError> {
     if !entry_path.exists() {
-        return Err(VmError::Resolve {
+        return Err(EngineError::Resolve {
             details: format!("entry path does not exist: {}", entry_path.display()),
         });
     }
 
-    entry_path.canonicalize().map_err(VmError::from)
+    entry_path.canonicalize().map_err(EngineError::from)
 }
 
 fn module_id(path: &Path) -> String {

@@ -10,8 +10,8 @@ use std::thread;
 use std::time::Duration;
 
 use manivelle::{
-    Engine, HostContract, HostContractKind, HostFunctionSignature, HostResolver, PendingCall,
-    TsSchema, VmOptions,
+    Engine, EngineOptions, HostContract, HostContractKind, HostFunctionSignature, HostResolver,
+    PendingCall, TsSchema,
 };
 
 /// The per-frame event payload, encoded natively into a JavaScript object.
@@ -97,7 +97,7 @@ export function bannerText(): string { return banner; }
 const FRAME: Duration = Duration::from_millis(20);
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut engine = Engine::new(&VmOptions::default())?;
+    let mut engine = Engine::new(&EngineOptions::default())?;
 
     // The handler only hands the resolver over; the storage thread answers it.
     let (requests, storage_inbox) = mpsc::channel::<HostResolver<f64>>();

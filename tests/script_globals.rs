@@ -5,11 +5,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use manivelle::{ConsoleLevel, Engine, VmError, VmOptions};
+use manivelle::{ConsoleLevel, Engine, EngineError, EngineOptions};
 use serde_json::json;
 
 fn engine() -> Engine {
-    Engine::new(&VmOptions::default()).expect("create engine")
+    Engine::new(&EngineOptions::default()).expect("create engine")
 }
 
 fn engine_with(source: &str) -> Engine {
@@ -390,7 +390,7 @@ fn a_throwing_timer_does_not_stop_the_others() {
     let result = engine.advance_timers(ms(10));
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details }) if details.contains("timer failed")),
+        matches!(result, Err(EngineError::Execution { ref details }) if details.contains("timer failed")),
         "{result:?}"
     );
     assert_eq!(fired(&engine), "after");
@@ -456,7 +456,7 @@ fn a_timer_callback_must_be_a_function() {
     let result = engine.load_script("script", r#"(setTimeout as any)("code", 10); export {};"#);
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details }) if details.contains("setTimeout expects a function callback")),
+        matches!(result, Err(EngineError::Execution { ref details }) if details.contains("setTimeout expects a function callback")),
         "{result:?}"
     );
 }

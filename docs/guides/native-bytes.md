@@ -15,7 +15,7 @@ for large payloads. `NativeBytes` crosses as a `Uint8Array` in both directions:
 use serde::Deserialize;
 use manivelle::{
     HostContract, HostContractKind, HostFunction, HostFunctionSignature, NativeBytes,
-    TsSchema, VmError,
+    TsSchema, EngineError,
 };
 
 #[derive(Deserialize, TsSchema)]
@@ -40,8 +40,8 @@ impl HostFunctionSignature for ReadAsset {
 }
 
 impl HostFunction for ReadAsset {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
-        let bytes = std::fs::read(input.path).map_err(VmError::from)?;
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
+        let bytes = std::fs::read(input.path).map_err(EngineError::from)?;
         Ok(NativeBytes::new(bytes))
     }
 }

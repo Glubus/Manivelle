@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rquickjs::{Ctx, Result as JsResult, Value as JsValue};
 
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// The output of one async host call, converted to JavaScript on the engine thread.
 pub(crate) trait ReplyValue: Send {
@@ -18,7 +18,7 @@ pub(crate) trait ReplyValue: Send {
 /// Turns a handler's output into a reply, validating it first when the registry
 /// validates outputs.
 pub(crate) type EncodeReply<T> =
-    Arc<dyn Fn(T) -> Result<Box<dyn ReplyValue>, VmError> + Send + Sync>;
+    Arc<dyn Fn(T) -> Result<Box<dyn ReplyValue>, EngineError> + Send + Sync>;
 
 /// How one async host call ended.
 pub(crate) enum Settlement {
@@ -119,7 +119,7 @@ impl ReplyInbox {
 /// Dropping a resolver without settling it rejects the script's Promise. Replacing or
 /// unloading the script version that made the call cancels its resolvers, including the
 /// ones whose result is queued but not yet delivered: the result is discarded,
-/// [`Self::is_cancelled`] turns `true` and settling returns [`VmError::Cancelled`].
+/// [`Self::is_cancelled`] turns `true` and settling returns [`EngineError::Cancelled`].
 #[must_use = "dropping a resolver without settling it rejects the script's Promise"]
 pub struct HostResolver<T> {
     inbox: Arc<ReplyInbox>,
@@ -145,13 +145,13 @@ impl<T> HostResolver<T> {
     ///
     /// # Errors
     ///
-    /// [`VmError::Cancelled`] when the calling script version is gone: nothing will
+    /// [`EngineError::Cancelled`] when the calling script version is gone: nothing will
     /// observe `value`. Any other error is why `value` failed to encode or validate;
     /// the script's Promise rejects with it instead.
-    pub fn resolve(mut self, value: T) -> Result<(), VmError> {
+    pub fn resolve(mut self, value: T) -> Result<(), EngineError> {
         if self.is_cancelled() {
             self.settled = true;
-            return Err(VmError::Cancelled);
+            return Err(EngineError::Cancelled);
         }
         let encoded = (self.encode)(value);
         self.settled = true;
@@ -168,9 +168,9 @@ impl<T> HostResolver<T> {
     ///
     /// # Errors
     ///
-    /// [`VmError::Cancelled`] when the calling script version is gone: nothing will
+    /// [`EngineError::Cancelled`] when the calling script version is gone: nothing will
     /// observe the rejection.
-    pub fn reject(mut self, error: VmError) -> Result<(), VmError> {
+    pub fn reject(mut self, error: EngineError) -> Result<(), EngineError> {
         self.settled = true;
         self.send(Settlement::Rejected(error.to_string()))
     }
@@ -182,10 +182,10 @@ impl<T> HostResolver<T> {
         self.inbox.is_cancelled()
     }
 
-    fn send(&self, settlement: Settlement) -> Result<(), VmError> {
+    fn send(&self, settlement: Settlement) -> Result<(), EngineError> {
         self.inbox
             .push(self.id, settlement)
-            .map_err(|_discarded| VmError::Cancelled)
+            .map_err(|_discarded| EngineError::Cancelled)
     }
 }
 

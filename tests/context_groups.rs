@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use manivelle::{
-    ConsoleLevel, Engine, HostCallback, HostContract, HostContractKind, HostFunctionSignature,
-    HostResolver, VmOptions,
+    ConsoleLevel, Engine, EngineOptions, HostCallback, HostContract, HostContractKind,
+    HostFunctionSignature, HostResolver,
 };
 use serde_json::json;
 use support::TestCacheDir;
@@ -83,7 +83,7 @@ export function me(): string { return whoami(); }
 "#;
 
 fn engine() -> Engine {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .registry()
         .function_with_caller::<WhoAmI>(|caller, ()| Ok(caller.script_id().to_owned()))
@@ -221,7 +221,7 @@ fn host_functions_know_which_script_of_the_group_called() {
 
 #[test]
 fn async_host_calls_settle_the_promise_of_the_script_that_made_them() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     type Pending = Arc<Mutex<Vec<(String, HostResolver<f64>)>>>;
     let pending: Pending = Arc::default();
     let queue = Arc::clone(&pending);
@@ -627,7 +627,7 @@ fn victim_module_ids() -> Vec<String> {
 }
 
 fn assert_cannot_import_the_victim(
-    load: impl Fn(&mut Engine, &str) -> Result<(), manivelle::VmError>,
+    load: impl Fn(&mut Engine, &str) -> Result<(), manivelle::EngineError>,
 ) {
     let mut engine = engine();
     engine

@@ -2,17 +2,17 @@
 
 use std::borrow::Cow;
 
-use crate::error::VmError;
+use crate::error::EngineError;
 
-use super::module_loader::{RUNTIME_MODULE_PREFIX, WorkerModuleStore};
+use super::module_loader::{ModuleStore, RUNTIME_MODULE_PREFIX};
 
 /// How every out of memory starts once described: QuickJS's own `InternalError`, an
 /// allocation rquickjs failed ([`rquickjs::Error::Allocation`]) and a context the engine
 /// could not create, so the engine reports them alike wherever the allocation failed.
 pub(crate) const OUT_OF_MEMORY: &str = "out of memory";
 
-pub(crate) fn js_error(error: rquickjs::Error) -> VmError {
-    VmError::Execution {
+pub(crate) fn js_error(error: rquickjs::Error) -> EngineError {
+    EngineError::Execution {
         details: rquickjs_error_details(&error),
     }
 }
@@ -26,17 +26,17 @@ fn rquickjs_error_details(error: &rquickjs::Error) -> String {
 
 /// The exception QuickJS left pending in `ctx` after a call through the C API returned
 /// the exception marker, as the operation's error. It clears the pending exception.
-pub(crate) fn pending_exception(ctx: &rquickjs::Ctx<'_>) -> VmError {
+pub(crate) fn pending_exception(ctx: &rquickjs::Ctx<'_>) -> EngineError {
     use rquickjs::CatchResultExt;
     Err::<(), _>(rquickjs::Error::Exception)
         .catch(ctx)
-        .map_or_else(caught_js_error, |()| VmError::Execution {
+        .map_or_else(caught_js_error, |()| EngineError::Execution {
             details: "an exception without a value".to_owned(),
         })
 }
 
-pub(crate) fn caught_js_error(error: rquickjs::CaughtError<'_>) -> VmError {
-    VmError::Execution {
+pub(crate) fn caught_js_error(error: rquickjs::CaughtError<'_>) -> EngineError {
+    EngineError::Execution {
         details: caught_js_error_details(&error),
     }
 }
@@ -72,14 +72,14 @@ fn exception_details(exception: &rquickjs::Exception<'_>) -> String {
 
 /// Points the JavaScript locations of an execution error at the TypeScript source;
 /// see [`locations_in_typescript`].
-pub(crate) fn in_typescript(error: VmError, modules: &WorkerModuleStore) -> VmError {
+pub(crate) fn in_typescript(error: EngineError, modules: &ModuleStore) -> EngineError {
     match error {
-        VmError::Execution { details } => {
+        EngineError::Execution { details } => {
             let mapped = match locations_in_typescript(&details, modules) {
                 Cow::Owned(mapped) => Some(mapped),
                 Cow::Borrowed(_) => None,
             };
-            VmError::Execution {
+            EngineError::Execution {
                 details: mapped.unwrap_or(details),
             }
         }
@@ -90,10 +90,7 @@ pub(crate) fn in_typescript(error: VmError, modules: &WorkerModuleStore) -> VmEr
 /// `text` with each `manivelle://graph/...:line:column` location, in a message or a stack
 /// frame, that falls in a loaded script module replaced by `path:line:column` in its
 /// TypeScript file. Other locations stay as they are; text without any is borrowed.
-pub(crate) fn locations_in_typescript<'a>(
-    text: &'a str,
-    modules: &WorkerModuleStore,
-) -> Cow<'a, str> {
+pub(crate) fn locations_in_typescript<'a>(text: &'a str, modules: &ModuleStore) -> Cow<'a, str> {
     if !text.contains(RUNTIME_MODULE_PREFIX) {
         return Cow::Borrowed(text);
     }
@@ -105,7 +102,7 @@ pub(crate) fn locations_in_typescript<'a>(
 }
 
 /// One line of error details, with its runtime module location mapped when it has one.
-fn typescript_line<'a>(line: &'a str, modules: &WorkerModuleStore) -> Cow<'a, str> {
+fn typescript_line<'a>(line: &'a str, modules: &ModuleStore) -> Cow<'a, str> {
     let Some(start) = line.find(RUNTIME_MODULE_PREFIX) else {
         return Cow::Borrowed(line);
     };
@@ -128,7 +125,7 @@ fn location_text(text: &str) -> &str {
 }
 
 /// Maps `module id:line:column` to its TypeScript location.
-fn typescript_location(location: &str, modules: &WorkerModuleStore) -> Option<String> {
+fn typescript_location(location: &str, modules: &ModuleStore) -> Option<String> {
     let (position, column) = location.rsplit_once(':')?;
     let (module_id, line) = position.rsplit_once(':')?;
     modules.locate(module_id, line.parse().ok()?, column.parse().ok()?)

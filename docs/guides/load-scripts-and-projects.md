@@ -23,10 +23,10 @@ Bad examples:
 Use `load_script` when you already have one TypeScript source string.
 
 ```rust
-use manivelle::{Engine, VmOptions};
+use manivelle::{Engine, EngineOptions};
 use serde_json::{Value, json};
 
-let mut engine = Engine::new(&VmOptions::default())?;
+let mut engine = Engine::new(&EngineOptions::default())?;
 let script_id = "weather-rules";
 
 engine.load_script(
@@ -124,10 +124,10 @@ The project root is the directory of the nearest `tsconfig.json` above the entry
 file, or the entry file's directory when there is none. An import that resolves
 outside the project root, symlinks included, is rejected.
 
-Dynamic `import(...)` is rejected with `VmError::Resolve` (`dynamic import() is not
+Dynamic `import(...)` is rejected with `EngineError::Resolve` (`dynamic import() is not
 supported; use a static import`), in projects and inline scripts alike: the whole
 graph must be known at load. A missing entry file or an unresolvable import fails
-the load with `VmError::Resolve` too.
+the load with `EngineError::Resolve` too.
 
 ## Reloading
 
@@ -160,11 +160,11 @@ engine.unload_script("zoro-moveset")?;
 
 Unloading runs the script's `ctx.hot.dispose` callbacks, then removes the script and
 releases its modules. Calling or unloading it afterwards fails with
-`VmError::ScriptNotFound`.
+`EngineError::ScriptNotFound`.
 
 ## Transpilation Cache
 
-By default (`VmOptions::cache_dir: None`), transpiled modules are only remembered in
+By default (`EngineOptions::cache_dir: None`), transpiled modules are only remembered in
 memory by the engine. With a cache directory, they are also stored on disk and
 reused by later loads, including in later runs of the application.
 

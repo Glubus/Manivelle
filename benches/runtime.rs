@@ -14,8 +14,8 @@ use criterion::{
     measurement::WallTime,
 };
 use manivelle::{
-    Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
-    MemoryStats, TsSchema, VmError, VmOptions,
+    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostFunction,
+    HostFunctionSignature, MemoryStats, TsSchema,
 };
 use serde_json::json;
 
@@ -87,7 +87,7 @@ fn runtime_benchmarks(c: &mut Criterion) {
 }
 
 fn bench_engine_new(c: &mut Criterion) {
-    let options = VmOptions::default();
+    let options = EngineOptions::default();
     c.bench_function("engine_new", |b| {
         b.iter(|| black_box(Engine::new(&options).expect("create engine")));
     });
@@ -232,7 +232,10 @@ fn bench_cold_inline_load(c: &mut Criterion) {
         .expect("warm inline cache");
 
     let mut group = c.benchmark_group("cold_inline_load");
-    for (label, options) in [("no_cache", VmOptions::default()), ("disk_cache", cached)] {
+    for (label, options) in [
+        ("no_cache", EngineOptions::default()),
+        ("disk_cache", cached),
+    ] {
         group.bench_function(label, |b| {
             bench_fresh_engine(
                 b,
@@ -254,7 +257,10 @@ fn bench_cold_project_load(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("cold_project_load");
     configure_slow(&mut group);
-    for (label, options) in [("no_cache", VmOptions::default()), ("disk_cache", cached)] {
+    for (label, options) in [
+        ("no_cache", EngineOptions::default()),
+        ("disk_cache", cached),
+    ] {
         group.bench_function(label, |b| {
             bench_fresh_engine(
                 b,
@@ -267,7 +273,7 @@ fn bench_cold_project_load(c: &mut Criterion) {
 }
 
 fn bench_sdk_generation(c: &mut Criterion) {
-    let engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .registry()
         .function::<BenchFindUser>()
@@ -307,7 +313,7 @@ fn bench_many_small_scripts_memory_shape(c: &mut Criterion) {
 fn bench_fresh_engine(
     b: &mut Bencher<'_, WallTime>,
     setup: impl Fn() -> Engine,
-    load: impl Fn(&mut Engine) -> Result<(), VmError>,
+    load: impl Fn(&mut Engine) -> Result<(), EngineError>,
 ) {
     b.iter_batched(
         setup,
@@ -583,7 +589,7 @@ impl HostFunctionSignature for BenchFindUser {
 }
 
 impl HostFunction for BenchFindUser {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(format!("user-{input}"))
     }
 }
@@ -602,7 +608,7 @@ impl HostFunctionSignature for BenchCreateInvoice {
 }
 
 impl HostFunction for BenchCreateInvoice {
-    fn call(_input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(BenchCreateInvoiceOutput {
             id: "invoice_1".to_owned(),
             accepted: true,
@@ -625,7 +631,7 @@ impl HostCallback for BenchScoreUpdate {
 }
 
 /// Engine with the host contracts `realistic_mod_pack` imports from `"test"`.
-fn mod_pack_engine(options: &VmOptions) -> Engine {
+fn mod_pack_engine(options: &EngineOptions) -> Engine {
     let engine = Engine::new(options).expect("create engine");
     engine
         .registry()
@@ -635,10 +641,10 @@ fn mod_pack_engine(options: &VmOptions) -> Engine {
     engine
 }
 
-fn many_scripts_options() -> VmOptions {
-    VmOptions {
+fn many_scripts_options() -> EngineOptions {
+    EngineOptions {
         memory_limit_bytes: MANY_SCRIPTS_MEMORY_LIMIT_BYTES,
-        ..VmOptions::default()
+        ..EngineOptions::default()
     }
 }
 
@@ -654,10 +660,10 @@ impl CacheDir {
         Self(std::env::temp_dir().join(format!("manivelle-{label}-{nanos}")))
     }
 
-    fn options(&self) -> VmOptions {
-        VmOptions {
+    fn options(&self) -> EngineOptions {
+        EngineOptions {
             cache_dir: Some(self.0.clone()),
-            ..VmOptions::default()
+            ..EngineOptions::default()
         }
     }
 }

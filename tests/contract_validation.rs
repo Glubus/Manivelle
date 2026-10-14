@@ -1,4 +1,4 @@
-//! Contract validation (`VmOptions::contract_validation`): inputs and outputs of host
+//! Contract validation (`EngineOptions::contract_validation`): inputs and outputs of host
 //! functions are checked against the schemas their contracts declare, for static
 //! functions, closures, caller-aware closures and async functions alike.
 //!
@@ -9,9 +9,9 @@
 use std::sync::{Arc, Mutex};
 
 use manivelle::{
-    Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature, HostResolver,
-    JsDecode, JsEncode, NativeBytes, Schema, TsField, TsSchema, TsType, VmContractValidation,
-    VmError, VmOptions, VmUnknownFieldValidation,
+    ContractValidation, Engine, EngineError, EngineOptions, HostContract, HostContractKind,
+    HostFunction, HostFunctionSignature, HostResolver, JsDecode, JsEncode, NativeBytes, Schema,
+    TsField, TsSchema, TsType, UnknownFieldValidation,
 };
 use serde_json::{Value, json};
 
@@ -110,19 +110,19 @@ function_contract!(BytesEcho, "bytes.echo", "bytes", "echo", NativeBytes => Nati
 function_contract!(NumberEcho, "numbers.echo", "numbers", "echo", f64 => f64);
 
 impl HostFunction for Echo {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(input)
     }
 }
 
 impl HostFunction for EchoRef {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(Anything(input.0))
     }
 }
 
 impl HostFunction for BadOutput {
-    fn call(_input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(NumberValue(json!("not-a-number")))
     }
 }
@@ -135,25 +135,25 @@ export function echoRef(input: unknown) { return validation.echoRef(input as any
 export function badOutput(input: unknown) { return validation.badOutput(input as any); }
 "#;
 
-fn engine(validation: VmContractValidation) -> Engine {
-    Engine::new(&VmOptions {
+fn engine(validation: ContractValidation) -> Engine {
+    Engine::new(&EngineOptions {
         contract_validation: validation,
-        ..VmOptions::default()
+        ..EngineOptions::default()
     })
     .expect("create engine")
 }
 
 fn engine_rejecting_unknown_fields() -> Engine {
-    Engine::new(&VmOptions {
-        contract_validation: VmContractValidation::Inputs,
-        unknown_field_validation: VmUnknownFieldValidation::Reject,
-        ..VmOptions::default()
+    Engine::new(&EngineOptions {
+        contract_validation: ContractValidation::Inputs,
+        unknown_field_validation: UnknownFieldValidation::Reject,
+        ..EngineOptions::default()
     })
     .expect("create engine")
 }
 
 /// An engine with `validation` and the `validation.*` script loaded as `validation`.
-fn loaded(validation: VmContractValidation) -> Engine {
+fn loaded(validation: ContractValidation) -> Engine {
     let mut engine = engine(validation);
     engine
         .registry()
@@ -167,14 +167,14 @@ fn loaded(validation: VmContractValidation) -> Engine {
     engine
 }
 
-fn call(engine: &Engine, function: &str, input: Value) -> Result<Value, VmError> {
+fn call(engine: &Engine, function: &str, input: Value) -> Result<Value, EngineError> {
     engine.call::<Value>("validation", function, vec![input])
 }
 
 #[track_caller]
-fn assert_fails_with(result: Result<Value, VmError>, expected: &[&str]) {
+fn assert_fails_with(result: Result<Value, EngineError>, expected: &[&str]) {
     match result {
-        Err(VmError::Execution { details }) => {
+        Err(EngineError::Execution { details }) => {
             for part in expected {
                 assert!(details.contains(part), "`{part}` missing from: {details}");
             }
@@ -185,7 +185,7 @@ fn assert_fails_with(result: Result<Value, VmError>, expected: &[&str]) {
 
 #[test]
 fn an_input_outside_the_schema_fails_the_call_and_names_the_contract_and_the_field() {
-    let engine = loaded(VmContractValidation::Inputs);
+    let engine = loaded(ContractValidation::Inputs);
 
     let result = call(&engine, "echo", json!({ "id": "bad" }));
 
@@ -197,7 +197,7 @@ fn an_input_outside_the_schema_fails_the_call_and_names_the_contract_and_the_fie
 
 #[test]
 fn an_input_inside_the_schema_passes_through_unchanged() {
-    let engine = loaded(VmContractValidation::InputsAndOutputs);
+    let engine = loaded(ContractValidation::InputsAndOutputs);
 
     let result = call(&engine, "echo", json!({ "id": 7 }));
 
@@ -206,7 +206,7 @@ fn an_input_inside_the_schema_passes_through_unchanged() {
 
 #[test]
 fn a_named_type_a_schema_refers_to_is_resolved_before_checking() {
-    let engine = loaded(VmContractValidation::Inputs);
+    let engine = loaded(ContractValidation::Inputs);
 
     let result = call(&engine, "echoRef", json!({ "user_id": "bad" }));
 
@@ -222,7 +222,7 @@ fn a_named_type_a_schema_refers_to_is_resolved_before_checking() {
 
 #[test]
 fn validation_is_off_by_default() {
-    let engine = loaded(VmContractValidation::Disabled);
+    let engine = loaded(ContractValidation::Disabled);
 
     let result = call(&engine, "echo", json!({ "id": "bad" }));
 
@@ -231,8 +231,8 @@ fn validation_is_off_by_default() {
 
 #[test]
 fn outputs_are_only_checked_when_the_policy_asks_for_them() {
-    let inputs_only = loaded(VmContractValidation::Inputs);
-    let both = loaded(VmContractValidation::InputsAndOutputs);
+    let inputs_only = loaded(ContractValidation::Inputs);
+    let both = loaded(ContractValidation::InputsAndOutputs);
 
     let unchecked = call(&inputs_only, "badOutput", json!(1));
     let checked = call(&both, "badOutput", json!(1));
@@ -249,7 +249,7 @@ fn outputs_are_only_checked_when_the_policy_asks_for_them() {
 
 #[test]
 fn unknown_input_fields_are_allowed_unless_the_policy_rejects_them() {
-    let lenient = loaded(VmContractValidation::Inputs);
+    let lenient = loaded(ContractValidation::Inputs);
     let mut strict = engine_rejecting_unknown_fields();
     strict
         .registry()
@@ -276,7 +276,7 @@ fn unknown_input_fields_are_allowed_unless_the_policy_rejects_them() {
 
 #[test]
 fn a_reloaded_script_is_still_validated() {
-    let mut engine = loaded(VmContractValidation::Inputs);
+    let mut engine = loaded(ContractValidation::Inputs);
     engine
         .load_script("validation", SCRIPT)
         .expect("reload validation script");
@@ -293,7 +293,7 @@ type Handled = Arc<Mutex<Vec<Value>>>;
 /// it received. Its label is `7` (a number, against a declared string) when the input id
 /// is `0`, and the calling script's id (`closure` without a caller) otherwise.
 fn closure_engine(with_caller: bool) -> (Engine, Handled) {
-    let mut engine = engine(VmContractValidation::InputsAndOutputs);
+    let mut engine = engine(ContractValidation::InputsAndOutputs);
     let handled = Handled::default();
     let seen = Arc::clone(&handled);
     let answer = |input: &IdObject, script: &str| {
@@ -359,7 +359,7 @@ type Calls = Arc<Mutex<Vec<(Value, HostResolver<TagResult>)>>>;
 
 /// An engine validating as `validation` says whose async `tags.add` keeps every call's
 /// input and resolver for the test to settle, and a script awaiting it.
-fn async_engine(validation: VmContractValidation) -> (Engine, Calls) {
+fn async_engine(validation: ContractValidation) -> (Engine, Calls) {
     let mut engine = engine(validation);
     let calls = Calls::default();
     let kept = Arc::clone(&calls);
@@ -391,7 +391,7 @@ fn answer(label: Value) -> TagResult {
 
 #[test]
 fn an_async_input_outside_the_schema_rejects_the_promise_without_starting_the_call() {
-    let (engine, calls) = async_engine(VmContractValidation::Inputs);
+    let (engine, calls) = async_engine(ContractValidation::Inputs);
 
     let message: String = engine.call("tagger", "add", ("seven",)).expect("call");
 
@@ -404,7 +404,7 @@ fn an_async_input_outside_the_schema_rejects_the_promise_without_starting_the_ca
 
 #[test]
 fn an_async_output_outside_the_schema_rejects_the_promise_when_the_engine_converts_it() {
-    let (engine, calls) = async_engine(VmContractValidation::InputsAndOutputs);
+    let (engine, calls) = async_engine(ContractValidation::InputsAndOutputs);
     let valid = engine
         .call_deferred::<String>("tagger", "add", (7,))
         .expect("start valid call");
@@ -434,7 +434,7 @@ fn an_async_output_outside_the_schema_rejects_the_promise_when_the_engine_conver
 
 #[test]
 fn an_async_output_is_not_checked_when_only_inputs_are() {
-    let (engine, calls) = async_engine(VmContractValidation::Inputs);
+    let (engine, calls) = async_engine(ContractValidation::Inputs);
     let pending = engine
         .call_deferred::<String>("tagger", "add", (8,))
         .expect("start call");
@@ -449,7 +449,7 @@ fn an_async_output_is_not_checked_when_only_inputs_are() {
 /// An engine validating inputs and outputs of `bytes.echo` and `numbers.echo`, with the
 /// script calling them loaded as `natives`.
 fn natives_engine() -> Engine {
-    let mut engine = engine(VmContractValidation::InputsAndOutputs);
+    let mut engine = engine(ContractValidation::InputsAndOutputs);
     engine
         .registry()
         .function_with::<BytesEcho>(Ok)

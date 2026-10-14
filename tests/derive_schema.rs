@@ -9,9 +9,9 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 
 use manivelle::{
-    Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
-    InMemoryHostContractRegistry, TsEnumVariant, TsField, TsLiteral, TsRecordKey, TsSchema, TsType,
-    VmError, VmOptions,
+    Engine, EngineError, EngineOptions, HostContract, HostContractKind, HostFunction,
+    HostFunctionSignature, InMemoryHostContractRegistry, TsEnumVariant, TsField, TsLiteral,
+    TsRecordKey, TsSchema, TsType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -226,7 +226,7 @@ impl HostFunctionSignature for CreateInvoice {
 }
 
 impl HostFunction for CreateInvoice {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(CreateInvoiceOutput {
             invoice_id: format!("invoice:{}", input.account_id),
             accepted: input.total > 0.0,
@@ -248,7 +248,7 @@ impl HostFunctionSignature for FindSession {
 }
 
 impl HostFunction for FindSession {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(FindSessionOutput {
             token: SessionToken {
                 value: format!("session:{}", input.user_id.0),
@@ -271,7 +271,7 @@ impl HostFunctionSignature for AutoCreateInvoice {
 }
 
 impl HostFunction for AutoCreateInvoice {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(AutoCreateInvoiceOutput {
             invoice_id: format!("invoice:{}", input.account_id),
             accepted: input.total > 0.0,
@@ -590,7 +590,7 @@ fn flattened_map_schemas_reject_wrong_values() {
 
 #[test]
 fn flattened_map_sdk_predicates_check_every_key() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .registry()
         .function::<RecordScores>()
@@ -630,7 +630,7 @@ impl HostFunctionSignature for RecordScores {
 }
 
 impl HostFunction for RecordScores {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(OpenEvent::Scores(input))
     }
 }
@@ -801,7 +801,7 @@ impl HostFunctionSignature for ApplySettings {
 }
 
 impl HostFunction for ApplySettings {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(input)
     }
 }

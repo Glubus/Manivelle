@@ -33,7 +33,7 @@ their internal module id, and that holds within a context group too.
 
 ## Execution budget
 
-`VmOptions::execution_timeout` defaults to 5 seconds. It limits each load,
+`EngineOptions::execution_timeout` defaults to 5 seconds. It limits each load,
 call, emit, request, deferred start, `pump`, and `advance_timers`, starting
 when that operation starts, after transpilation and module resolution: host
 function time and Promise jobs count. One `emit`, `request`, `pump` or
@@ -41,7 +41,7 @@ function time and Promise jobs count. One `emit`, `request`, `pump` or
 between host operations does not consume a budget.
 
 QuickJS's interrupt handler stops JavaScript still running when the budget
-expires; the operation fails with `VmError::Execution` and the engine stays
+expires; the operation fails with `EngineError::Execution` and the engine stays
 usable. Limits are cooperative, not real-time scheduling guarantees. A Rust host
 function cannot be preempted: it must return, have its own I/O timeouts, and avoid
 unbounded blocking. For hostile native extensions, use a separate process.
@@ -50,7 +50,7 @@ remain.
 
 `Engine::interrupt_handle` returns an `InterruptHandle` (`Send + Clone`) that stops
 the running load, call, emit, request or timer advance from another thread, at the
-same QuickJS interrupt checks: the operation fails with `VmError::Interrupted` and
+same QuickJS interrupt checks: the operation fails with `EngineError::Interrupted` and
 the engine stays usable. An interrupt requested while nothing runs has no effect on
 the next operation. Like the budget, it cannot stop a blocked Rust host function.
 
@@ -58,13 +58,13 @@ An exhausted budget or an interrupt stops an `emit`, `request` or `advance_timer
 at the handler or timer that hit it: the remaining handlers do not run, and the
 timers of the scripts not reached yet stay due for the next `advance_timers`. An
 interrupt that reaches a `ctx.hot.save` or `ctx.hot.dispose` callback also
-surfaces as `VmError::Interrupted`.
+surfaces as `EngineError::Interrupted`.
 
 Deferred results are observed through `PendingCall`; only engine operations
 execute JavaScript. `HostResolver::resolve` and `reject` enqueue responses from
 any thread, but JavaScript resumes on the engine thread at `pump`. Timer
 advancement is separate. A successful reload or unload cancels pending work
-from the retired script generation: its `PendingCall` yields `VmError::Cancelled`,
+from the retired script generation: its `PendingCall` yields `EngineError::Cancelled`,
 and late host replies for it are dropped. Failed reloads leave it running. Neither
 `ctx.hot` nor a host reply migrates an awaiting stack to the new generation.
 
@@ -101,7 +101,7 @@ failed reload, the files that reload reached (a module it newly imported, say).
 
 ## Transpilation cache
 
-The cache is off by default (`VmOptions::cache_dir: None`). When enabled, cache
+The cache is off by default (`EngineOptions::cache_dir: None`). When enabled, cache
 writes use temporary files in the cache directory and atomic replacement. A
 checksum header detects truncated or modified contents; missing, older-format or
 corrupt artifacts are rebuilt. This checksum is not authentication: keep cache

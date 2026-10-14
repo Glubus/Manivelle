@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use manivelle::js::{Ctx, Object, Value as JsValue};
 use manivelle::{
-    Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
-    JsDecode, JsEncode, TsField, TsSchema, TsType, VmError, VmOptions,
+    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostFunction,
+    HostFunctionSignature, JsDecode, JsEncode, TsField, TsSchema, TsType,
 };
 
 use support::TestCacheDir;
@@ -46,7 +46,7 @@ impl HostFunctionSignature for Record {
 }
 
 impl HostFunction for Record {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         RECORDS.with_borrow_mut(|records| records.push(input));
         Ok(true)
     }
@@ -182,7 +182,7 @@ fn a_throwing_save_fails_the_reload_and_keeps_the_old_version() {
     );
 
     assert!(
-        matches!(&result, Err(VmError::Execution { details })
+        matches!(&result, Err(EngineError::Execution { details })
             if details.contains("cannot save") && details.contains("previous version keeps running")),
         "{result:?}"
     );
@@ -201,7 +201,7 @@ fn a_new_version_that_fails_to_transpile_keeps_the_old_version_undisposed() {
     let result = engine.load_script(SCRIPT, "export function next(: number {");
 
     assert!(
-        matches!(result, Err(VmError::Transpile { .. })),
+        matches!(result, Err(EngineError::Transpile { .. })),
         "{result:?}"
     );
     assert_eq!(next(&engine), 2.0);
@@ -222,7 +222,7 @@ fn a_new_version_whose_top_level_throws_keeps_the_old_version_undisposed() {
     );
 
     assert!(
-        matches!(&result, Err(VmError::Execution { details }) if details.contains("broken v2")),
+        matches!(&result, Err(EngineError::Execution { details }) if details.contains("broken v2")),
         "{result:?}"
     );
     assert_eq!(next(&engine), 2.0);
@@ -297,7 +297,7 @@ fn a_throwing_dispose_fails_the_reload_but_the_new_version_stays_loaded() {
     let result = engine.load_script(SCRIPT, "export function version(): number { return 2; }");
 
     assert!(
-        matches!(&result, Err(VmError::Execution { details })
+        matches!(&result, Err(EngineError::Execution { details })
             if details.contains("dispose failed") && details.contains("the new version is loaded")),
         "{result:?}"
     );
@@ -318,13 +318,13 @@ fn a_throwing_dispose_on_unload_is_returned_and_the_script_is_unloaded() {
     let result = engine.unload_script(SCRIPT);
 
     assert!(
-        matches!(&result, Err(VmError::Execution { details })
+        matches!(&result, Err(EngineError::Execution { details })
             if details.contains("dispose failed") && details.contains("the script is unloaded")),
         "{result:?}"
     );
     assert!(matches!(
         engine.call::<()>(SCRIPT, "run", ()),
-        Err(VmError::ScriptNotFound { .. })
+        Err(EngineError::ScriptNotFound { .. })
     ));
 }
 
@@ -364,7 +364,7 @@ fn reload_changed_reports_a_throwing_dispose_of_a_reloaded_project() {
     assert_eq!(report.reloaded, [PROJECT]);
     assert!(report.failed.is_empty(), "{report:?}");
     assert!(
-        matches!(report.dispose_failed.as_slice(), [(id, VmError::Execution { details })]
+        matches!(report.dispose_failed.as_slice(), [(id, EngineError::Execution { details })]
             if id == PROJECT && details.contains("dispose failed")),
         "{report:?}"
     );
@@ -439,7 +439,7 @@ fn tsc_diagnostics(name: &str, source: &str) -> Option<String> {
 }
 
 fn engine() -> Engine {
-    Engine::new(&VmOptions::default()).expect("create engine")
+    Engine::new(&EngineOptions::default()).expect("create engine")
 }
 
 /// An engine with `probe.record`, starting from an empty record list.

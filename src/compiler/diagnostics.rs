@@ -5,16 +5,20 @@ use std::path::Path;
 
 use oxc::diagnostics::OxcDiagnostic;
 
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// A transpile error listing each diagnostic at its position in `source`.
-pub(crate) fn transpile_error(diagnostics: &[OxcDiagnostic], source: &str, path: &Path) -> VmError {
+pub(crate) fn transpile_error(
+    diagnostics: &[OxcDiagnostic],
+    source: &str,
+    path: &Path,
+) -> EngineError {
     let details = diagnostics
         .iter()
         .map(|diagnostic| render(diagnostic, source, path))
         .collect::<Vec<_>>()
         .join("\n");
-    VmError::Transpile { details }
+    EngineError::Transpile { details }
 }
 
 /// The headline, then each label text at its own position and the help, one per

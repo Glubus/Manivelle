@@ -7,9 +7,10 @@ release 0.3.0); the history of `rustts` stays in that project's tags.
 
 ### Migration
 
-- Coming from `rustts`: rename the crates, the `#[manivelle(...)]` attributes, the
-  `manivelle:env` module and the generated file names. See
-  [Migrate From rustts](docs/guides/migrating-from-rustts.md).
+- Coming from `rustts`: rename the crates, the `Vm*` types (`EngineError`,
+  `EngineOptions`, `ContractValidation`, `UnknownFieldValidation`), the
+  `#[manivelle(...)]` attributes, the `manivelle:env` module and the generated file
+  names. See [Migrate From rustts](docs/guides/migrating-from-rustts.md).
 
 ### Added
 
@@ -25,3 +26,7 @@ release 0.3.0); the history of `rustts` stays in that project's tags.
   host-driven timers, `console`, async host functions resolved by the game loop,
   `Engine::interrupt_handle`, execution budgets, TypeScript source maps in errors,
   an optional on-disk transpile cache and `NativeBytes`.
+- Web APIs in every script context (`ScriptBuiltins::web`): `structuredClone`,
+  `TextEncoder` and `TextDecoder`, next to `atob`, `btoa` and `performance.now()`.
+- A per-event index of the scripts that listen, so `emit` and `request` cost
+  O(listeners) instead of O(scripts) (1000 scripts with 10 listeners: 13.3 to 3.5 us).

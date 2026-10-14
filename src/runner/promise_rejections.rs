@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use rquickjs::{Ctx, Persistent, Runtime, Value};
 
-use crate::error::VmError;
+use crate::error::EngineError;
 
 use super::errors::js_value_details;
 
@@ -51,7 +51,7 @@ impl UnhandledRejections {
 
     /// Returns the first rejection still unhandled and clears them all.
     #[inline]
-    pub(crate) fn take(&self) -> Option<VmError> {
+    pub(crate) fn take(&self) -> Option<EngineError> {
         if self.0.borrow().is_empty() {
             return None;
         }
@@ -59,7 +59,7 @@ impl UnhandledRejections {
         pending
             .into_iter()
             .next()
-            .map(|rejection| VmError::Execution {
+            .map(|rejection| EngineError::Execution {
                 details: format!("unhandled promise rejection: {}", rejection.details),
             })
     }

@@ -4,8 +4,8 @@ use std::fs;
 use std::path::Path;
 
 use manivelle::{
-    Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
-    NativeBytes, VmError, VmOptions,
+    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostFunction,
+    HostFunctionSignature, NativeBytes,
 };
 use serde_json::{Value, json};
 
@@ -48,7 +48,7 @@ impl HostFunctionSignature for FindUser {
 }
 
 impl HostFunction for FindUser {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(format!("user-{input}"))
     }
 }
@@ -69,7 +69,7 @@ impl HostFunctionSignature for FindInvoice {
 }
 
 impl HostFunction for FindInvoice {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(format!("invoice-{input}"))
     }
 }
@@ -88,7 +88,7 @@ impl HostFunctionSignature for ReadNativeBytes {
 }
 
 impl HostFunction for ReadNativeBytes {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         let byte_count = input.get("byteCount").and_then(Value::as_u64).unwrap_or(0) as usize;
         Ok(NativeBytes::new(
             (0..byte_count)
@@ -263,7 +263,7 @@ fn project_rejects_unresolved_package_imports() {
     let result = engine().load_project("project", fixture("invalid_bare_import/main.ts"));
 
     assert!(
-        matches!(&result, Err(VmError::Resolve { details })
+        matches!(&result, Err(EngineError::Resolve { details })
             if details.contains("unable to resolve import `pkg/math`")),
         "{result:?}"
     );
@@ -274,7 +274,7 @@ fn project_rejects_dynamic_imports() {
     let result = engine().load_project("project", fixture("dynamic_import/main.ts"));
 
     assert!(
-        matches!(&result, Err(VmError::Resolve { details })
+        matches!(&result, Err(EngineError::Resolve { details })
             if details.contains("dynamic import() is not supported; use a static import")),
         "{result:?}"
     );
@@ -290,7 +290,7 @@ fn inline_dynamic_imports_stay_rejected_with_a_disk_cache() {
     for attempt in 0..2 {
         let result = engine.load_script("inline", source);
         assert!(
-            matches!(&result, Err(VmError::Resolve { details })
+            matches!(&result, Err(EngineError::Resolve { details })
                 if details.contains("dynamic import() is not supported; use a static import")),
             "attempt {attempt}: {result:?}"
         );
@@ -582,7 +582,7 @@ fn script_errors_carry_the_stack_of_the_throwing_function() {
     let result = engine.call::<Value>("throwing", "explode", ());
 
     assert!(
-        matches!(&result, Err(VmError::Execution { details })
+        matches!(&result, Err(EngineError::Execution { details })
             if details.contains("boom from script") && details.contains("explode")),
         "{result:?}"
     );
@@ -744,7 +744,7 @@ fn failed_reloads_keep_the_previous_script_state_and_handlers() {
             "#,
         );
         assert!(
-            matches!(&reload, Err(VmError::Execution { details }) if details.contains("broken")),
+            matches!(&reload, Err(EngineError::Execution { details }) if details.contains("broken")),
             "{reload:?}"
         );
     }
@@ -783,7 +783,7 @@ fn failed_project_reload_keeps_the_previous_dependency_graph() {
         .expect("reload fixed project");
 
     assert!(
-        matches!(&failed, Err(VmError::Execution { details }) if details.contains("bad module")),
+        matches!(&failed, Err(EngineError::Execution { details }) if details.contains("bad module")),
         "{failed:?}"
     );
     assert_eq!(kept, json!(42));
@@ -791,7 +791,7 @@ fn failed_project_reload_keeps_the_previous_dependency_graph() {
 }
 
 fn engine() -> Engine {
-    Engine::new(&VmOptions::default()).expect("create engine")
+    Engine::new(&EngineOptions::default()).expect("create engine")
 }
 
 fn call(engine: &Engine, script: &str, function: &str, args: Vec<Value>) -> Value {

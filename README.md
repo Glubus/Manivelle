@@ -49,12 +49,12 @@ impl HostFunctionSignature for FindUser {
 }
 
 impl HostFunction for FindUser {
-    fn call(input: FindUserInput) -> Result<FindUserOutput, VmError> {
+    fn call(input: FindUserInput) -> Result<FindUserOutput, EngineError> {
         Ok(FindUserOutput { display_name: format!("user {}", input.user_id) })
     }
 }
 
-let mut engine = Engine::new(&VmOptions::default())?;
+let mut engine = Engine::new(&EngineOptions::default())?;
 
 engine
     .registry()
@@ -101,6 +101,8 @@ Useful starting points:
 - [Runtime Guarantees](docs/guides/runtime-guarantees.md)
 - [Migrate From rustts](docs/guides/migrating-from-rustts.md)
 
+[`examples/getting_started.rs`](examples/getting_started.rs) is the smallest complete
+program (one Rust function called from a script), and
 [`examples/game_loop.rs`](examples/game_loop.rs) runs a frame loop over a context
 group with timers, events, requests, an async host function and a hot reload that
 keeps state: `cargo run --example game_loop --features derive`.
@@ -113,7 +115,7 @@ mdbook build
 
 ## Status
 
-The current core is focused on the Rust-first contract model:
+Manivelle provides:
 
 - `Engine`: QuickJS (through `rquickjs`) on your own thread, with direct native
   calls in both directions
@@ -134,10 +136,12 @@ The current core is focused on the Rust-first contract model:
 - generated TypeScript declarations and SDK helpers
 - optional contract validation
 - native `Uint8Array` in both directions through `NativeBytes`
+- web APIs QuickJS lacks, loaded only when a script uses them: `structuredClone`,
+  `TextEncoder` and `TextDecoder` (next to `atob`, `btoa` and `performance.now()`)
 - execution budget per load, call, emit, request and timer advance, and an
   `InterruptHandle` to stop running JavaScript from another thread
 - garbage collection control (`run_gc`, `set_gc_threshold`) and per-context
-  built-in selection (`VmOptions::builtins`, `ScriptBuiltins`)
+  built-in selection (`EngineOptions::builtins`, `ScriptBuiltins`)
 - the `disable-assertions` feature: QuickJS without its internal assertions, for
   the builds you ship
 
@@ -147,10 +151,9 @@ In one `cargo bench --bench vs_lua` run on an otherwise idle Windows development
 machine, a Rust → TypeScript call with two numbers took 83 ns against 52 ns for mlua,
 a round trip with a 20-field object 3.9 µs against 4.4 µs, and an event to one
 handler 143 ns against 264 ns. Pure
-compute is QuickJS speed, about 3× slower than Lua. Context groups, cheaper event
-delivery and the `disable-assertions` feature (about 23 % faster on call-heavy
-scripts) are described in the [changelog](CHANGELOG.md); see
-[the Engine guide](docs/guides/engine.md#performance) for the full comparison.
+compute is QuickJS speed, about 3× slower than Lua. Context groups and the
+`disable-assertions` feature (about 23 % faster on call-heavy scripts) are described in
+[the Engine guide](docs/guides/engine.md#performance), with the full comparison.
 
 ## Toolchain
 

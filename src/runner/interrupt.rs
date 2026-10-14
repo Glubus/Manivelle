@@ -11,7 +11,7 @@ use super::execution::ExecutionControl;
 ///
 /// [`interrupt`](Self::interrupt) stops the load, call, emit, request or timer advance
 /// in progress at its next QuickJS interrupt check; that operation fails with
-/// [`VmError::Interrupted`](crate::VmError::Interrupted) and the engine stays usable.
+/// [`EngineError::Interrupted`](crate::EngineError::Interrupted) and the engine stays usable.
 /// When no operation is running, the request has no effect: the next operation
 /// starts normally. Like the execution timeout, it cannot stop a Rust host function
 /// that blocks; the script stops once the host function returns.

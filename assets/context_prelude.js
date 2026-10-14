@@ -343,3 +343,38 @@ export function installGlobals(env) {
     parent[leaf] = native[name];
   }
 }
+
+// Declares the web APIs of `names` (`structuredClone`, `TextEncoder`, `TextDecoder`) as
+// globals that build themselves when first read: `load()` loads the module of
+// `assets/web_apis.js` into this context and returns its implementations by name. The
+// first read replaces all of them with plain data properties, so a script sees ordinary
+// globals, and one that assigns a name first keeps its own value.
+export function installWebApis(load, names) {
+  const define = (name, value) =>
+    Object.defineProperty(globalThis, name, {
+      value,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
+  const pending = new Set(names);
+  for (const name of names) {
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      enumerable: false,
+      get() {
+        const apis = load();
+        const value = apis[name];
+        for (const key of pending) {
+          define(key, apis[key]);
+        }
+        pending.clear();
+        return value;
+      },
+      set(value) {
+        pending.delete(name);
+        define(name, value);
+      },
+    });
+  }
+}

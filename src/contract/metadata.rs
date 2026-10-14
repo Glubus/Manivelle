@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Minimal schema carrier for V0 metadata.
+/// Minimal schema carrier for contract metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Schema {
     /// Human-readable schema identity.

@@ -23,6 +23,8 @@ jobs:
       - run: cargo test --workspace --features derive,uuid,chrono,glam
       - run: cargo test --workspace --no-default-features
       - run: cargo check --workspace --all-features --all-targets
+      - run: cargo run --example getting_started --features derive
+      - run: cargo package -p manivelle_macros
       - run: cargo doc --workspace --no-deps --features derive,uuid,chrono,glam
         env:
           RUSTDOCFLAGS: -D warnings

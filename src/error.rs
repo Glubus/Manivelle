@@ -7,7 +7,7 @@ use thiserror::Error;
 /// Error type for all engine operations.
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum VmError {
+pub enum EngineError {
     /// An [`InterruptHandle`](crate::InterruptHandle) stopped the running JavaScript.
     #[error("javascript execution was interrupted by the host")]
     Interrupted,

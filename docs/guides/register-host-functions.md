@@ -21,12 +21,12 @@ serde = { version = "1", features = ["derive"] }
 ## Create The Engine
 
 ```rust
-use manivelle::{Engine, VmError, VmOptions};
+use manivelle::{Engine, EngineError, EngineOptions};
 
-fn create_engine() -> Result<Engine, VmError> {
-    Engine::new(&VmOptions {
+fn create_engine() -> Result<Engine, EngineError> {
+    Engine::new(&EngineOptions {
         cache_dir: Some("target/manivelle-cache".into()),
-        ..VmOptions::default()
+        ..EngineOptions::default()
     })
 }
 ```
@@ -43,7 +43,7 @@ the generated TypeScript namespace. For example, `user.find` becomes
 ```rust
 use serde::{Deserialize, Serialize};
 use manivelle::{
-    HostContract, HostContractKind, HostFunction, HostFunctionSignature, TsSchema, VmError,
+    HostContract, HostContractKind, HostFunction, HostFunctionSignature, TsSchema, EngineError,
 };
 
 #[derive(Deserialize, TsSchema)]
@@ -78,7 +78,7 @@ impl HostFunctionSignature for FindUser {
 }
 
 impl HostFunction for FindUser {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(FindUserOutput {
             user_id: input.user_id,
             display_name: format!("user-{}", input.user_id),
@@ -152,7 +152,7 @@ engine.pump()?; // only now do awaiting script continuations run
 `Caller`. Dropping a resolver rejects the Promise; `reject(error)`
 does so explicitly. An old resolver becomes cancelled when its script reloads
 successfully or unloads, and `resolve`/`reject` then return
-`VmError::Cancelled`. No host reply automatically drives JavaScript.
+`EngineError::Cancelled`. No host reply automatically drives JavaScript.
 
 If an exported function awaits this reply, start it with `call_deferred`:
 the synchronous `call` cannot wait for a host reply from a later frame.
@@ -173,7 +173,7 @@ engine
 
 ## Errors And Panics In A Host Function
 
-A handler that returns `Err(VmError)` throws a JavaScript error in the script, which can
+A handler that returns `Err(EngineError)` throws a JavaScript error in the script, which can
 catch it. A handler that **panics** panics out of the engine call that reached it
 (`Engine::call`, `emit`, `advance_timers`, ...), after the operation's Promise jobs ran.
 The same holds for `async` handlers and for a `console` sink:
@@ -372,11 +372,11 @@ strict unknown-field rejection when you want scripts to fail fast on extra input
 fields.
 
 ```rust
-use manivelle::{VmContractValidation, VmUnknownFieldValidation, VmOptions};
+use manivelle::{ContractValidation, UnknownFieldValidation, EngineOptions};
 
-let mut options = VmOptions::default();
-options.contract_validation = VmContractValidation::Inputs;
-options.unknown_field_validation = VmUnknownFieldValidation::Reject;
+let mut options = EngineOptions::default();
+options.contract_validation = ContractValidation::Inputs;
+options.unknown_field_validation = UnknownFieldValidation::Reject;
 ```
 
 That is useful for SDK development, tests, and modding APIs where clear error

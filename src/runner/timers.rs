@@ -8,7 +8,7 @@ use rquickjs::{Ctx, Function, qjs};
 
 use super::errors::{js_error, pending_exception};
 use super::retained::Retained;
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// Engine time in milliseconds, advanced only by
 /// [`Engine::advance_timers`](crate::Engine::advance_timers); starts at 0.
@@ -87,7 +87,7 @@ pub(super) fn timer_hooks<'js>(
     clock: &TimerClock,
     next: &NextTimer,
     earliest: &EarliestDue,
-) -> Result<TimerHooks<'js>, VmError> {
+) -> Result<TimerHooks<'js>, EngineError> {
     let clock = Rc::clone(&clock.0);
     let next = Rc::clone(&next.0);
     let earliest = earliest.clone();
@@ -106,7 +106,7 @@ pub(super) fn timer_hooks<'js>(
 /// The function is only borrowed for the call, as a handler is in
 /// [`deliver`](super::events::deliver): `Function::call` would take and release several
 /// references to the context and the value.
-pub(super) fn run_due_timers(ctx: &Ctx<'_>, run: &Retained, now: f64) -> Result<(), VmError> {
+pub(super) fn run_due_timers(ctx: &Ctx<'_>, run: &Retained, now: f64) -> Result<(), EngineError> {
     // SAFETY: `run` is a live function of this runtime and `arguments` holds a number,
     // which owns no reference: `JS_Call` borrows both, and `this` is `undefined`.
     let returned = unsafe {

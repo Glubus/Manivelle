@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::compiler::{CompiledModule, ModuleOrigin};
-use crate::error::VmError;
+use crate::error::EngineError;
 
 use super::inner::ModuleStoreInner;
 use crate::runner::module_loader::graph::{
@@ -41,7 +41,7 @@ pub(super) fn insert_project(
     entry_module_id: &str,
     modules: Vec<CompiledModule>,
     graph_id: u64,
-) -> Result<RuntimeModuleGraph, VmError> {
+) -> Result<RuntimeModuleGraph, EngineError> {
     let module_id_map = build_runtime_module_id_map(graph_id, &modules);
     let entry_runtime_id = runtime_entry_module_id(&module_id_map, entry_module_id)?;
     let module_ids = module_id_map.values().cloned().collect::<Vec<_>>();
@@ -60,11 +60,11 @@ pub(super) fn insert_project(
 fn runtime_entry_module_id(
     module_id_map: &HashMap<String, String>,
     entry_module_id: &str,
-) -> Result<String, VmError> {
+) -> Result<String, EngineError> {
     module_id_map
         .get(entry_module_id)
         .cloned()
-        .ok_or_else(|| VmError::Resolve {
+        .ok_or_else(|| EngineError::Resolve {
             details: format!("entry module is missing from compiled graph: {entry_module_id}"),
         })
 }
@@ -73,7 +73,7 @@ fn insert_project_module(
     store: &mut ModuleStoreInner,
     module: CompiledModule,
     module_id_map: &HashMap<String, String>,
-) -> Result<(), VmError> {
+) -> Result<(), EngineError> {
     let runtime_module_id = runtime_module_id_for(module_id_map, &module.module_id)?;
     insert_project_resolutions(
         store,
@@ -95,7 +95,7 @@ fn insert_project_resolutions(
     runtime_module_id: &str,
     resolved_requests: BTreeMap<String, String>,
     module_id_map: &HashMap<String, String>,
-) -> Result<(), VmError> {
+) -> Result<(), EngineError> {
     for (request, resolved) in resolved_requests {
         let runtime_resolved_id = module_id_map.get(&resolved).cloned().unwrap_or(resolved);
         store
@@ -108,11 +108,11 @@ fn insert_project_resolutions(
 fn runtime_module_id_for(
     module_id_map: &HashMap<String, String>,
     module_id: &str,
-) -> Result<String, VmError> {
+) -> Result<String, EngineError> {
     module_id_map
         .get(module_id)
         .cloned()
-        .ok_or_else(|| VmError::Resolve {
+        .ok_or_else(|| EngineError::Resolve {
             details: format!("module is missing from runtime graph: {module_id}"),
         })
 }

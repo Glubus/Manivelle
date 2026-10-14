@@ -1,9 +1,9 @@
 #![cfg(feature = "derive")]
 
 use manivelle::{
-    Engine, HostCallback, HostContext, HostContract, HostContractKind, HostFunction,
-    HostFunctionSignature, HostMetadata, Schema, TsField, TsSchema, TsType, VmContractValidation,
-    VmError, VmUnknownFieldValidation,
+    ContractValidation, Engine, EngineError, HostCallback, HostContext, HostContract,
+    HostContractKind, HostFunction, HostFunctionSignature, HostMetadata, Schema, TsField, TsSchema,
+    TsType, UnknownFieldValidation,
 };
 use serde_json::{Value, json};
 use std::process::Command;
@@ -50,7 +50,7 @@ impl HostFunctionSignature for FindUser {
 }
 
 impl HostFunction for FindUser {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(FindUserOutput(format!("user-{}", input.0)))
     }
 }
@@ -128,7 +128,7 @@ impl HostFunctionSignature for RecordAction {
 }
 
 impl HostFunction for RecordAction {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(format!("{}:{}", input.action_id, input.actor.actor_id))
     }
 }
@@ -246,8 +246,8 @@ fn generated_sdk_uses_flattened_derived_input_schema() {
 }
 
 #[test]
-fn host_context_v0_is_declarative_sdk_surface_only() {
-    let cache_dir = TestCacheDir::new("host-context-v0-declarative");
+fn host_context_is_declarative_sdk_surface_only() {
+    let cache_dir = TestCacheDir::new("host-context-declarative");
     let engine = Engine::new(&cache_dir.engine_options()).expect("create engine");
 
     engine
@@ -293,7 +293,7 @@ fn importing_a_host_context_fails_at_load_instead_of_binding_undefined() {
         panic!("context import loaded and evaluated to {result:?}");
     };
     assert!(
-        matches!(&error, VmError::Execution { details } if details.contains("overlay")),
+        matches!(&error, EngineError::Execution { details } if details.contains("overlay")),
         "unexpected error: {error}"
     );
 }
@@ -435,8 +435,8 @@ fn run_tsc(path: &std::path::Path) -> Option<std::process::Output> {
 fn host_contract_validation_uses_flattened_derived_input_schema() {
     let cache_dir = TestCacheDir::new("host-contract-flatten-validation");
     let mut options = cache_dir.engine_options();
-    options.contract_validation = VmContractValidation::Inputs;
-    options.unknown_field_validation = VmUnknownFieldValidation::Reject;
+    options.contract_validation = ContractValidation::Inputs;
+    options.unknown_field_validation = UnknownFieldValidation::Reject;
     let mut engine = Engine::new(&options).expect("create engine");
 
     engine
@@ -479,7 +479,7 @@ fn host_contract_validation_uses_flattened_derived_input_schema() {
     assert_eq!(result, json!("act-1:7"));
     assert!(matches!(
         error,
-        VmError::Execution { details }
+        EngineError::Execution { details }
             if details.contains("action.record")
                 && details.contains("input validation failed")
                 && details.contains("$.actor: unknown field")

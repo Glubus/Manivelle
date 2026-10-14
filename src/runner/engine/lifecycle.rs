@@ -12,16 +12,17 @@ use rquickjs::{
 
 use crate::compiler::{ProjectFailure, WatchedFiles};
 use crate::config::ScriptBuiltins;
-use crate::error::VmError;
+use crate::error::EngineError;
 use crate::registry::{HostModuleStyle, NativeContext};
 use crate::types::{ReloadReport, ScriptId};
 
 use super::super::errors::{caught_js_error, js_error};
 use super::super::host_fn::HostFnClass;
 use super::super::host_promises::HostPromises;
-use super::super::module_loader::{ENV_SPECIFIER, RuntimeModuleGraph, WorkerModuleStore};
+use super::super::module_loader::{ENV_SPECIFIER, ModuleStore, RuntimeModuleGraph};
 use super::super::retained::Retained;
 use super::super::timers::timer_hooks;
+use super::super::web;
 use super::{
     Disposed, Engine, EngineScript, HotData, Prelude, ProjectFiles, ScriptGroup, ScriptHooks,
     ScriptOrigin, ScriptSignals, script_not_found,
@@ -36,7 +37,7 @@ const PRELUDE_MODULE: &str = "manivelle:prelude";
 
 /// What `import ... from "manivelle:env"` reads in a context of its own: the globals the
 /// prelude exposed. A script in a group gets its own environment module instead.
-const LEGACY_ENV_MODULE: &str = r#"
+const GLOBALS_ENV_MODULE: &str = r#"
 export const ctx = globalThis.ctx;
 export const console = globalThis.console;
 export const setTimeout = globalThis.setTimeout;
@@ -65,7 +66,11 @@ impl Engine {
     /// Loads or replaces one TypeScript script. It may import host modules, not other
     /// files; use [`Engine::load_project`] for those. A failed load keeps the previous
     /// version; see [`Engine`] for the `ctx.hot` state a replaced version hands over.
-    pub fn load_script(&mut self, id: impl Into<ScriptId>, source: &str) -> Result<(), VmError> {
+    pub fn load_script(
+        &mut self,
+        id: impl Into<ScriptId>,
+        source: &str,
+    ) -> Result<(), EngineError> {
         self.mount_inline(None, id.into(), source)?
     }
 
@@ -91,7 +96,7 @@ impl Engine {
         group: &str,
         id: impl Into<ScriptId>,
         source: &str,
-    ) -> Result<(), VmError> {
+    ) -> Result<(), EngineError> {
         self.mount_inline(Some(group), id.into(), source)?
     }
 
@@ -100,7 +105,7 @@ impl Engine {
         group: Option<&str>,
         id: ScriptId,
         source: &str,
-    ) -> Result<Disposed, VmError> {
+    ) -> Result<Disposed, EngineError> {
         let script = self.transpiler.inline(&id, source)?;
         self.install_host_modules()?;
         let graph_id = self.next_graph_id();
@@ -126,7 +131,7 @@ impl Engine {
         &mut self,
         id: impl Into<ScriptId>,
         entry_path: impl AsRef<Path>,
-    ) -> Result<(), VmError> {
+    ) -> Result<(), EngineError> {
         self.mount_project(None, id.into(), entry_path.as_ref())?
     }
 
@@ -137,7 +142,7 @@ impl Engine {
         group: &str,
         id: impl Into<ScriptId>,
         entry_path: impl AsRef<Path>,
-    ) -> Result<(), VmError> {
+    ) -> Result<(), EngineError> {
         self.mount_project(Some(group), id.into(), entry_path.as_ref())?
     }
 
@@ -148,7 +153,7 @@ impl Engine {
         group: Option<&str>,
         id: ScriptId,
         entry_path: &Path,
-    ) -> Result<Disposed, VmError> {
+    ) -> Result<Disposed, EngineError> {
         let mut external_modules = self.registry.import_module_names()?;
         external_modules.insert(ENV_SPECIFIER.to_owned());
         let project = match self.transpiler.project(entry_path, &external_modules) {
@@ -248,7 +253,7 @@ impl Engine {
     /// Unloads one script and releases its modules. Its `ctx.hot.dispose` callbacks run
     /// first; when one throws, the script is unloaded all the same and the error is
     /// returned.
-    pub fn unload_script(&mut self, id: &str) -> Result<(), VmError> {
+    pub fn unload_script(&mut self, id: &str) -> Result<(), EngineError> {
         let script = self
             .scripts
             .shift_remove(id)
@@ -262,9 +267,9 @@ impl Engine {
         })
     }
 
-    fn install_host_modules(&self) -> Result<(), VmError> {
+    fn install_host_modules(&self) -> Result<(), EngineError> {
         let mut modules = self.registry.import_modules(HostModuleStyle::Globals)?;
-        modules.insert(ENV_SPECIFIER.to_owned(), LEGACY_ENV_MODULE.to_owned());
+        modules.insert(ENV_SPECIFIER.to_owned(), GLOBALS_ENV_MODULE.to_owned());
         self.module_store.insert_host_modules(modules)?;
         self.module_store
             .insert_group_host_modules(self.registry.import_modules(HostModuleStyle::Env)?)
@@ -285,7 +290,7 @@ impl Engine {
         graph: RuntimeModuleGraph,
         origin: ScriptOrigin,
         group: Option<&str>,
-    ) -> Result<Disposed, VmError> {
+    ) -> Result<Disposed, EngineError> {
         let mounted = self
             .save_hot_data(&id)
             .and_then(|hot_data| self.mount(&id, &graph, hot_data, group));
@@ -323,7 +328,7 @@ impl Engine {
 
     /// Runs the loaded version's `ctx.hot.save` callback, when the script is loaded;
     /// its result becomes the next version's `ctx.hot.data`.
-    fn save_hot_data(&self, id: &str) -> Result<Option<HotData>, VmError> {
+    fn save_hot_data(&self, id: &str) -> Result<Option<HotData>, EngineError> {
         let Some(script) = self.scripts.get(id) else {
             return Ok(None);
         };
@@ -351,7 +356,7 @@ impl Engine {
         graph: &RuntimeModuleGraph,
         hot_data: Option<HotData>,
         group: Option<&str>,
-    ) -> Result<Mounted, VmError> {
+    ) -> Result<Mounted, EngineError> {
         // The guard borrows a handle of its own, not `self`, which the group lookup
         // below borrows mutably.
         let execution = Arc::clone(&self.execution);
@@ -412,7 +417,7 @@ impl Engine {
 
     /// The context a script mounts into: a new one of its own, or its group's, created
     /// the first time the group is used.
-    fn target(&mut self, group: Option<&str>) -> Result<Target, VmError> {
+    fn target(&mut self, group: Option<&str>) -> Result<Target, EngineError> {
         if let Some(existing) = group.and_then(|name| self.groups.get(name)) {
             return Ok(Target {
                 context: existing.context.clone(),
@@ -437,7 +442,7 @@ impl Engine {
     /// Runs the context prelude in `ctx`. The first call compiles it and keeps the
     /// bytecode; every later context loads that instead of parsing and compiling the
     /// source again, which was most of the cost of mounting a script.
-    fn run_prelude(&self, ctx: &Ctx<'_>) -> Result<Prelude, VmError> {
+    fn run_prelude(&self, ctx: &Ctx<'_>) -> Result<Prelude, EngineError> {
         let declared =
             match self.prelude.get() {
                 // SAFETY: QuickJS does not verify bytecode. These bytes were written by this
@@ -467,6 +472,19 @@ impl Engine {
                 .map(|function| Persistent::save(ctx, function))
                 .map_err(js_error)
         };
+        if self.builtins.web {
+            let names = if self.builtins.typed_arrays {
+                vec!["structuredClone", "TextEncoder", "TextDecoder"]
+            } else {
+                vec!["structuredClone"]
+            };
+            module
+                .get::<_, Function<'_>>("installWebApis")
+                .map_err(js_error)?
+                .call::<_, ()>((web::loader(ctx, &self.web_bytecode)?, names))
+                .catch(ctx)
+                .map_err(caught_js_error)?;
+        }
         Ok(Prelude {
             make_env: export("makeEnv")?,
             install_globals: export("installGlobals")?,
@@ -485,7 +503,7 @@ impl Engine {
         signals: &ScriptSignals,
         host_promises: &HostPromises,
         hot_data: Option<HotData>,
-    ) -> Result<(Object<'js>, ScriptHooks), VmError> {
+    ) -> Result<(Object<'js>, ScriptHooks), EngineError> {
         let functions = Object::new(ctx.clone()).map_err(js_error)?;
         let class = match self.host_class.get() {
             Some(class) => *class,
@@ -567,7 +585,11 @@ impl Engine {
 
     /// Swaps `script` in, then retires the version it replaces, whose failed `dispose`
     /// does not undo the swap.
-    fn replace_script(&mut self, id: ScriptId, script: EngineScript) -> Result<Disposed, VmError> {
+    fn replace_script(
+        &mut self,
+        id: ScriptId,
+        script: EngineScript,
+    ) -> Result<Disposed, EngineError> {
         let previous = self.scripts.insert(id.clone(), script);
         self.event_index.mark_stale();
         let Some(previous) = previous else {
@@ -584,7 +606,7 @@ impl Engine {
     /// Runs the `ctx.hot.dispose` callbacks of a version no longer in `scripts`, then
     /// releases its modules and its place in its group; the context drops with the last
     /// script that holds it.
-    fn retire(&mut self, script: EngineScript) -> Result<Disposed, VmError> {
+    fn retire(&mut self, script: EngineScript) -> Result<Disposed, EngineError> {
         for guard in script.request_guards.borrow_mut().drain(..) {
             guard.cancel();
         }
@@ -639,9 +661,9 @@ impl Engine {
 /// script's graph, and returns its namespace.
 fn import_exports(
     ctx: &Ctx<'_>,
-    module_store: &WorkerModuleStore,
+    module_store: &ModuleStore,
     entry_module_id: &str,
-) -> Result<Retained, VmError> {
+) -> Result<Retained, EngineError> {
     let exports = module_store
         .host_import(entry_module_id, || Module::import(ctx, entry_module_id))?
         .and_then(|promise| promise.finish::<Object<'_>>())
@@ -654,7 +676,7 @@ fn import_exports(
 fn call_hot_hook<'js>(
     ctx: &Ctx<'js>,
     hook: &Persistent<Function<'static>>,
-) -> Result<JsValue<'js>, VmError> {
+) -> Result<JsValue<'js>, EngineError> {
     hook.clone()
         .restore(ctx)
         .map_err(js_error)?
@@ -663,16 +685,16 @@ fn call_hot_hook<'js>(
         .map_err(caught_js_error)
 }
 
-/// Reports a failed `ctx.hot` callback as [`VmError::Execution`] whose details start
+/// Reports a failed `ctx.hot` callback as [`EngineError::Execution`] whose details start
 /// with `outcome`, which says what became of the script. An interrupt stays
-/// [`VmError::Interrupted`], so the host can tell the stop it asked for from a failure.
-fn hot_hook_error(error: VmError, outcome: &str) -> VmError {
+/// [`EngineError::Interrupted`], so the host can tell the stop it asked for from a failure.
+fn hot_hook_error(error: EngineError, outcome: &str) -> EngineError {
     let details = match error {
-        VmError::Interrupted => return VmError::Interrupted,
-        VmError::Execution { details } => details,
+        EngineError::Interrupted => return EngineError::Interrupted,
+        EngineError::Execution { details } => details,
         error => error.to_string(),
     };
-    VmError::Execution {
+    EngineError::Execution {
         details: format!("{outcome}: {details}"),
     }
 }
@@ -680,7 +702,7 @@ fn hot_hook_error(error: VmError, outcome: &str) -> VmError {
 /// A context with the core, the built-ins Manivelle needs and the optional ones `builtins`
 /// asks for. All of them is `Context::full`; fewer adds the same intrinsics one by one,
 /// in the order QuickJS's `JS_NewContext` does.
-fn new_context(runtime: &Runtime, builtins: ScriptBuiltins) -> Result<Context, VmError> {
+fn new_context(runtime: &Runtime, builtins: ScriptBuiltins) -> Result<Context, EngineError> {
     if builtins == ScriptBuiltins::ALL {
         return Context::full(runtime).map_err(js_error);
     }
@@ -707,7 +729,7 @@ fn new_context(runtime: &Runtime, builtins: ScriptBuiltins) -> Result<Context, V
             || failures(builtins.web, qjs::JS_AddPerformance)
     });
     if failed {
-        Err(VmError::Execution {
+        Err(EngineError::Execution {
             details: String::from("out of memory while creating a script context"),
         })
     } else {

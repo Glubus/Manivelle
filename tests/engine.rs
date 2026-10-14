@@ -1,15 +1,15 @@
 use std::time::{Duration, Instant};
 
 use manivelle::{
-    Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
-    VmContractValidation, VmError, VmOptions,
+    ContractValidation, Engine, EngineError, EngineOptions, HostContract, HostContractKind,
+    HostFunction, HostFunctionSignature,
 };
 use serde_json::json;
 
 fn engine_with_timeout(timeout: Duration) -> Engine {
-    Engine::new(&VmOptions {
+    Engine::new(&EngineOptions {
         execution_timeout: timeout,
-        ..VmOptions::default()
+        ..EngineOptions::default()
     })
     .expect("create engine")
 }
@@ -33,7 +33,7 @@ fn budget_includes_synchronous_host_handler_time() {
     assert!(
         matches!(
             engine.call::<f64>("slow", "invoke", ()),
-            Err(VmError::Execution { .. })
+            Err(EngineError::Execution { .. })
         ),
         "the host handler must consume the operation budget"
     );
@@ -67,7 +67,7 @@ fn host_time_counts_against_the_budget_in_a_warm_context() {
     let result = engine.call::<f64>("slow", "invoke", (1.0,));
 
     assert!(
-        matches!(result, Err(VmError::Execution { .. })),
+        matches!(result, Err(EngineError::Execution { .. })),
         "the sleeping host call must consume the budget: {result:?}"
     );
 }
@@ -136,13 +136,13 @@ fn a_call_reads_the_export_binding_at_the_time_of_the_call() {
     assert_eq!((first, second), (1.0, 2.0));
     assert!(not_a_function.is_err(), "{not_a_function:?}");
     assert!(
-        matches!(missing, Err(VmError::FunctionNotFound { ref function_name, .. }) if function_name == "absent"),
+        matches!(missing, Err(EngineError::FunctionNotFound { ref function_name, .. }) if function_name == "absent"),
         "{missing:?}"
     );
 }
 
 fn engine() -> Engine {
-    Engine::new(&VmOptions::default()).expect("create engine")
+    Engine::new(&EngineOptions::default()).expect("create engine")
 }
 
 fn engine_with(source: &str) -> Engine {
@@ -169,7 +169,7 @@ impl HostFunctionSignature for Double {
 }
 
 impl HostFunction for Double {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(input * 2.0)
     }
 }
@@ -190,8 +190,8 @@ impl HostFunctionSignature for Failing {
 }
 
 impl HostFunction for Failing {
-    fn call((): Self::Input) -> Result<Self::Output, VmError> {
-        Err(VmError::Execution {
+    fn call((): Self::Input) -> Result<Self::Output, EngineError> {
+        Err(EngineError::Execution {
             details: String::from("boom"),
         })
     }
@@ -202,7 +202,7 @@ fn calling_an_unknown_script_is_script_not_found() {
     let result = engine().call::<f64>("missing", "run", ());
 
     assert!(
-        matches!(result, Err(VmError::ScriptNotFound { ref script_id }) if script_id == "missing"),
+        matches!(result, Err(EngineError::ScriptNotFound { ref script_id }) if script_id == "missing"),
         "{result:?}"
     );
 }
@@ -214,7 +214,7 @@ fn calling_a_missing_export_is_function_not_found() {
     let result = engine.call::<f64>("script", "absent", ());
 
     assert!(
-        matches!(result, Err(VmError::FunctionNotFound { ref function_name, .. }) if function_name == "absent"),
+        matches!(result, Err(EngineError::FunctionNotFound { ref function_name, .. }) if function_name == "absent"),
         "{result:?}"
     );
 }
@@ -226,7 +226,7 @@ fn script_exceptions_reach_rust_with_their_message() {
     let result = engine.call::<()>("script", "run", ());
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details }) if details.contains("bad input")),
+        matches!(result, Err(EngineError::Execution { ref details }) if details.contains("bad input")),
         "{result:?}"
     );
 }
@@ -239,7 +239,7 @@ fn a_throwing_event_handler_fails_the_emit() {
     let result = engine.emit("tick", &json!({}));
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details }) if details.contains("handler failed")),
+        matches!(result, Err(EngineError::Execution { ref details }) if details.contains("handler failed")),
         "{result:?}"
     );
 }
@@ -252,11 +252,11 @@ fn unloaded_scripts_are_gone() {
 
     assert!(matches!(
         engine.call::<f64>("script", "run", ()),
-        Err(VmError::ScriptNotFound { .. })
+        Err(EngineError::ScriptNotFound { .. })
     ));
     assert!(matches!(
         engine.unload_script("script"),
-        Err(VmError::ScriptNotFound { .. })
+        Err(EngineError::ScriptNotFound { .. })
     ));
 }
 
@@ -333,16 +333,16 @@ fn host_function_errors_are_catchable_in_scripts() {
 
     assert!(caught.contains("boom"), "{caught}");
     assert!(
-        matches!(uncaught, Err(VmError::Execution { ref details }) if details.contains("boom")),
+        matches!(uncaught, Err(EngineError::Execution { ref details }) if details.contains("boom")),
         "{uncaught:?}"
     );
 }
 
 #[test]
 fn contract_validation_rejects_inputs_outside_the_schema() {
-    let mut engine = Engine::new(&VmOptions {
-        contract_validation: VmContractValidation::Inputs,
-        ..VmOptions::default()
+    let mut engine = Engine::new(&EngineOptions {
+        contract_validation: ContractValidation::Inputs,
+        ..EngineOptions::default()
     })
     .expect("create engine");
     engine
@@ -364,16 +364,16 @@ fn contract_validation_rejects_inputs_outside_the_schema() {
 
     assert_eq!(valid, 6.0);
     assert!(
-        matches!(invalid, Err(VmError::Execution { ref details }) if details.contains("validation")),
+        matches!(invalid, Err(EngineError::Execution { ref details }) if details.contains("validation")),
         "{invalid:?}"
     );
 }
 
 #[test]
 fn loading_scripts_past_the_memory_limit_says_the_limit_was_reached() {
-    let mut engine = Engine::new(&VmOptions {
+    let mut engine = Engine::new(&EngineOptions {
         memory_limit_bytes: 4 * 1024 * 1024,
-        ..VmOptions::default()
+        ..EngineOptions::default()
     })
     .expect("create engine");
     engine
@@ -389,7 +389,7 @@ fn loading_scripts_past_the_memory_limit_says_the_limit_was_reached() {
         .expect("4 MiB hold fewer than 1000 contexts");
 
     assert!(
-        matches!(&error, VmError::Execution { details } if details.contains("out of memory") && details.contains("memory_limit_bytes")),
+        matches!(&error, EngineError::Execution { details } if details.contains("out of memory") && details.contains("memory_limit_bytes")),
         "{error:?}"
     );
     let one: f64 = engine
@@ -400,9 +400,9 @@ fn loading_scripts_past_the_memory_limit_says_the_limit_was_reached() {
 
 #[test]
 fn exceeding_the_memory_limit_fails_the_call_and_the_engine_stays_usable() {
-    let mut engine = Engine::new(&VmOptions {
+    let mut engine = Engine::new(&EngineOptions {
         memory_limit_bytes: 8 * 1024 * 1024,
-        ..VmOptions::default()
+        ..EngineOptions::default()
     })
     .expect("create engine");
     engine
@@ -456,7 +456,7 @@ fn a_syntax_error_fails_the_load_and_keeps_the_previous_version() {
         .expect("previous version");
 
     assert!(
-        matches!(reload, Err(VmError::Transpile { .. })),
+        matches!(reload, Err(EngineError::Transpile { .. })),
         "{reload:?}"
     );
     assert_eq!(version, 1.0);
@@ -573,7 +573,7 @@ fn automatic_collection_resumes_once_a_threshold_is_set_again() {
 
 #[test]
 fn emit_calls_every_registered_handler() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .load_script(
             "listener",
@@ -674,7 +674,7 @@ fn a_rejected_async_export_fails_the_call_with_its_reason() {
     let result = engine.call::<()>("script", "run", ());
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details })
+        matches!(result, Err(EngineError::Execution { ref details })
             if details.contains("async bad input") && !details.contains("unhandled")),
         "{result:?}"
     );
@@ -689,7 +689,7 @@ fn an_async_export_that_can_never_settle_fails_the_call() {
     let result = engine.call::<()>("script", "wait", ());
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details }) if details.contains("never settles")),
+        matches!(result, Err(EngineError::Execution { ref details }) if details.contains("never settles")),
         "{result:?}"
     );
 }
@@ -703,7 +703,7 @@ fn an_unhandled_rejection_fails_the_call() {
     let result = engine.call::<f64>("script", "run", ());
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details })
+        matches!(result, Err(EngineError::Execution { ref details })
             if details.contains("unhandled promise rejection") && details.contains("lost")),
         "{result:?}"
     );
@@ -776,7 +776,7 @@ fn a_throwing_handler_does_not_stop_delivery_to_other_handlers() {
     let recorder_received: f64 = engine.call("recorder", "read", ()).expect("read recorder");
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details }) if details.contains("handler failed")),
+        matches!(result, Err(EngineError::Execution { ref details }) if details.contains("handler failed")),
         "{result:?}"
     );
     assert_eq!(thrower_received, 1.0);
@@ -806,7 +806,7 @@ fn emit_reports_the_first_failure_in_load_order() {
     let result = engine.emit("tick", &json!(null));
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details }) if details.contains("from zeta v2")),
+        matches!(result, Err(EngineError::Execution { ref details }) if details.contains("from zeta v2")),
         "{result:?}"
     );
 }

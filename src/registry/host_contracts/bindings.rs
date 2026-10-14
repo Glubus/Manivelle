@@ -10,7 +10,7 @@ use crate::contract::{
     Caller, EncodeReply, HostFunctionSignature, HostResolver, JsDecode, JsEncode, ReplyValue,
     js_value_to_validation_snapshot,
 };
-use crate::error::VmError;
+use crate::error::EngineError;
 use crate::runner::execution::ExecutionControl;
 use crate::runner::host_fn::{HostCall, HostFnClass};
 use crate::runner::host_promises::WeakHostPromises;
@@ -80,10 +80,10 @@ pub(super) trait ContractValidator: Send + Sync {
     fn checks_output(&self) -> bool;
 
     /// Checks a call's input before the handler runs.
-    fn validate_input(&self, input: &Value) -> Result<(), VmError>;
+    fn validate_input(&self, input: &Value) -> Result<(), EngineError>;
 
     /// Checks a handler's output before the script receives it.
-    fn validate_output(&self, output: &Value) -> Result<(), VmError>;
+    fn validate_output(&self, output: &Value) -> Result<(), EngineError>;
 }
 
 /// Checks the JavaScript `input` of a call against `validator`, if it checks inputs.
@@ -119,7 +119,7 @@ fn check_output<'js>(
 fn call_native<'js, C>(
     ctx: &Ctx<'js>,
     input: JsValue<'js>,
-    handler: impl FnOnce(C::Input) -> Result<C::Output, VmError>,
+    handler: impl FnOnce(C::Input) -> Result<C::Output, EngineError>,
 ) -> JsResult<JsValue<'js>>
 where
     C: HostFunctionSignature,
@@ -135,7 +135,7 @@ fn call_validated<'js, C>(
     ctx: &Ctx<'js>,
     input: JsValue<'js>,
     validator: &dyn ContractValidator,
-    handler: impl FnOnce(C::Input) -> Result<C::Output, VmError>,
+    handler: impl FnOnce(C::Input) -> Result<C::Output, EngineError>,
 ) -> JsResult<JsValue<'js>>
 where
     C: HostFunctionSignature,
@@ -186,7 +186,7 @@ where
     C: HostFunctionSignature + 'static,
     C::Input: JsDecode,
     C::Output: JsEncode,
-    F: Fn(C::Input) -> Result<C::Output, VmError> + Send + Sync + 'static,
+    F: Fn(C::Input) -> Result<C::Output, EngineError> + Send + Sync + 'static,
 {
     fn install<'js>(
         self: Arc<Self>,
@@ -223,7 +223,7 @@ where
     C: HostFunctionSignature + 'static,
     C::Input: JsDecode,
     C::Output: JsEncode,
-    F: Fn(&Caller<'_>, C::Input) -> Result<C::Output, VmError> + Send + Sync + 'static,
+    F: Fn(&Caller<'_>, C::Input) -> Result<C::Output, EngineError> + Send + Sync + 'static,
 {
     /// The script id is copied once here, so a call only borrows it.
     fn install<'js>(
@@ -268,7 +268,7 @@ where
     C: HostFunctionSignature + 'static,
     C::Input: JsDecode,
     C::Output: JsEncode + Send,
-    F: Fn(&Caller<'_>, C::Input, Resolver<C>) -> Result<(), VmError> + Send + Sync + 'static,
+    F: Fn(&Caller<'_>, C::Input, Resolver<C>) -> Result<(), EngineError> + Send + Sync + 'static,
 {
     /// The function holds the scope weakly, so it neither keeps the scope's Promises
     /// alive nor starts calls once the scope is cancelled.
@@ -328,8 +328,8 @@ impl FunctionBindingStore {
     /// Stores `handler` as the implementation of contract `C`.
     pub(super) fn insert_plain<C>(
         &self,
-        handler: impl Fn(C::Input) -> Result<C::Output, VmError> + Send + Sync + 'static,
-    ) -> Result<(), VmError>
+        handler: impl Fn(C::Input) -> Result<C::Output, EngineError> + Send + Sync + 'static,
+    ) -> Result<(), EngineError>
     where
         C: HostFunctionSignature + 'static,
         C::Input: JsDecode,
@@ -348,8 +348,11 @@ impl FunctionBindingStore {
     /// contract `C`.
     pub(super) fn insert_with_caller<C>(
         &self,
-        handler: impl Fn(&Caller<'_>, C::Input) -> Result<C::Output, VmError> + Send + Sync + 'static,
-    ) -> Result<(), VmError>
+        handler: impl Fn(&Caller<'_>, C::Input) -> Result<C::Output, EngineError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Result<(), EngineError>
     where
         C: HostFunctionSignature + 'static,
         C::Input: JsDecode,
@@ -366,12 +369,15 @@ impl FunctionBindingStore {
 
     /// Stores async `handler`, which receives the calling script, as the implementation
     /// of contract `C`.
-    pub(super) fn insert_async<C, F>(&self, handler: F) -> Result<(), VmError>
+    pub(super) fn insert_async<C, F>(&self, handler: F) -> Result<(), EngineError>
     where
         C: HostFunctionSignature + 'static,
         C::Input: JsDecode,
         C::Output: JsEncode + Send,
-        F: Fn(&Caller<'_>, C::Input, Resolver<C>) -> Result<(), VmError> + Send + Sync + 'static,
+        F: Fn(&Caller<'_>, C::Input, Resolver<C>) -> Result<(), EngineError>
+            + Send
+            + Sync
+            + 'static,
     {
         self.insert(
             C::NAME,
@@ -384,8 +390,8 @@ impl FunctionBindingStore {
         )
     }
 
-    fn insert(&self, name: &str, binding: Binding) -> Result<(), VmError> {
-        let mut guard = self.by_name.lock().map_err(|_| VmError::LockPoisoned)?;
+    fn insert(&self, name: &str, binding: Binding) -> Result<(), EngineError> {
+        let mut guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
         guard.insert(name.to_owned(), binding);
         Ok(())
     }
@@ -419,8 +425,8 @@ impl FunctionBindingStore {
         Ok(())
     }
 
-    fn snapshot(&self) -> Result<Vec<NamedBinding>, VmError> {
-        let guard = self.by_name.lock().map_err(|_| VmError::LockPoisoned)?;
+    fn snapshot(&self) -> Result<Vec<NamedBinding>, EngineError> {
+        let guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
         Ok(guard
             .iter()
             .map(|(name, binding)| (name.clone(), binding.clone()))

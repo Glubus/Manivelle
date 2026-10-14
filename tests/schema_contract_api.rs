@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use manivelle::{
-    HostContract, HostContractKind, HostFunction, HostFunctionSignature,
-    InMemoryHostContractRegistry, TsSchema, VmError,
+    EngineError, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
+    InMemoryHostContractRegistry, TsSchema,
 };
 
 struct FindUsers;
@@ -35,7 +35,7 @@ impl HostFunctionSignature for FindUsers {
 }
 
 impl HostFunction for FindUsers {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         let users = input
             .ids
             .into_iter()

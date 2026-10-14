@@ -4,7 +4,7 @@ use rquickjs::{CatchResultExt, Ctx, Function, Value as JsValue, qjs};
 
 use super::super::errors::{caught_js_error, js_error, pending_exception};
 use crate::contract::JsArgs;
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// The most scalar arguments passed without building a wrapper per argument.
 const SCALAR_ARGUMENTS: usize = 8;
@@ -19,7 +19,7 @@ pub(super) fn invoke<'js>(
     ctx: &Ctx<'js>,
     function: &Function<'js>,
     args: &impl JsArgs,
-) -> Result<qjs::JSValue, VmError> {
+) -> Result<qjs::JSValue, EngineError> {
     let raw_ctx = ctx.as_raw().as_ptr();
     let mut scalars = [qjs::JS_UNDEFINED; SCALAR_ARGUMENTS];
     if let Some(count) = args.encode_scalars(&mut scalars) {

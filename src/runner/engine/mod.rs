@@ -13,8 +13,8 @@ use rquickjs::{Context, Ctx, Function, Persistent, Runtime, Value, Value as JsVa
 use rustc_hash::FxBuildHasher;
 
 use crate::compiler::WatchedFiles;
-use crate::config::{ScriptBuiltins, VmOptions};
-use crate::error::VmError;
+use crate::config::{EngineOptions, ScriptBuiltins};
+use crate::error::EngineError;
 use crate::registry::InMemoryHostContractRegistry;
 use crate::types::{MemoryStats, ScriptId};
 
@@ -26,14 +26,13 @@ use super::host_fn::HostFnClass;
 use super::host_promises::HostPromises;
 use super::interrupt::InterruptHandle;
 use super::memory::memory_stats;
-use super::module_loader::{
-    MemoryModuleLoader, MemoryModuleResolver, ScriptEnvs, WorkerModuleStore,
-};
+use super::module_loader::{MemoryModuleLoader, MemoryModuleResolver, ModuleStore, ScriptEnvs};
 use super::promise_rejections::UnhandledRejections;
 use super::retained::{KeptAtoms, Retained};
 use super::tasks::{RequestGuard, ScriptTask};
 use super::timers::{EarliestDue, NextTimer, TimerClock};
 use super::transpile::Transpiler;
+use super::web::WebBytecode;
 
 mod dispatch;
 mod host_driven;
@@ -47,8 +46,8 @@ mod lifecycle;
 /// and values convert without JSON text.
 ///
 /// Every load, call, emit, request and timer advance runs under
-/// `VmOptions::execution_timeout`: JavaScript still running when it expires is
-/// interrupted and the operation fails with `VmError::Execution`.
+/// `EngineOptions::execution_timeout`: JavaScript still running when it expires is
+/// interrupted and the operation fails with `EngineError::Execution`.
 /// [`Engine::interrupt_handle`] stops it earlier from another thread. Both are
 /// cooperative and cannot preempt a Rust host function.
 ///
@@ -78,7 +77,7 @@ pub struct Engine {
     active_tasks: Cell<usize>,
     registry: Arc<InMemoryHostContractRegistry>,
     transpiler: Transpiler,
-    module_store: WorkerModuleStore,
+    module_store: ModuleStore,
     next_graph_id: u64,
     execution: Arc<ExecutionControl>,
     execution_timeout: Duration,
@@ -97,6 +96,8 @@ pub struct Engine {
     host_class: OnceCell<HostFnClass>,
     /// The atoms of the export names the host calls.
     export_atoms: KeptAtoms,
+    /// Bytecode of the web APIs module, compiled by the first context that uses them.
+    web_bytecode: WebBytecode,
     /// Contexts shared by scripts, by group name.
     groups: HashMap<Box<str>, ScriptGroup, FxBuildHasher>,
     /// The environment of every script loaded into a group, for its `manivelle:env` module.
@@ -177,7 +178,7 @@ impl ScriptSignals {
 type HotData = Persistent<JsValue<'static>>;
 
 /// Outcome of retiring a replaced or unloaded version: its `ctx.hot.dispose` error.
-type Disposed = Result<(), VmError>;
+type Disposed = Result<(), EngineError>;
 
 /// Where a script's code came from, kept for hot reload and the transpile memo.
 struct ScriptOrigin {
@@ -195,8 +196,8 @@ struct ProjectFiles {
 impl Engine {
     /// Creates an engine on the current thread using the memory, stack, cache and
     /// validation settings from `options`.
-    pub fn new(options: &VmOptions) -> Result<Self, VmError> {
-        let module_store = WorkerModuleStore::default();
+    pub fn new(options: &EngineOptions) -> Result<Self, EngineError> {
+        let module_store = ModuleStore::default();
         let execution = Arc::new(ExecutionControl::default());
         let envs = ScriptEnvs::default();
         let runtime = new_runtime(options, &module_store, &execution, &envs)?;
@@ -221,6 +222,7 @@ impl Engine {
             prelude: OnceCell::new(),
             host_class: OnceCell::new(),
             export_atoms: KeptAtoms::default(),
+            web_bytecode: WebBytecode::default(),
             groups: HashMap::default(),
             envs,
             rejections: UnhandledRejections::install(&runtime),
@@ -265,7 +267,7 @@ impl Engine {
     /// the number of live objects in the whole engine. To keep it out of time-critical
     /// stretches, such as a song, turn it off for their duration and call
     /// [`Engine::run_gc`] afterwards. Cyclic garbage then accumulates meanwhile: watch
-    /// [`Engine::memory_stats`], since reaching `VmOptions::memory_limit_bytes` fails
+    /// [`Engine::memory_stats`], since reaching `EngineOptions::memory_limit_bytes` fails
     /// the operation that allocates.
     pub fn set_gc_threshold(&self, threshold: Option<usize>) {
         self.runtime
@@ -277,7 +279,7 @@ impl Engine {
         InterruptHandle::new(Arc::clone(&self.execution))
     }
 
-    fn script(&self, id: &str) -> Result<&EngineScript, VmError> {
+    fn script(&self, id: &str) -> Result<&EngineScript, EngineError> {
         self.scripts.get(id).ok_or_else(|| script_not_found(id))
     }
 
@@ -298,7 +300,7 @@ impl EngineScript {
         ctx: &Ctx<'js>,
         script_id: &str,
         name: &str,
-    ) -> Result<Function<'js>, VmError> {
+    ) -> Result<Function<'js>, EngineError> {
         let raw = ctx.as_raw().as_ptr();
         // SAFETY: `raw` is the live context of `ctx` and the namespace a value of it; the
         // atom is valid for the call, and the value `JS_GetProperty` returns is owned.
@@ -317,7 +319,7 @@ impl EngineScript {
         };
         value
             .into_function()
-            .ok_or_else(|| VmError::FunctionNotFound {
+            .ok_or_else(|| EngineError::FunctionNotFound {
                 script_id: script_id.to_owned(),
                 function_name: name.to_owned(),
             })
@@ -325,11 +327,11 @@ impl EngineScript {
 }
 
 fn new_runtime(
-    options: &VmOptions,
-    module_store: &WorkerModuleStore,
+    options: &EngineOptions,
+    module_store: &ModuleStore,
     execution: &Arc<ExecutionControl>,
     envs: &ScriptEnvs,
-) -> Result<Runtime, VmError> {
+) -> Result<Runtime, EngineError> {
     let runtime = Runtime::new().map_err(js_error)?;
     runtime.set_memory_limit(options.memory_limit_bytes);
     runtime.set_max_stack_size(options.max_stack_size_bytes);
@@ -342,8 +344,8 @@ fn new_runtime(
     Ok(runtime)
 }
 
-fn script_not_found(id: &str) -> VmError {
-    VmError::ScriptNotFound {
+fn script_not_found(id: &str) -> EngineError {
+    EngineError::ScriptNotFound {
         script_id: id.to_owned(),
     }
 }

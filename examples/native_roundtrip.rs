@@ -12,8 +12,8 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use manivelle::{
-    Engine, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,
-    VmError, VmOptions,
+    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostFunction,
+    HostFunctionSignature,
 };
 use mlua::{Lua, LuaSerdeExt};
 use rquickjs::{Context, Ctx, Function, Object, Runtime, Value as JsValue, prelude::Func};
@@ -84,7 +84,7 @@ impl HostFunctionSignature for Inc {
 }
 
 impl HostFunction for Inc {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(input + 1.0)
     }
 }
@@ -251,7 +251,7 @@ struct EngineBackend {
 
 impl EngineBackend {
     fn new() -> Self {
-        let mut engine = Engine::new(&VmOptions::default()).expect("create engine");
+        let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
         engine
             .registry()
             .function::<Inc>()

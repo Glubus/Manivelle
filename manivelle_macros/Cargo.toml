@@ -6,6 +6,8 @@ rust-version = "1.96"
 description = "Derive macros for Manivelle TypeScript schemas"
 repository = "https://github.com/Glubus/Manivelle"
 license = "MIT"
+keywords = ["typescript", "derive", "scripting"]
+categories = ["development-tools::procedural-macro-helpers"]
 
 [lib]
 proc-macro = true

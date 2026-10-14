@@ -31,7 +31,7 @@ fn app_modules() -> Vec<CompiledModule> {
 
 #[test]
 fn project_graph_uses_runtime_scoped_module_ids() {
-    let store = WorkerModuleStore::default();
+    let store = ModuleStore::default();
     let graph = store
         .insert_project("/app/main.ts", app_modules(), 7)
         .expect("insert project graph");
@@ -46,7 +46,7 @@ fn project_graph_uses_runtime_scoped_module_ids() {
 
 #[test]
 fn removing_graph_clears_sources_and_resolutions() {
-    let store = WorkerModuleStore::default();
+    let store = ModuleStore::default();
     let graph = store
         .insert_project("/app/main.ts", app_modules(), 7)
         .expect("insert project graph");
@@ -63,7 +63,7 @@ fn removing_graph_clears_sources_and_resolutions() {
 
 #[test]
 fn removing_a_script_keeps_the_host_module_that_shares_its_name() {
-    let store = WorkerModuleStore::default();
+    let store = ModuleStore::default();
     store
         .insert_host_modules(BTreeMap::from([(
             String::from("bench"),

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::VmError;
+use crate::error::EngineError;
 
 /// Stable identifier for a loaded script.
 pub type ScriptId = String;
@@ -37,8 +37,8 @@ pub struct ReloadReport {
     pub reloaded: Vec<ScriptId>,
     /// Scripts whose files changed but whose reload failed; each keeps running its
     /// previous version.
-    pub failed: Vec<(ScriptId, VmError)>,
+    pub failed: Vec<(ScriptId, EngineError)>,
     /// Scripts reloaded, and so also listed in `reloaded`, whose previous version's
     /// `ctx.hot.dispose` callback threw after the new version was loaded.
-    pub dispose_failed: Vec<(ScriptId, VmError)>,
+    pub dispose_failed: Vec<(ScriptId, EngineError)>,
 }

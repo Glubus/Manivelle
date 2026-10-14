@@ -4,7 +4,7 @@
 use rquickjs::{CatchResultExt, CaughtError, Ctx, Value as JsValue};
 
 use crate::contract::{JsArgs, JsDecode, JsEncode};
-use crate::error::VmError;
+use crate::error::EngineError;
 
 use super::super::errors::{OUT_OF_MEMORY, caught_js_error, in_typescript, js_error};
 use super::super::events::deliver;
@@ -27,7 +27,7 @@ impl Engine {
         script_id: &str,
         function: &str,
         args: impl JsArgs,
-    ) -> Result<R, VmError> {
+    ) -> Result<R, EngineError> {
         let script = self.script(script_id)?;
         let _budget = self.budget();
         let result = script.context.with(|ctx| {
@@ -56,7 +56,11 @@ impl Engine {
     /// handler is entered after it. The payload is encoded once per script with
     /// handlers and shared by all of that script's handlers. Scripts that never
     /// registered a handler for `event` cost a set lookup.
-    pub fn emit<P: JsEncode + ?Sized>(&self, event: &str, payload: &P) -> Result<usize, VmError> {
+    pub fn emit<P: JsEncode + ?Sized>(
+        &self,
+        event: &str,
+        payload: &P,
+    ) -> Result<usize, EngineError> {
         self.dispatch(event, payload, false, |_, _, _| Ok(()))
     }
 
@@ -73,7 +77,7 @@ impl Engine {
         &self,
         event: &str,
         payload: &P,
-    ) -> Result<Vec<(&str, R)>, VmError> {
+    ) -> Result<Vec<(&str, R)>, EngineError> {
         let mut replies = Vec::new();
         self.dispatch(event, payload, true, |script_id, ctx, returned| {
             let value = self.await_returned(ctx, returned, || {
@@ -95,8 +99,8 @@ impl Engine {
         event: &str,
         payload: &P,
         keep_results: bool,
-        mut on_return: impl for<'js> FnMut(&'a str, &Ctx<'js>, JsValue<'js>) -> Result<(), VmError>,
-    ) -> Result<usize, VmError> {
+        mut on_return: impl for<'js> FnMut(&'a str, &Ctx<'js>, JsValue<'js>) -> Result<(), EngineError>,
+    ) -> Result<usize, EngineError> {
         // Only the scripts listening to `event` are visited, in load order.
         let Some(listeners) = self.event_index.listeners(
             event,
@@ -207,14 +211,14 @@ impl Engine {
         ctx: &Ctx<'js>,
         returned: JsValue<'js>,
         what: impl FnOnce() -> String,
-    ) -> Result<JsValue<'js>, VmError> {
+    ) -> Result<JsValue<'js>, EngineError> {
         let Some(promise) = returned.as_promise() else {
             return Ok(returned);
         };
         let settled = promise.finish::<JsValue<'_>>().catch(ctx);
         self.rejections.forget(ctx, &returned);
         settled.map_err(|error| match error {
-            CaughtError::Error(rquickjs::Error::WouldBlock) => VmError::Execution {
+            CaughtError::Error(rquickjs::Error::WouldBlock) => EngineError::Execution {
                 details: format!(
                     "{} returned a Promise that never settles: only script Promise jobs run on an Engine",
                     what()
@@ -228,7 +232,7 @@ impl Engine {
     /// operation's own error, a job that threw, a Promise rejection nobody handled,
     /// with its locations pointing at the TypeScript source. Runs even when the
     /// operation failed, so nothing leaks into the next one.
-    pub(super) fn settle<T>(&self, result: Result<T, VmError>) -> Result<T, VmError> {
+    pub(super) fn settle<T>(&self, result: Result<T, EngineError>) -> Result<T, EngineError> {
         let mut job_error = None;
         // Asking is cheaper than running a job that is not there, and most operations
         // queue none.
@@ -247,7 +251,7 @@ impl Engine {
         self.harvest_tasks();
         let unhandled = self.rejections.take();
         if self.execution.budget_expired() {
-            job_error.get_or_insert_with(|| VmError::Execution {
+            job_error.get_or_insert_with(|| EngineError::Execution {
                 details: "execution budget exceeded".to_owned(),
             });
         }
@@ -263,9 +267,9 @@ impl Engine {
 
     /// An error as the host sees it: TypeScript locations, and an out of memory, however
     /// QuickJS or rquickjs described it, said as such with the limit to raise.
-    fn reported(&self, error: VmError) -> VmError {
+    fn reported(&self, error: EngineError) -> EngineError {
         match in_typescript(error, &self.module_store) {
-            VmError::Execution { details }
+            EngineError::Execution { details }
                 if details.is_empty()
                     || details.starts_with(NULL_EXCEPTION)
                     || details.starts_with(OUT_OF_MEMORY) =>
@@ -274,25 +278,28 @@ impl Engine {
                 if stats.malloc_limit_bytes != 0
                     && stats.malloc_size_bytes * 10 >= stats.malloc_limit_bytes * 9
                 {
-                    return VmError::Execution {
+                    return EngineError::Execution {
                         details: format!(
                             "out of memory: {} of {} bytes allocated, the limit \
-                             `VmOptions::memory_limit_bytes`; raise it or load fewer scripts",
+                             `EngineOptions::memory_limit_bytes`; raise it or load fewer scripts",
                             stats.malloc_size_bytes, stats.malloc_limit_bytes
                         ),
                     };
                 }
-                VmError::Execution { details }
+                EngineError::Execution { details }
             }
             error => error,
         }
     }
 
     /// Reports an operation that failed after an [`InterruptHandle`] request as
-    /// [`VmError::Interrupted`] rather than as the QuickJS interrupt exception.
-    pub(super) fn attribute_interrupt<T>(&self, result: Result<T, VmError>) -> Result<T, VmError> {
+    /// [`EngineError::Interrupted`] rather than as the QuickJS interrupt exception.
+    pub(super) fn attribute_interrupt<T>(
+        &self,
+        result: Result<T, EngineError>,
+    ) -> Result<T, EngineError> {
         match result {
-            Err(_) if self.execution.interrupt_requested() => Err(VmError::Interrupted),
+            Err(_) if self.execution.interrupt_requested() => Err(EngineError::Interrupted),
             result => result,
         }
     }

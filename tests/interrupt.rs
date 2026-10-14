@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use manivelle::{Engine, InterruptHandle, VmError, VmOptions};
+use manivelle::{Engine, EngineError, EngineOptions, InterruptHandle};
 
 const SCRIPT: &str = r#"
 export function spin(): void { while (true) {} }
@@ -12,9 +12,9 @@ export function add(a: number, b: number): number { return a + b; }
 
 /// An engine whose timeout is far longer than the tests, so only the handle can stop it.
 fn engine() -> Engine {
-    let mut engine = Engine::new(&VmOptions {
+    let mut engine = Engine::new(&EngineOptions {
         execution_timeout: Duration::from_secs(60),
-        ..VmOptions::default()
+        ..EngineOptions::default()
     })
     .expect("create engine");
     engine.load_script("loops", SCRIPT).expect("load script");
@@ -43,7 +43,10 @@ fn another_thread_interrupts_a_runaway_call() {
     finished.store(true, Ordering::Release);
     interrupter.join().expect("interrupter thread");
 
-    assert!(matches!(result, Err(VmError::Interrupted)), "{result:?}");
+    assert!(
+        matches!(result, Err(EngineError::Interrupted)),
+        "{result:?}"
+    );
     assert!(begin.elapsed() < Duration::from_secs(10));
     let sum: f64 = engine
         .call("loops", "add", (2, 3))
@@ -65,9 +68,9 @@ fn an_interrupt_requested_while_idle_does_not_stop_the_next_call() {
 
 #[test]
 fn a_timeout_is_not_reported_as_an_interrupt() {
-    let mut engine = Engine::new(&VmOptions {
+    let mut engine = Engine::new(&EngineOptions {
         execution_timeout: Duration::from_millis(50),
-        ..VmOptions::default()
+        ..EngineOptions::default()
     })
     .expect("create engine");
     engine.load_script("loops", SCRIPT).expect("load script");
@@ -75,7 +78,7 @@ fn a_timeout_is_not_reported_as_an_interrupt() {
     let result = engine.call::<()>("loops", "spin", ());
 
     assert!(
-        matches!(result, Err(VmError::Execution { .. })),
+        matches!(result, Err(EngineError::Execution { .. })),
         "{result:?}"
     );
 }
@@ -92,9 +95,9 @@ setTimeout(() => { ran += 1; while (true) {} }, 0);
 const LISTENERS: usize = 20;
 
 fn engine_with_listeners(execution_timeout: Duration) -> Engine {
-    let mut engine = Engine::new(&VmOptions {
+    let mut engine = Engine::new(&EngineOptions {
         execution_timeout,
-        ..VmOptions::default()
+        ..EngineOptions::default()
     })
     .expect("create engine");
     for i in 0..LISTENERS {
@@ -141,7 +144,7 @@ fn an_exhausted_budget_stops_an_emit_at_the_handler_that_used_it_up() {
     let result = engine.emit("tick", &1u32);
 
     assert!(
-        matches!(result, Err(VmError::Execution { .. })),
+        matches!(result, Err(EngineError::Execution { .. })),
         "{result:?}"
     );
     assert_eq!(
@@ -171,7 +174,10 @@ fn an_interrupt_stops_an_emit_at_the_handler_it_reached() {
 
     let result = interrupted(engine.interrupt_handle(), || engine.emit("tick", &1u32));
 
-    assert!(matches!(result, Err(VmError::Interrupted)), "{result:?}");
+    assert!(
+        matches!(result, Err(EngineError::Interrupted)),
+        "{result:?}"
+    );
     assert_eq!(entered(&engine), 1.0, "no handler runs after the interrupt");
 }
 
@@ -182,7 +188,7 @@ fn an_exhausted_budget_stops_advance_timers_at_the_timer_that_used_it_up() {
     let result = engine.advance_timers(Duration::from_millis(1));
 
     assert!(
-        matches!(result, Err(VmError::Execution { .. })),
+        matches!(result, Err(EngineError::Execution { .. })),
         "{result:?}"
     );
     assert_eq!(
@@ -207,7 +213,10 @@ fn an_interrupted_hot_save_is_reported_as_an_interrupt() {
         engine.load_script("hot", "export function version(): number { return 2; }")
     });
 
-    assert!(matches!(result, Err(VmError::Interrupted)), "{result:?}");
+    assert!(
+        matches!(result, Err(EngineError::Interrupted)),
+        "{result:?}"
+    );
     let version: f64 = engine.call("hot", "version", ()).expect("call");
     assert_eq!(version, 1.0, "the previous version keeps running");
 }
@@ -225,5 +234,8 @@ fn an_interrupted_hot_dispose_is_reported_as_an_interrupt() {
     let handle = engine.interrupt_handle();
     let result = interrupted(handle, || engine.unload_script("hot"));
 
-    assert!(matches!(result, Err(VmError::Interrupted)), "{result:?}");
+    assert!(
+        matches!(result, Err(EngineError::Interrupted)),
+        "{result:?}"
+    );
 }

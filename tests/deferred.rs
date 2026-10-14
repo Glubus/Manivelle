@@ -1,10 +1,10 @@
 use std::time::Duration;
 
-use manivelle::{Engine, VmError, VmOptions};
+use manivelle::{Engine, EngineError, EngineOptions};
 
 #[test]
 fn deferred_call_waits_for_a_host_clock_then_returns_its_value() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("engine");
     engine
         .load_script(
             "song",
@@ -28,7 +28,7 @@ fn deferred_call_waits_for_a_host_clock_then_returns_its_value() {
 
 #[test]
 fn deferred_rejection_is_delivered_only_to_its_handle() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("engine");
     engine
         .load_script("song", "export async function beat() { await new Promise(resolve => setTimeout(resolve, 10)); throw new Error('late failure'); }")
         .expect("load");
@@ -39,14 +39,16 @@ fn deferred_rejection_is_delivered_only_to_its_handle() {
         .advance_timers(Duration::from_millis(10))
         .expect("timer fires");
     let error = result.take().expect("completed").expect_err("rejected");
-    assert!(matches!(error, VmError::Execution { details } if details.contains("late failure")));
+    assert!(
+        matches!(error, EngineError::Execution { details } if details.contains("late failure"))
+    );
     assert!(result.take().is_none());
     engine.pump().expect("rejection not reported twice");
 }
 
 #[test]
 fn deferred_error_stacks_point_to_the_typescript_source() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("engine");
     engine
         .load_script(
             "song",
@@ -58,14 +60,14 @@ fn deferred_error_stacks_point_to_the_typescript_source() {
         .expect("call");
     let error = pending.take().expect("finished").expect_err("rejection");
     assert!(
-        matches!(&error, VmError::Execution { details } if details.contains("song.ts:") && details.contains("boom")),
+        matches!(&error, EngineError::Execution { details } if details.contains("song.ts:") && details.contains("boom")),
         "{error:?}"
     );
 }
 
 #[test]
 fn reload_cancels_pending_generation_but_failed_reload_keeps_it() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("engine");
     engine.load_script("song", "export async function beat() { await new Promise(resolve => setTimeout(resolve, 10)); return 7; }").expect("load");
     let result = engine
         .call_deferred::<f64>("song", "beat", ())
@@ -75,7 +77,7 @@ fn reload_cancels_pending_generation_but_failed_reload_keeps_it() {
     engine
         .load_script("song", "export const next = 1;")
         .expect("reload");
-    assert!(matches!(result.take(), Some(Err(VmError::Cancelled))));
+    assert!(matches!(result.take(), Some(Err(EngineError::Cancelled))));
     engine
         .advance_timers(Duration::from_millis(10))
         .expect("no stale task");
@@ -83,7 +85,7 @@ fn reload_cancels_pending_generation_but_failed_reload_keeps_it() {
 
 #[test]
 fn deferred_request_keeps_delivery_order_when_handlers_resolve_later() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("engine");
     engine.load_script("first", "ctx.on('score', async () => { await new Promise(resolve => setTimeout(resolve, 20)); return 'slow'; }); export {};").expect("first");
     engine.load_script("second", "ctx.on('score', async () => { await new Promise(resolve => setTimeout(resolve, 10)); return 'fast'; }); export {};").expect("second");
     let result = engine
@@ -108,7 +110,7 @@ fn deferred_request_keeps_delivery_order_when_handlers_resolve_later() {
 
 #[test]
 fn unloading_one_request_participant_cancels_the_whole_request() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("engine");
     engine.load_script("one", "ctx.on('score', async () => { await new Promise(resolve => setTimeout(resolve, 10)); return 1; }); export {};").expect("load");
     engine
         .load_script("two", "ctx.on('score', () => 2); export {};")
@@ -117,7 +119,7 @@ fn unloading_one_request_participant_cancels_the_whole_request() {
         .request_deferred::<(), f64>("score", &())
         .expect("request");
     engine.unload_script("one").expect("unload");
-    assert!(matches!(request.take(), Some(Err(VmError::Cancelled))));
+    assert!(matches!(request.take(), Some(Err(EngineError::Cancelled))));
     engine
         .advance_timers(Duration::from_millis(10))
         .expect("stale timer gone");
@@ -125,7 +127,7 @@ fn unloading_one_request_participant_cancels_the_whole_request() {
 
 #[test]
 fn retiring_a_completed_participant_cancels_an_incomplete_request() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("engine");
     engine
         .load_script("first", "ctx.on('score', () => 1); export {};")
         .expect("load first");
@@ -137,12 +139,12 @@ fn retiring_a_completed_participant_cancels_an_incomplete_request() {
     engine
         .unload_script("first")
         .expect("unload replied script");
-    assert!(matches!(request.take(), Some(Err(VmError::Cancelled))));
+    assert!(matches!(request.take(), Some(Err(EngineError::Cancelled))));
 }
 
 #[test]
 fn deferred_results_do_not_accumulate_objects_between_collections() {
-    let mut engine = Engine::new(&VmOptions::default()).expect("engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("engine");
     engine.load_script("song", "export async function beat() { await new Promise(resolve => setTimeout(resolve, 10)); return { hit: 1 }; }").expect("load");
     let mut baseline = None;
     for count in [10, 100] {

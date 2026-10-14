@@ -5,7 +5,7 @@ mod support;
 use std::fs;
 
 use manivelle::{
-    Engine, HostCallback, HostContract, HostContractKind, HostRequest, VmError, VmOptions,
+    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostRequest,
 };
 use serde_json::json;
 use support::TestCacheDir;
@@ -30,7 +30,7 @@ impl HostRequest for Label {
 }
 
 fn engine() -> Engine {
-    Engine::new(&VmOptions::default()).expect("create engine")
+    Engine::new(&EngineOptions::default()).expect("create engine")
 }
 
 fn engine_with(scripts: &[(&str, &str)]) -> Engine {
@@ -152,7 +152,7 @@ fn a_failing_handler_fails_the_request_after_every_handler_ran() {
     let asked: f64 = engine.call("recorder", "read", ()).expect("read");
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details }) if details.contains("no label")),
+        matches!(result, Err(EngineError::Execution { ref details }) if details.contains("no label")),
         "{result:?}"
     );
     assert_eq!(asked, 1.0);
@@ -169,7 +169,7 @@ fn a_rejected_async_handler_fails_the_request_once() {
     let next = engine.emit("unrelated", &json!(null));
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details }) if details.contains("async no label")),
+        matches!(result, Err(EngineError::Execution { ref details }) if details.contains("async no label")),
         "{result:?}"
     );
     assert!(
@@ -185,7 +185,7 @@ fn a_reply_of_the_wrong_type_fails_the_request() {
     let result = engine.request::<_, String>("menu.label", "x");
 
     assert!(
-        matches!(result, Err(VmError::Execution { .. })),
+        matches!(result, Err(EngineError::Execution { .. })),
         "{result:?}"
     );
 }
@@ -200,7 +200,7 @@ fn a_handler_waiting_on_the_host_fails_the_request() {
     let result = engine.request::<_, String>("menu.label", "x");
 
     assert!(
-        matches!(result, Err(VmError::Execution { ref details })
+        matches!(result, Err(EngineError::Execution { ref details })
             if details.contains("a `menu.label` handler of script `script`") && details.contains("never settles")),
         "{result:?}"
     );

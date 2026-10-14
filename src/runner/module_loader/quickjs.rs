@@ -1,11 +1,11 @@
-//! QuickJS loader and resolver adapters backed by the worker module store.
+//! QuickJS loader and resolver adapters backed by the module store.
 
 use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::{Ctx, Error, Module, Result as JsResult};
 
 use super::envs::EnvHandle;
 use super::graph::ENV_MODULE_PREFIX;
-use super::store::WorkerModuleStore;
+use super::store::ModuleStore;
 
 /// The module a context-group script imports as `manivelle:env`: the script's environment
 /// object, which the loader sets as `import.meta.env`. Only this module sees it, so one
@@ -24,11 +24,11 @@ export const __on = env.on;
 
 #[derive(Debug, Clone)]
 pub(crate) struct MemoryModuleResolver {
-    store: WorkerModuleStore,
+    store: ModuleStore,
 }
 
 impl MemoryModuleResolver {
-    pub(crate) fn new(store: WorkerModuleStore) -> Self {
+    pub(crate) fn new(store: ModuleStore) -> Self {
         Self { store }
     }
 }
@@ -46,12 +46,12 @@ impl Resolver for MemoryModuleResolver {
 }
 
 pub(crate) struct MemoryModuleLoader {
-    store: WorkerModuleStore,
+    store: ModuleStore,
     envs: EnvHandle,
 }
 
 impl MemoryModuleLoader {
-    pub(crate) fn new(store: WorkerModuleStore, envs: EnvHandle) -> Self {
+    pub(crate) fn new(store: ModuleStore, envs: EnvHandle) -> Self {
         Self { store, envs }
     }
 }

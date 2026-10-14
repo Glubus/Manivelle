@@ -1,10 +1,10 @@
 //! Calling exports with number and boolean arguments and results: what crosses, exactly,
 //! and what fails with which error.
 
-use manivelle::{Engine, VmError, VmOptions};
+use manivelle::{Engine, EngineError, EngineOptions};
 
 fn engine() -> Engine {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .load_script(
             "script",
@@ -188,7 +188,7 @@ fn a_throw_surfaces_with_its_message_and_leaves_the_engine_usable() {
         .expect_err("throws");
     let after: f64 = engine.call("script", "sum", (1.0, 2.0)).expect("usable");
 
-    assert!(matches!(error, VmError::Execution { .. }), "{error:?}");
+    assert!(matches!(error, EngineError::Execution { .. }), "{error:?}");
     assert!(error.to_string().contains("boom 3"), "{error}");
     assert_eq!(after, 3.0);
 }

@@ -4,9 +4,8 @@ use std::sync::{Arc, OnceLock};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use manivelle::{
-    Engine, HostContract, HostContractKind, HostContractRegistry, HostFunction,
-    HostFunctionSignature, JsEncode, NativeBytes, TsSchema, VmContractValidation, VmError,
-    VmOptions,
+    ContractValidation, Engine, EngineError, EngineOptions, HostContract, HostContractKind,
+    HostContractRegistry, HostFunction, HostFunctionSignature, JsEncode, NativeBytes, TsSchema,
 };
 use rquickjs::{
     ArrayBuffer, Context, Ctx, Function, Object, Result as JsResult, Runtime, TypedArray,
@@ -23,8 +22,8 @@ static FIXTURES: OnceLock<Arc<NativeFixtures>> = OnceLock::new();
 
 fn native_bridge_benchmarks(c: &mut Criterion) {
     let bench = NativeBridgeBench::new();
-    let integrated_disabled = IntegratedBridgeBench::new(VmContractValidation::Disabled);
-    let integrated_validated = IntegratedBridgeBench::new(VmContractValidation::InputsAndOutputs);
+    let integrated_disabled = IntegratedBridgeBench::new(ContractValidation::Disabled);
+    let integrated_validated = IntegratedBridgeBench::new(ContractValidation::InputsAndOutputs);
 
     bench_struct_bridge_shapes(c, &bench);
     bench_byte_bridge_shapes(c, &bench);
@@ -194,7 +193,7 @@ fn bench_integrated_bridge_shapes(c: &mut Criterion, bench: &IntegratedBridgeBen
 /// or a `serde_json::Value` object. The export only reads one property, so the time is
 /// the encoding of every entry as an own property of a fresh object.
 fn bench_object_encoding(c: &mut Criterion) {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create object engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create object engine");
     engine
         .load_script("objects", OBJECT_ENCODING_SCRIPT)
         .expect("load object encoding script");
@@ -335,11 +334,11 @@ struct IntegratedBridgeBench {
 }
 
 impl IntegratedBridgeBench {
-    fn new(validation: VmContractValidation) -> Self {
-        let mut engine = Engine::new(&VmOptions {
+    fn new(validation: ContractValidation) -> Self {
+        let mut engine = Engine::new(&EngineOptions {
             memory_limit_bytes: 512 * 1024 * 1024,
             contract_validation: validation,
-            ..VmOptions::default()
+            ..EngineOptions::default()
         })
         .expect("create integrated engine");
 
@@ -483,7 +482,7 @@ impl HostFunctionSignature for HostSmallCopyJson {
 }
 
 impl HostFunction for HostSmallCopyJson {
-    fn call(_input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
         let small = fixtures().small;
         Ok(json!({
             "id": small.id,
@@ -507,7 +506,7 @@ impl HostFunctionSignature for HostLargeCopyJson {
 }
 
 impl HostFunction for HostLargeCopyJson {
-    fn call(_input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(json!({ "fields": fixtures().large_fields.as_ref() }))
     }
 }
@@ -526,7 +525,7 @@ impl HostFunctionSignature for HostSmallCopyTyped {
 }
 
 impl HostFunction for HostSmallCopyTyped {
-    fn call(_input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
         let small = fixtures().small;
         Ok(SmallPayload {
             id: small.id,
@@ -550,7 +549,7 @@ impl HostFunctionSignature for HostLargeCopyTyped {
 }
 
 impl HostFunction for HostLargeCopyTyped {
-    fn call(_input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(LargePayload {
             fields: fixtures().large_fields.to_vec(),
         })
@@ -571,9 +570,9 @@ impl HostFunctionSignature for HostGetField {
 }
 
 impl HostFunction for HostGetField {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         let input: FieldReadInput =
-            serde_json::from_value(input).map_err(|error| VmError::Execution {
+            serde_json::from_value(input).map_err(|error| EngineError::Execution {
                 details: error.to_string(),
             })?;
         Ok(get_field(fixtures(), input.handle, input.index))
@@ -594,9 +593,9 @@ impl HostFunctionSignature for HostReadNativeU32 {
 }
 
 impl HostFunction for HostReadNativeU32 {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         let input: FieldReadInput =
-            serde_json::from_value(input).map_err(|error| VmError::Execution {
+            serde_json::from_value(input).map_err(|error| EngineError::Execution {
                 details: error.to_string(),
             })?;
         Ok(read_native_u32(fixtures(), input.handle, input.index))
@@ -617,7 +616,7 @@ impl HostFunctionSignature for HostBytesJsonArray {
 }
 
 impl HostFunction for HostBytesJsonArray {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         let input = parse_byte_input(input)?;
         Ok(json!(fixtures().bytes(input.byte_count).as_ref()))
     }
@@ -637,14 +636,14 @@ impl HostFunctionSignature for HostBytesNative {
 }
 
 impl HostFunction for HostBytesNative {
-    fn call(input: Self::Input) -> Result<Self::Output, VmError> {
+    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         let input = parse_byte_input(input)?;
         Ok(NativeBytes::from_shared(fixtures().bytes(input.byte_count)))
     }
 }
 
-fn parse_byte_input(input: Value) -> Result<ByteInput, VmError> {
-    serde_json::from_value(input).map_err(|error| VmError::Execution {
+fn parse_byte_input(input: Value) -> Result<ByteInput, EngineError> {
+    serde_json::from_value(input).map_err(|error| EngineError::Execution {
         details: error.to_string(),
     })
 }

@@ -2,7 +2,8 @@
 //! show up in another's, host functions included.
 
 use manivelle::{
-    Engine, HostContract, HostContractKind, HostFunction, HostFunctionSignature, VmError, VmOptions,
+    Engine, EngineError, EngineOptions, HostContract, HostContractKind, HostFunction,
+    HostFunctionSignature,
 };
 
 struct Double;
@@ -21,13 +22,13 @@ impl HostFunctionSignature for Double {
 }
 
 impl HostFunction for Double {
-    fn call(input: f64) -> Result<f64, VmError> {
+    fn call(input: f64) -> Result<f64, EngineError> {
         Ok(input * 2.0)
     }
 }
 
 fn engine_with_two_scripts() -> Engine {
-    let mut engine = Engine::new(&VmOptions::default()).expect("create engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .registry()
         .function::<Double>()

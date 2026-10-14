@@ -10,26 +10,26 @@ use super::declarations::render_typescript_declarations;
 use super::import_modules::{HostModuleStyle, render_host_import_modules};
 use super::interface::HostContractRegistry;
 use super::sdk::render_typescript_sdk;
-use crate::config::{VmContractValidation, VmUnknownFieldValidation};
+use crate::config::{ContractValidation, UnknownFieldValidation};
 use crate::contract::validation::{SchemaValidationOptions, validate_schema_with_options};
 use crate::contract::{
     Caller, HostCallback, HostCallbackDescriptor, HostContext, HostContractAbi,
     HostContractDescriptor, HostFunction, HostFunctionDescriptor, HostFunctionSignature,
     HostRequest, HostResolver, JsDecode, JsEncode, Schema, TsSchema,
 };
-use crate::error::VmError;
+use crate::error::EngineError;
 use crate::runner::host_promises::HostPromises;
 use crate::sdk_files::{
     GeneratedSdkFiles, SdkFileNames, write_host_sdk_files, write_host_sdk_files_with_names,
 };
 
-/// In-memory V0 host contract registry.
+/// In-memory host contract registry.
 #[derive(Default)]
 pub struct InMemoryHostContractRegistry {
     by_name: Mutex<HashMap<String, HostContractDescriptor>>,
     function_bindings: FunctionBindingStore,
-    validation: VmContractValidation,
-    unknown_field_validation: VmUnknownFieldValidation,
+    validation: ContractValidation,
+    unknown_field_validation: UnknownFieldValidation,
 }
 
 impl InMemoryHostContractRegistry {
@@ -39,7 +39,7 @@ impl InMemoryHostContractRegistry {
     }
 
     /// Creates an empty host contract registry with a validation policy.
-    pub fn with_validation(validation: VmContractValidation) -> Self {
+    pub fn with_validation(validation: ContractValidation) -> Self {
         Self {
             validation,
             ..Self::default()
@@ -48,8 +48,8 @@ impl InMemoryHostContractRegistry {
 
     /// Creates an empty host contract registry with explicit validation policies.
     pub fn with_validation_options(
-        validation: VmContractValidation,
-        unknown_field_validation: VmUnknownFieldValidation,
+        validation: ContractValidation,
+        unknown_field_validation: UnknownFieldValidation,
     ) -> Self {
         Self {
             validation,
@@ -64,7 +64,7 @@ impl InMemoryHostContractRegistry {
     /// The schemas come from `TsSchema` of the input and output types. Calls from
     /// scripts convert the input and output natively through [`JsDecode`] and
     /// [`JsEncode`].
-    pub fn function<T>(&self) -> Result<&Self, VmError>
+    pub fn function<T>(&self) -> Result<&Self, EngineError>
     where
         T: HostFunction + 'static,
         T::Input: TsSchema + JsDecode,
@@ -81,8 +81,8 @@ impl InMemoryHostContractRegistry {
     /// output types, and values cross natively.
     pub fn function_with<C>(
         &self,
-        handler: impl Fn(C::Input) -> Result<C::Output, VmError> + Send + Sync + 'static,
-    ) -> Result<&Self, VmError>
+        handler: impl Fn(C::Input) -> Result<C::Output, EngineError> + Send + Sync + 'static,
+    ) -> Result<&Self, EngineError>
     where
         C: HostFunctionSignature + 'static,
         C::Input: TsSchema + JsDecode,
@@ -98,8 +98,11 @@ impl InMemoryHostContractRegistry {
     /// Like [`Self::function_with`] otherwise.
     pub fn function_with_caller<C>(
         &self,
-        handler: impl Fn(&Caller<'_>, C::Input) -> Result<C::Output, VmError> + Send + Sync + 'static,
-    ) -> Result<&Self, VmError>
+        handler: impl Fn(&Caller<'_>, C::Input) -> Result<C::Output, EngineError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Result<&Self, EngineError>
     where
         C: HostFunctionSignature + 'static,
         C::Input: TsSchema + JsDecode,
@@ -118,11 +121,11 @@ impl InMemoryHostContractRegistry {
     /// thread, so it must be `Send`.
     pub fn async_function_with<C>(
         &self,
-        handler: impl Fn(C::Input, HostResolver<C::Output>) -> Result<(), VmError>
+        handler: impl Fn(C::Input, HostResolver<C::Output>) -> Result<(), EngineError>
         + Send
         + Sync
         + 'static,
-    ) -> Result<&Self, VmError>
+    ) -> Result<&Self, EngineError>
     where
         C: HostFunctionSignature + 'static,
         C::Input: TsSchema + JsDecode,
@@ -138,11 +141,11 @@ impl InMemoryHostContractRegistry {
     /// Like [`Self::async_function_with`] otherwise.
     pub fn async_function_with_caller<C>(
         &self,
-        handler: impl Fn(&Caller<'_>, C::Input, HostResolver<C::Output>) -> Result<(), VmError>
+        handler: impl Fn(&Caller<'_>, C::Input, HostResolver<C::Output>) -> Result<(), EngineError>
         + Send
         + Sync
         + 'static,
-    ) -> Result<&Self, VmError>
+    ) -> Result<&Self, EngineError>
     where
         C: HostFunctionSignature + 'static,
         C::Input: TsSchema + JsDecode,
@@ -154,7 +157,7 @@ impl InMemoryHostContractRegistry {
 
     /// Registers one host callback using `TsSchema` from its payload type and returns the
     /// registry for chaining.
-    pub fn callback<T>(&self) -> Result<&Self, VmError>
+    pub fn callback<T>(&self) -> Result<&Self, EngineError>
     where
         T: HostCallback + 'static,
         T::Payload: TsSchema + JsEncode,
@@ -165,7 +168,7 @@ impl InMemoryHostContractRegistry {
 
     /// Registers one host request, a callback whose handlers reply, using `TsSchema` from
     /// its payload and reply types, and returns the registry for chaining.
-    pub fn request<T>(&self) -> Result<&Self, VmError>
+    pub fn request<T>(&self) -> Result<&Self, EngineError>
     where
         T: HostRequest + 'static,
         T::Payload: TsSchema + JsEncode,
@@ -176,7 +179,7 @@ impl InMemoryHostContractRegistry {
     }
 
     /// Registers one host context contract and returns the registry for chaining.
-    pub fn context<T>(&self) -> Result<&Self, VmError>
+    pub fn context<T>(&self) -> Result<&Self, EngineError>
     where
         T: HostContext,
     {
@@ -185,16 +188,16 @@ impl InMemoryHostContractRegistry {
     }
 
     /// Returns one descriptor by stable contract name.
-    pub fn descriptor(&self, name: &str) -> Result<Option<HostContractDescriptor>, VmError> {
+    pub fn descriptor(&self, name: &str) -> Result<Option<HostContractDescriptor>, EngineError> {
         self.get(name)
     }
 
     /// Returns every descriptor known by the registry.
-    pub fn descriptors(&self) -> Result<Vec<HostContractDescriptor>, VmError> {
+    pub fn descriptors(&self) -> Result<Vec<HostContractDescriptor>, EngineError> {
         self.list()
     }
 
-    pub(crate) fn import_module_names(&self) -> Result<BTreeSet<String>, VmError> {
+    pub(crate) fn import_module_names(&self) -> Result<BTreeSet<String>, EngineError> {
         Ok(self
             .descriptors()?
             .into_iter()
@@ -207,7 +210,7 @@ impl InMemoryHostContractRegistry {
     pub(crate) fn import_modules(
         &self,
         style: HostModuleStyle,
-    ) -> Result<BTreeMap<String, String>, VmError> {
+    ) -> Result<BTreeMap<String, String>, EngineError> {
         Ok(render_host_import_modules(&self.descriptors()?, style))
     }
 
@@ -241,12 +244,12 @@ impl InMemoryHostContractRegistry {
     }
 
     /// Renders TypeScript declarations from registered host contracts.
-    pub fn dts(&self) -> Result<String, VmError> {
+    pub fn dts(&self) -> Result<String, EngineError> {
         self.typescript_declarations()
     }
 
     /// Renders an ergonomic TypeScript SDK from registered host contracts.
-    pub fn sdk(&self) -> Result<String, VmError> {
+    pub fn sdk(&self) -> Result<String, EngineError> {
         self.typescript_sdk()
     }
 
@@ -254,7 +257,7 @@ impl InMemoryHostContractRegistry {
     pub fn write_sdk_files(
         &self,
         directory: impl AsRef<Path>,
-    ) -> Result<GeneratedSdkFiles, VmError> {
+    ) -> Result<GeneratedSdkFiles, EngineError> {
         write_host_sdk_files(directory, &self.descriptors()?)
     }
 
@@ -263,12 +266,12 @@ impl InMemoryHostContractRegistry {
         &self,
         directory: impl AsRef<Path>,
         names: &SdkFileNames,
-    ) -> Result<GeneratedSdkFiles, VmError> {
+    ) -> Result<GeneratedSdkFiles, EngineError> {
         write_host_sdk_files_with_names(directory, &self.descriptors()?, names)
     }
 
-    fn insert_descriptor(&self, descriptor: HostContractDescriptor) -> Result<(), VmError> {
-        let mut guard = self.by_name.lock().map_err(|_| VmError::LockPoisoned)?;
+    fn insert_descriptor(&self, descriptor: HostContractDescriptor) -> Result<(), EngineError> {
+        let mut guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
         guard.insert(descriptor.name.clone(), descriptor);
         Ok(())
     }
@@ -278,9 +281,9 @@ impl InMemoryHostContractRegistry {
     fn with_descriptor(
         &self,
         name: &str,
-        check: impl FnOnce(&HostContractDescriptor) -> Result<(), VmError>,
-    ) -> Result<(), VmError> {
-        let guard = self.by_name.lock().map_err(|_| VmError::LockPoisoned)?;
+        check: impl FnOnce(&HostContractDescriptor) -> Result<(), EngineError>,
+    ) -> Result<(), EngineError> {
+        let guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
         guard.get(name).map_or(Ok(()), check)
     }
 
@@ -288,7 +291,7 @@ impl InMemoryHostContractRegistry {
         &self,
         descriptor: &HostContractDescriptor,
         input: &Value,
-    ) -> Result<(), VmError> {
+    ) -> Result<(), EngineError> {
         if !self.validation.validates_inputs() {
             return Ok(());
         }
@@ -300,7 +303,7 @@ impl InMemoryHostContractRegistry {
             input,
             validation_options(self.unknown_field_validation),
         )
-        .map_err(|details| VmError::ContractValidation {
+        .map_err(|details| EngineError::ContractValidation {
             contract_name: descriptor.name.clone(),
             direction: "input",
             details,
@@ -311,7 +314,7 @@ impl InMemoryHostContractRegistry {
         &self,
         descriptor: &HostContractDescriptor,
         output: &Value,
-    ) -> Result<(), VmError> {
+    ) -> Result<(), EngineError> {
         if !self.validation.validates_outputs() {
             return Ok(());
         }
@@ -323,7 +326,7 @@ impl InMemoryHostContractRegistry {
             output,
             validation_options(self.unknown_field_validation),
         )
-        .map_err(|details| VmError::ContractValidation {
+        .map_err(|details| EngineError::ContractValidation {
             contract_name: descriptor.name.clone(),
             direction: "output",
             details,
@@ -331,9 +334,7 @@ impl InMemoryHostContractRegistry {
     }
 }
 
-fn validation_options(
-    unknown_field_validation: VmUnknownFieldValidation,
-) -> SchemaValidationOptions {
+fn validation_options(unknown_field_validation: UnknownFieldValidation) -> SchemaValidationOptions {
     SchemaValidationOptions {
         reject_unknown_fields: unknown_field_validation.rejects_unknown_fields(),
     }
@@ -355,13 +356,13 @@ impl ContractValidator for RegisteredContract {
         self.registry.validation.validates_outputs()
     }
 
-    fn validate_input(&self, input: &Value) -> Result<(), VmError> {
+    fn validate_input(&self, input: &Value) -> Result<(), EngineError> {
         self.registry.with_descriptor(&self.name, |descriptor| {
             self.registry.validate_function_input(descriptor, input)
         })
     }
 
-    fn validate_output(&self, output: &Value) -> Result<(), VmError> {
+    fn validate_output(&self, output: &Value) -> Result<(), EngineError> {
         self.registry.with_descriptor(&self.name, |descriptor| {
             self.registry.validate_function_output(descriptor, output)
         })
@@ -430,7 +431,7 @@ fn with_callback(
 }
 
 impl HostContractRegistry for InMemoryHostContractRegistry {
-    fn register_function<T>(&self) -> Result<(), VmError>
+    fn register_function<T>(&self) -> Result<(), EngineError>
     where
         T: HostFunction + 'static,
         T::Input: TsSchema + JsDecode,
@@ -441,8 +442,8 @@ impl HostContractRegistry for InMemoryHostContractRegistry {
 
     fn register_function_with<C>(
         &self,
-        handler: impl Fn(C::Input) -> Result<C::Output, VmError> + Send + Sync + 'static,
-    ) -> Result<(), VmError>
+        handler: impl Fn(C::Input) -> Result<C::Output, EngineError> + Send + Sync + 'static,
+    ) -> Result<(), EngineError>
     where
         C: HostFunctionSignature + 'static,
         C::Input: TsSchema + JsDecode,
@@ -454,8 +455,11 @@ impl HostContractRegistry for InMemoryHostContractRegistry {
 
     fn register_function_with_caller<C>(
         &self,
-        handler: impl Fn(&Caller<'_>, C::Input) -> Result<C::Output, VmError> + Send + Sync + 'static,
-    ) -> Result<(), VmError>
+        handler: impl Fn(&Caller<'_>, C::Input) -> Result<C::Output, EngineError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Result<(), EngineError>
     where
         C: HostFunctionSignature + 'static,
         C::Input: TsSchema + JsDecode,
@@ -467,11 +471,11 @@ impl HostContractRegistry for InMemoryHostContractRegistry {
 
     fn register_async_function_with<C>(
         &self,
-        handler: impl Fn(C::Input, HostResolver<C::Output>) -> Result<(), VmError>
+        handler: impl Fn(C::Input, HostResolver<C::Output>) -> Result<(), EngineError>
         + Send
         + Sync
         + 'static,
-    ) -> Result<(), VmError>
+    ) -> Result<(), EngineError>
     where
         C: HostFunctionSignature + 'static,
         C::Input: TsSchema + JsDecode,
@@ -484,11 +488,11 @@ impl HostContractRegistry for InMemoryHostContractRegistry {
 
     fn register_async_function_with_caller<C>(
         &self,
-        handler: impl Fn(&Caller<'_>, C::Input, HostResolver<C::Output>) -> Result<(), VmError>
+        handler: impl Fn(&Caller<'_>, C::Input, HostResolver<C::Output>) -> Result<(), EngineError>
         + Send
         + Sync
         + 'static,
-    ) -> Result<(), VmError>
+    ) -> Result<(), EngineError>
     where
         C: HostFunctionSignature + 'static,
         C::Input: TsSchema + JsDecode,
@@ -498,7 +502,7 @@ impl HostContractRegistry for InMemoryHostContractRegistry {
         self.function_bindings.insert_async::<C, _>(handler)
     }
 
-    fn register_callback<T>(&self) -> Result<(), VmError>
+    fn register_callback<T>(&self) -> Result<(), EngineError>
     where
         T: HostCallback + 'static,
         T::Payload: TsSchema + JsEncode,
@@ -506,7 +510,7 @@ impl HostContractRegistry for InMemoryHostContractRegistry {
         self.insert_descriptor(callback_descriptor::<T>(None))
     }
 
-    fn register_request<T>(&self) -> Result<(), VmError>
+    fn register_request<T>(&self) -> Result<(), EngineError>
     where
         T: HostRequest + 'static,
         T::Payload: TsSchema + JsEncode,
@@ -515,7 +519,7 @@ impl HostContractRegistry for InMemoryHostContractRegistry {
         self.insert_descriptor(callback_descriptor::<T>(Some(T::Reply::schema())))
     }
 
-    fn register_context<T>(&self) -> Result<(), VmError>
+    fn register_context<T>(&self) -> Result<(), EngineError>
     where
         T: HostContext,
     {
@@ -527,23 +531,23 @@ impl HostContractRegistry for InMemoryHostContractRegistry {
         self.insert_descriptor(descriptor)
     }
 
-    fn get(&self, name: &str) -> Result<Option<HostContractDescriptor>, VmError> {
-        let guard = self.by_name.lock().map_err(|_| VmError::LockPoisoned)?;
+    fn get(&self, name: &str) -> Result<Option<HostContractDescriptor>, EngineError> {
+        let guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
         Ok(guard.get(name).cloned())
     }
 
-    fn list(&self) -> Result<Vec<HostContractDescriptor>, VmError> {
-        let guard = self.by_name.lock().map_err(|_| VmError::LockPoisoned)?;
+    fn list(&self) -> Result<Vec<HostContractDescriptor>, EngineError> {
+        let guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
         let mut descriptors = guard.values().cloned().collect::<Vec<_>>();
         descriptors.sort_by(|left, right| left.name.cmp(&right.name));
         Ok(descriptors)
     }
 
-    fn typescript_declarations(&self) -> Result<String, VmError> {
+    fn typescript_declarations(&self) -> Result<String, EngineError> {
         Ok(render_typescript_declarations(&self.list()?))
     }
 
-    fn typescript_sdk(&self) -> Result<String, VmError> {
+    fn typescript_sdk(&self) -> Result<String, EngineError> {
         Ok(render_typescript_sdk(&self.list()?))
     }
 }

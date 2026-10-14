@@ -3,7 +3,7 @@ mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use manivelle::{Engine, VmError};
+use manivelle::{Engine, EngineError};
 use serde_json::{Value, json};
 
 use support::TestCacheDir;
@@ -90,7 +90,7 @@ fn a_broken_edit_is_reported_once_and_the_previous_version_keeps_running() {
 
     assert!(broken.reloaded.is_empty());
     assert!(
-        matches!(broken.failed.as_slice(), [(id, VmError::Transpile { .. })] if id == "mod"),
+        matches!(broken.failed.as_slice(), [(id, EngineError::Transpile { .. })] if id == "mod"),
         "{broken:?}"
     );
     assert!(
