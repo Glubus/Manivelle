@@ -5,7 +5,7 @@
 //! requests in `Engine::poll_protocol` and never waits on the network.
 
 use std::io::{self, BufRead, BufReader, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
@@ -59,6 +59,8 @@ pub(crate) struct Link {
     waiting: Arc<AtomicBool>,
     /// Lowered by either thread when the connection ends.
     alive: Arc<AtomicBool>,
+    /// A handle on the socket, to close it in order when the link drops.
+    socket: TcpStream,
 }
 
 impl Link {
@@ -71,12 +73,14 @@ impl Link {
         let alive = Arc::new(AtomicBool::new(true));
         spawn_reader(reader, queue, Arc::clone(&waiting), Arc::clone(&alive))?;
         let (queue_out, pending) = mpsc::sync_channel::<Outbound>(OUTBOX);
+        let socket = stream.try_clone()?;
         spawn_writer(stream, pending, Arc::clone(&alive))?;
         Ok(Self {
             outbox: Outbox(queue_out),
             commands,
             waiting,
             alive,
+            socket,
         })
     }
 
@@ -108,16 +112,18 @@ impl Link {
 
 impl Drop for Link {
     /// Gives the writing thread a moment to write what is queued, so that the last
-    /// `console` lines of a program that ends right after them reach the tool. A program
-    /// that ends without dropping its engine (`std::process::exit`) still loses them.
+    /// `console` lines of a program that ends right after them reach the tool, then closes
+    /// the sending side: on Windows a program that ends with its socket still open resets
+    /// the connection, and the tool loses what it had not read yet. A program that ends
+    /// without dropping its engine (`std::process::exit`) still loses them.
     fn drop(&mut self) {
-        if !self.is_alive() {
-            return;
+        if self.is_alive() {
+            let (done, flushed) = mpsc::channel();
+            if self.outbox.0.try_send(Outbound::Flush(done)).is_ok() {
+                let _ = flushed.recv_timeout(FLUSH);
+            }
         }
-        let (done, flushed) = mpsc::channel();
-        if self.outbox.0.try_send(Outbound::Flush(done)).is_ok() {
-            let _ = flushed.recv_timeout(FLUSH);
-        }
+        let _ = self.socket.shutdown(Shutdown::Write);
     }
 }
 

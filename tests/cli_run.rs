@@ -53,7 +53,8 @@ fn run_child() {
 }
 
 fn project(dir: &Path, target: Option<&Path>) {
-    let target = target.map_or(String::new(), |t| format!("target \"{}\"\n", t.display()));
+    // A raw string: a Windows path has backslashes, which a quoted KDL string reads as escapes.
+    let target = target.map_or(String::new(), |t| format!("target #\"{}\"#\n", t.display()));
     fs::write(
         dir.join("manivelle.kdl"),
         format!("package \"hello\" {{\n version \"1.0.0\"\n entry \"main.ts\"\n {target}}}\n"),

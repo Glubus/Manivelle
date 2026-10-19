@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 ### Changed (breaking)
 
@@ -117,6 +117,12 @@
 - `manivelle run [DIR] [--no-packages] [--packages DIR] [--watch] [--target PATH]`: starts
   the target named by the manifest with its packages, or vanilla with `--no-packages`, and
   prints what loaded; `--watch` reloads changed package files while it runs.
+
+### Fixed
+
+- On Windows, a program that ended right after `Engine::setup_protocol` reset its connection
+  to `manivelle run`, which lost the greeting and reported that the target exited before
+  connecting. Dropping the engine now closes the connection in order.
 
 ## 0.1.2
 
