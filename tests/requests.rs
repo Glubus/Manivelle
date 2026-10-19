@@ -2,13 +2,12 @@
 
 mod support;
 
-use std::fs;
-
 use manivelle::{
-    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostRequest,
+    Engine, EngineError, HostCallback, HostContract, HostContractKind, HostRequest, ScriptId,
 };
 use serde_json::json;
-use support::TestCacheDir;
+
+use support::{assert_tsc, engine};
 
 /// `menu.label`: asks every script for a label for the item it is given.
 struct Label;
@@ -27,10 +26,6 @@ impl HostCallback for Label {
 
 impl HostRequest for Label {
     type Reply = String;
-}
-
-fn engine() -> Engine {
-    Engine::new(&EngineOptions::default()).expect("create engine")
 }
 
 fn engine_with(scripts: &[(&str, &str)]) -> Engine {
@@ -56,22 +51,22 @@ fn replies_come_back_in_load_then_registration_order_with_their_script() {
         ),
     ]);
 
-    let replies: Vec<(&str, String)> = engine.request("menu.label", "save").expect("request");
+    let replies: Vec<(ScriptId, String)> = engine.request("menu.label", "save").expect("request");
 
     assert_eq!(
         replies,
         [
-            ("zeta", "zeta:save".to_owned()),
-            ("zeta", "zeta2:save".to_owned()),
-            ("alpha", "alpha:save".to_owned()),
+            (ScriptId::from("zeta"), "zeta:save".to_owned()),
+            (ScriptId::from("zeta"), "zeta2:save".to_owned()),
+            (ScriptId::from("alpha"), "alpha:save".to_owned()),
         ]
     );
 }
 
 /// Which scripts answer `menu.label`, in order.
 fn answering(engine: &Engine) -> Vec<String> {
-    let replies: Vec<(&str, String)> = engine.request("menu.label", "x").expect("request");
-    replies.iter().map(|(id, _)| (*id).to_owned()).collect()
+    let replies: Vec<(ScriptId, String)> = engine.request("menu.label", "x").expect("request");
+    replies.iter().map(|(id, _)| id.to_string()).collect()
 }
 
 #[test]
@@ -119,16 +114,16 @@ fn an_async_handler_replies_with_what_its_promise_resolves_to() {
            export {};"#,
     )]);
 
-    let replies: Vec<(&str, String)> = engine.request("menu.label", "load").expect("request");
+    let replies: Vec<(ScriptId, String)> = engine.request("menu.label", "load").expect("request");
 
-    assert_eq!(replies, [("script", "LOAD".to_owned())]);
+    assert_eq!(replies, [(ScriptId::from("script"), "LOAD".to_owned())]);
 }
 
 #[test]
 fn a_request_nobody_handles_has_no_replies() {
     let engine = engine_with(&[("script", "export {};")]);
 
-    let replies: Vec<(&str, String)> = engine.request("menu.label", "x").expect("request");
+    let replies: Vec<(ScriptId, String)> = engine.request("menu.label", "x").expect("request");
 
     assert!(replies.is_empty());
 }
@@ -251,23 +246,4 @@ fn generated_sdk_types_request_replies_and_off() {
         &format!("{sdk}\nctx.on(\"menu.label\", () => 42);\n"),
         Some("TS2322"),
     );
-}
-
-/// Type-checks `source` when TypeScript is installed: it must pass, or fail with
-/// `expected_error`.
-fn assert_tsc(name: &str, source: &str, expected_error: Option<&str>) {
-    let dir = TestCacheDir::new(name);
-    let path = dir.path().join("usage.ts");
-    fs::write(&path, source).expect("write usage");
-    let Some(output) = support::run_tsc(&path) else {
-        return;
-    };
-    let diagnostics = String::from_utf8_lossy(&output.stdout);
-    match expected_error {
-        None => assert!(output.status.success(), "tsc on {name}:\n{diagnostics}"),
-        Some(code) => assert!(
-            !output.status.success() && diagnostics.contains(code),
-            "tsc on {name}:\n{diagnostics}"
-        ),
-    }
 }

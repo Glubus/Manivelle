@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 /// Minimal schema carrier for contract metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Schema {
-    /// Human-readable schema identity.
-    pub name: String,
+    /// Declared TypeScript alias name, or `None` for an anonymous shape rendered inline.
+    pub name: Option<String>,
     /// TypeScript type shape represented by this schema.
     pub ts_type: TsType,
     /// Named schema dependencies referenced by this schema.
@@ -14,24 +14,30 @@ pub struct Schema {
 }
 
 impl Schema {
-    /// Creates a schema with an unknown TypeScript type.
+    /// Creates an anonymous schema, whose TypeScript type is rendered inline.
     #[must_use]
-    pub fn named(name: impl Into<String>) -> Self {
+    pub fn anonymous(ts_type: TsType) -> Self {
         Self {
-            name: name.into(),
-            ts_type: TsType::Unknown,
+            name: None,
+            ts_type,
             dependencies: Vec::new(),
         }
     }
 
-    /// Creates a schema backed by a TypeScript type shape.
+    /// Creates a schema declared under `name`, backed by a TypeScript type shape.
     #[must_use]
     pub fn typed(name: impl Into<String>, ts_type: TsType) -> Self {
         Self {
-            name: name.into(),
+            name: Some(name.into()),
             ts_type,
             dependencies: Vec::new(),
         }
+    }
+
+    /// The declared alias name. `None` when the schema is anonymous or its name is blank.
+    #[must_use]
+    pub fn declared_name(&self) -> Option<&str> {
+        self.name.as_deref().filter(|name| !name.trim().is_empty())
     }
 
     /// Attaches named schema dependencies referenced by this schema.
@@ -53,7 +59,7 @@ impl Schema {
     pub fn validate_json(&self, value: &serde_json::Value) -> Result<(), String> {
         super::validation::validate_schema_with_options(
             self,
-            value,
+            &super::validation::Snapshot::from(value),
             super::validation::SchemaValidationOptions {
                 reject_unknown_fields: false,
             },
@@ -69,7 +75,7 @@ impl Schema {
     pub fn validate_json_strict(&self, value: &serde_json::Value) -> Result<(), String> {
         super::validation::validate_schema_with_options(
             self,
-            value,
+            &super::validation::Snapshot::from(value),
             super::validation::SchemaValidationOptions {
                 reject_unknown_fields: true,
             },
@@ -211,7 +217,8 @@ impl TsEnumVariant {
     }
 }
 
-/// TypeScript record key category.
+/// TypeScript record key category. The Rust side is [`MapKey`](crate::MapKey): every map
+/// key type maps to one of these categories when the schema is emitted.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TsRecordKey {
     /// String keys.

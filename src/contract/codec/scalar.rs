@@ -1,11 +1,11 @@
 //! `bool` and `()`.
 
-use rquickjs::{Ctx, Result as JsResult, Value as JsValue, qjs};
+use rquickjs::{Ctx, Value as JsValue, qjs};
 
-use super::{JsDecode, JsEncode, mismatch};
+use super::{CodecError, JsDecode, JsEncode, mismatch};
 
 impl JsEncode for bool {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         Ok(JsValue::new_bool(ctx.clone(), *self))
     }
 
@@ -15,7 +15,7 @@ impl JsEncode for bool {
 }
 
 impl JsDecode for bool {
-    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         value
             .as_bool()
             .ok_or_else(|| mismatch(&value, "bool", "boolean"))
@@ -34,13 +34,13 @@ impl JsDecode for bool {
 /// `()` is `null`, like `serde_json`; `undefined` is accepted because a function
 /// without a return value produces it.
 impl JsEncode for () {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         Ok(JsValue::new_null(ctx.clone()))
     }
 }
 
 impl JsDecode for () {
-    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         if value.is_null() || value.is_undefined() {
             Ok(())
         } else {

@@ -6,22 +6,22 @@ use ::glam::{
     DVec2, DVec3, DVec4, IVec2, IVec3, IVec4, Mat2, Mat3, Mat4, Quat, UVec2, UVec3, UVec4, Vec2,
     Vec3, Vec4,
 };
-use rquickjs::{Ctx, Result as JsResult, Value as JsValue};
+use rquickjs::{Ctx, Value as JsValue};
 
-use super::super::{JsDecode, JsEncode, decode_item, expect_array_len};
+use super::super::{CodecError, JsDecode, JsEncode, decode_item, expect_array_len};
 use crate::contract::{TsSchema, TsType};
 
 macro_rules! glam_codecs {
     ($($ty:ident: [$component:ty; $len:literal] via $to:ident / $from:ident),+ $(,)?) => {
         $(
             impl JsEncode for $ty {
-                fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+                fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
                     self.$to().encode_js(ctx)
                 }
             }
 
             impl JsDecode for $ty {
-                fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+                fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
                     decode_components::<$component, $len>(ctx, value, stringify!($ty))
                         .map(|components| $ty::$from(&components))
                 }
@@ -61,7 +61,7 @@ fn decode_components<'js, T, const N: usize>(
     ctx: &Ctx<'js>,
     value: JsValue<'js>,
     rust: &'static str,
-) -> JsResult<[T; N]>
+) -> Result<[T; N], CodecError>
 where
     T: JsDecode + Copy + Default,
 {

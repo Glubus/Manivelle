@@ -16,17 +16,14 @@ mod script_export;
 pub(crate) mod validation;
 
 pub use base::HostContract;
-pub(crate) use bridge::{js_value_to_json, js_value_to_validation_snapshot, json_to_js_value};
+pub(crate) use bridge::{js_to_json, js_to_snapshot, json_to_js};
 pub use callback::{HostCallback, HostRequest};
 pub use caller::Caller;
-pub use codec::{
-    JsArgs, JsDecode, JsEncode, MapKey, at_path, codec_error, derive, expect_array_len,
-    expect_object,
-};
+pub use codec::{CodecError, JsArgs, JsDecode, JsEncode, MapKey, PathSegment};
+pub use codec::{derive, expect_array_len, expect_object};
 pub use context::HostContext;
 pub use function::{HostFunction, HostFunctionSignature};
 pub use host_resolver::HostResolver;
-pub(crate) use host_resolver::{EncodeReply, ReplyInbox, ReplyValue, Settlement};
 pub use metadata::{
     HostCallbackDescriptor, HostContractAbi, HostContractDescriptor, HostContractKind,
     HostFunctionDescriptor, HostImportBinding, HostMetadata, Schema, TsEnumVariant, TsField,

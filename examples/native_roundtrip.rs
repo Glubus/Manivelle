@@ -11,13 +11,15 @@ mod quickjs_json;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use manivelle::{
-    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostFunction,
-    HostFunctionSignature,
-};
+use manivelle::{Engine, EngineOptions};
 use mlua::{Lua, LuaSerdeExt};
 use rquickjs::{Context, Ctx, Function, Object, Runtime, Value as JsValue, prelude::Func};
 use serde_json::{Value, json};
+
+#[path = "../benches/support/workload.rs"]
+mod workload;
+
+use workload::{Inc, ScoreUpdate};
 
 const OPS: u32 = 10_000;
 const RUNS: usize = 5;
@@ -65,45 +67,6 @@ export function process(input: Input) {
 let last = 0;
 score.onUpdate((event: { combo: number }) => { last = event.combo; });
 "#;
-
-struct Inc;
-
-impl HostContract for Inc {
-    const NAME: &'static str = "math.inc";
-    const IMPORT_MODULE: &'static str = "bench";
-    const EXPORT_PATH: &'static [&'static str] = &["math", "inc"];
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
-    }
-}
-
-impl HostFunctionSignature for Inc {
-    type Input = f64;
-    type Output = f64;
-}
-
-impl HostFunction for Inc {
-    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
-        Ok(input + 1.0)
-    }
-}
-
-struct ScoreUpdate;
-
-impl HostContract for ScoreUpdate {
-    const NAME: &'static str = "score.update";
-    const IMPORT_MODULE: &'static str = "bench";
-    const EXPORT_PATH: &'static [&'static str] = &["score", "onUpdate"];
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Callback
-    }
-}
-
-impl HostCallback for ScoreUpdate {
-    type Payload = Value;
-}
 
 /// One way of running the demo workloads.
 trait Backend {

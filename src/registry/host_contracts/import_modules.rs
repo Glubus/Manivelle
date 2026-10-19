@@ -2,16 +2,13 @@ use std::collections::BTreeMap;
 
 use crate::contract::{HostContractAbi, HostContractDescriptor};
 
+use super::names::{binding_names, indent, property_name};
+use super::tree::{ObjectNode, ObjectTree};
+
 #[derive(Debug, Clone)]
 enum HostModuleBinding {
     Function { contract_name: String },
     Callback { event_name: String },
-}
-
-#[derive(Debug, Default)]
-struct HostModuleNode {
-    children: BTreeMap<String, HostModuleNode>,
-    binding: Option<HostModuleBinding>,
 }
 
 /// Where a host import module reads its native functions and its handler registration
@@ -32,22 +29,25 @@ pub(crate) fn render_host_import_modules(
     descriptors: &[HostContractDescriptor],
     style: HostModuleStyle,
 ) -> BTreeMap<String, String> {
-    let mut modules = BTreeMap::<String, HostModuleNode>::new();
+    let mut modules = BTreeMap::<String, ObjectTree<HostModuleBinding>>::new();
 
     for descriptor in descriptors {
         let Some(binding) = binding_for_descriptor(descriptor) else {
             continue;
         };
-        insert_binding(
-            modules.entry(descriptor.import.module.clone()).or_default(),
-            &descriptor.import.export_path,
-            binding,
-        );
+        let module = modules.entry(descriptor.import.module.clone()).or_default();
+        let path = &descriptor.import.export_path;
+        if path.is_empty() {
+            // The default `EXPORT_PATH`: the contract is reached through the SDK only and
+            // has no name in the import module.
+            continue;
+        }
+        module.insert_segments(path.iter().map(String::as_str), binding);
     }
 
     modules
         .into_iter()
-        .map(|(module, node)| (module, render_module_source(&node, style)))
+        .map(|(module, tree)| (module, render_module_source(&tree, style)))
         .collect()
 }
 
@@ -68,79 +68,77 @@ fn binding_for_descriptor(descriptor: &HostContractDescriptor) -> Option<HostMod
     }
 }
 
-fn insert_binding(node: &mut HostModuleNode, path: &[String], binding: HostModuleBinding) {
-    let Some((head, tail)) = path.split_first() else {
-        return;
-    };
-
-    if tail.is_empty() {
-        node.children.entry(head.clone()).or_default().binding = Some(binding);
-        return;
-    }
-
-    insert_binding(
-        node.children.entry(head.clone()).or_default(),
-        tail,
-        binding,
-    );
-}
-
-fn render_module_source(node: &HostModuleNode, style: HostModuleStyle) -> String {
+fn render_module_source(tree: &ObjectTree<HostModuleBinding>, style: HostModuleStyle) -> String {
     let mut output = String::new();
     if style == HostModuleStyle::Env {
         output.push_str("import { __native, __on } from \"manivelle:env\";\n");
     }
 
-    for (name, child) in &node.children {
+    let names = binding_names(tree.roots.keys().map(String::as_str));
+    for (name, node) in &tree.roots {
         output.push_str("export const ");
-        output.push_str(&identifier(name));
+        output.push_str(&names[name]);
         output.push_str(" = ");
-        output.push_str(&render_node(child, 0, style));
+        render_node(node, 0, style, &mut output);
         output.push_str(";\n");
     }
 
     output
 }
 
-fn render_node(node: &HostModuleNode, depth: usize, style: HostModuleStyle) -> String {
+fn render_node(
+    node: &ObjectNode<HostModuleBinding>,
+    depth: usize,
+    style: HostModuleStyle,
+    output: &mut String,
+) {
     if let Some(binding) = &node.binding
         && node.children.is_empty()
     {
-        return render_binding(binding, style);
+        render_binding(binding, style, output);
+        return;
     }
 
-    render_object_node(node, depth, style)
+    render_object_node(node, depth, style, output);
 }
 
-fn render_object_node(node: &HostModuleNode, depth: usize, style: HostModuleStyle) -> String {
-    let mut entries = Vec::new();
+fn render_object_node(
+    node: &ObjectNode<HostModuleBinding>,
+    depth: usize,
+    style: HostModuleStyle,
+    output: &mut String,
+) {
+    if node.children.is_empty() && node.binding.is_none() {
+        output.push_str("{}");
+        return;
+    }
 
+    let inner = indent(depth + 1);
+    output.push_str("{\n");
+    let mut separator = "";
     for (name, child) in &node.children {
-        entries.push(format!(
-            "{}{}: {}",
-            indent(depth + 1),
-            property_name(name),
-            render_node(child, depth + 1, style)
-        ));
+        output.push_str(separator);
+        output.push_str(&inner);
+        output.push_str(&property_name(name));
+        output.push_str(": ");
+        render_node(child, depth + 1, style, output);
+        separator = ",\n";
     }
 
     if let Some(binding) = &node.binding {
-        entries.push(format!(
-            "{}default: {}",
-            indent(depth + 1),
-            render_binding(binding, style)
-        ));
+        output.push_str(separator);
+        output.push_str(&inner);
+        output.push_str("default: ");
+        render_binding(binding, style, output);
     }
 
-    if entries.is_empty() {
-        return String::from("{}");
-    }
-
-    format!("{{\n{}\n{}}}", entries.join(",\n"), indent(depth))
+    output.push('\n');
+    output.push_str(&indent(depth));
+    output.push('}');
 }
 
-fn render_binding(binding: &HostModuleBinding, style: HostModuleStyle) -> String {
-    match (binding, style) {
+fn render_binding(binding: &HostModuleBinding, style: HostModuleStyle, output: &mut String) {
+    let source = match (binding, style) {
         (HostModuleBinding::Function { contract_name }, HostModuleStyle::Globals) => {
             format!("globalThis.__manivelle_native[{contract_name:?}]")
         }
@@ -153,74 +151,6 @@ fn render_binding(binding: &HostModuleBinding, style: HostModuleStyle) -> String
         (HostModuleBinding::Callback { event_name }, HostModuleStyle::Env) => {
             format!("handler => __on({event_name:?}, handler)")
         }
-    }
-}
-
-fn identifier(name: &str) -> String {
-    if is_identifier(name) {
-        name.to_owned()
-    } else {
-        String::from("sdk")
-    }
-}
-
-fn property_name(name: &str) -> String {
-    if is_identifier(name) && !is_reserved_word(name) {
-        name.to_owned()
-    } else {
-        format!("{name:?}")
-    }
-}
-
-fn is_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
     };
-
-    (first == '_' || first == '$' || first.is_ascii_alphabetic())
-        && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-        && !is_reserved_word(name)
-}
-
-fn is_reserved_word(name: &str) -> bool {
-    matches!(
-        name,
-        "break"
-            | "case"
-            | "catch"
-            | "class"
-            | "const"
-            | "continue"
-            | "debugger"
-            | "default"
-            | "delete"
-            | "do"
-            | "else"
-            | "export"
-            | "extends"
-            | "finally"
-            | "for"
-            | "if"
-            | "import"
-            | "in"
-            | "instanceof"
-            | "new"
-            | "return"
-            | "super"
-            | "switch"
-            | "this"
-            | "throw"
-            | "try"
-            | "typeof"
-            | "var"
-            | "void"
-            | "while"
-            | "with"
-            | "yield"
-    )
-}
-
-fn indent(depth: usize) -> String {
-    "  ".repeat(depth)
+    output.push_str(&source);
 }

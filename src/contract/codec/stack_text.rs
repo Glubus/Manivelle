@@ -19,7 +19,8 @@ impl<const N: usize> StackText<N> {
         Some(text)
     }
 
-    /// The formatted text.
+    /// The formatted text. `write_str` appends a whole `str` or nothing, so the bytes
+    /// always hold whole UTF-8 strings.
     pub(super) fn as_str(&self) -> &str {
         std::str::from_utf8(&self.bytes[..self.len])
             .expect("only whole UTF-8 strings are written to the buffer")

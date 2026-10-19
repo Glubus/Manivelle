@@ -1,9 +1,11 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::contract::{
     HostContractAbi, HostContractDescriptor, Schema, TsEnumVariant, TsField, TsLiteral,
     TsRecordKey, TsType,
 };
+
+use super::names::{indent, is_identifier_name};
 
 const DEFAULT_ENUM_TAG: &str = "type";
 
@@ -20,10 +22,106 @@ pub(crate) fn render_typescript_declarations(descriptors: &[HostContractDescript
     let mut declarations = DeclarationBuffer::default();
 
     for descriptor in descriptors {
-        declarations.push_descriptor(descriptor);
+        push_descriptor(&mut declarations, descriptor);
     }
 
     declarations.finish()
+}
+
+/// Receives the contracts of a registry by ABI kind. The declarations and the SDK render
+/// each kind from these calls, so both see the same dispatch.
+pub(super) trait DescriptorSink {
+    fn push_function(
+        &mut self,
+        name: &str,
+        input: &Schema,
+        output: &Schema,
+        returns_promise: bool,
+        docs: Option<&str>,
+    );
+    fn push_callback(
+        &mut self,
+        name: &str,
+        payload: &Schema,
+        reply: Option<&Schema>,
+        docs: Option<&str>,
+    );
+    fn push_context(&mut self, name: &str, schema: &Schema);
+    fn push_export(&mut self, name: &str, args: &[Schema], output: &Schema);
+}
+
+/// Hands `descriptor` to the method of `sink` for its ABI; `Unknown` contracts have no
+/// declaration.
+pub(super) fn push_descriptor(sink: &mut impl DescriptorSink, descriptor: &HostContractDescriptor) {
+    match &descriptor.abi {
+        HostContractAbi::Function {
+            input,
+            output,
+            returns_promise,
+        } => {
+            sink.push_function(
+                &descriptor.name,
+                input,
+                output,
+                *returns_promise,
+                descriptor.docs.as_deref(),
+            );
+        }
+        HostContractAbi::Callback { payload, reply } => {
+            sink.push_callback(
+                &descriptor.name,
+                payload,
+                reply.as_ref(),
+                descriptor.docs.as_deref(),
+            );
+        }
+        HostContractAbi::Context { schema } => sink.push_context(&descriptor.name, schema),
+        HostContractAbi::Export { args, output } => {
+            sink.push_export(&descriptor.name, args, output);
+        }
+        HostContractAbi::Unknown => {}
+    }
+}
+
+/// The `type` aliases of the schemas a registry uses: each name once, dependencies first.
+#[derive(Default)]
+pub(super) struct SchemaEmitter {
+    emitted: BTreeSet<String>,
+    /// The object schemas, which the SDK renders as model classes.
+    models: BTreeMap<String, TsType>,
+}
+
+impl SchemaEmitter {
+    /// Appends the alias of `schema` to `sections`, after those of its dependencies. A
+    /// schema that is unknown or already emitted adds nothing.
+    pub(super) fn emit(&mut self, schema: &Schema, sections: &mut Vec<String>) {
+        let Some(name) = schema.declared_name() else {
+            return;
+        };
+        if !self.emitted.insert(name.to_owned()) {
+            return;
+        }
+
+        for dependency in &schema.dependencies {
+            self.emit(dependency, sections);
+        }
+
+        if matches!(
+            schema.ts_type,
+            TsType::Object(_) | TsType::OpenObject { .. }
+        ) {
+            self.models.insert(name.to_owned(), schema.ts_type.clone());
+        }
+
+        sections.push(format!(
+            "type {name} = {};",
+            render_ts_type(&schema.ts_type)
+        ));
+    }
+
+    pub(super) fn into_models(self) -> BTreeMap<String, TsType> {
+        self.models
+    }
 }
 
 #[derive(Default)]
@@ -32,57 +130,16 @@ struct DeclarationBuffer {
     host_events: Vec<(String, String)>,
     host_replies: Vec<String>,
     script_exports: Vec<String>,
-    emitted_schemas: BTreeSet<String>,
+    schemas: SchemaEmitter,
 }
 
 impl DeclarationBuffer {
-    fn push_descriptor(&mut self, descriptor: &HostContractDescriptor) {
-        match &descriptor.abi {
-            HostContractAbi::Function {
-                input,
-                output,
-                returns_promise,
-            } => {
-                self.push_function(
-                    &descriptor.name,
-                    input,
-                    output,
-                    *returns_promise,
-                    descriptor.docs.as_deref(),
-                );
-            }
-            HostContractAbi::Callback { payload, reply } => {
-                self.push_callback(
-                    &descriptor.name,
-                    payload,
-                    reply.as_ref(),
-                    descriptor.docs.as_deref(),
-                );
-            }
-            HostContractAbi::Context { schema } => self.push_context(&descriptor.name, schema),
-            HostContractAbi::Export { args, output } => {
-                self.push_export(&descriptor.name, args, output);
-            }
-            HostContractAbi::Unknown => {}
-        }
-    }
-
     fn push_schema(&mut self, schema: &Schema) {
-        if is_unknown_schema(schema) || !self.emitted_schemas.insert(schema.name.clone()) {
-            return;
-        }
-
-        for dependency in &schema.dependencies {
-            self.push_schema(dependency);
-        }
-
-        self.sections.push(format!(
-            "type {} = {};",
-            schema.name,
-            render_ts_type(&schema.ts_type)
-        ));
+        self.schemas.emit(schema, &mut self.sections);
     }
+}
 
+impl DescriptorSink for DeclarationBuffer {
     fn push_function(
         &mut self,
         name: &str,
@@ -138,7 +195,9 @@ impl DeclarationBuffer {
         self.script_exports
             .push(render_script_export(name, args, output));
     }
+}
 
+impl DeclarationBuffer {
     fn finish(mut self) -> String {
         self.push_host_events();
         self.push_script_exports();
@@ -292,10 +351,6 @@ fn render_nested_namespace(namespaces: &[&str], signature: &str, docs: Option<&s
     output
 }
 
-fn indent(depth: usize) -> String {
-    "  ".repeat(depth)
-}
-
 /// `docs` as a JSDoc block at `indent`, ending with a newline; nothing for empty docs. A
 /// `*/` inside the text cannot end the comment.
 pub(super) fn render_doc_comment(docs: &str, indent: &str) -> String {
@@ -323,10 +378,9 @@ pub(super) fn render_doc_comment(docs: &str, indent: &str) -> String {
 }
 
 pub(super) fn schema_type_name(schema: &Schema) -> String {
-    if schema.name.trim().is_empty() || schema.name == "unknown" {
-        render_ts_type(&schema.ts_type)
-    } else {
-        schema.name.clone()
+    match schema.declared_name() {
+        Some(name) => name.to_owned(),
+        None => render_ts_type(&schema.ts_type),
     }
 }
 
@@ -405,22 +459,11 @@ fn render_field(field: &TsField) -> String {
 /// `name` as a property key in a type literal: bare when it is an identifier (reserved
 /// words included, which are legal there), a string literal otherwise.
 fn render_property_key(name: &str) -> String {
-    if is_identifier(name) {
+    if is_identifier_name(name) {
         name.to_owned()
     } else {
         render_string_literal(name)
     }
-}
-
-/// Whether `name` is an ASCII JavaScript identifier name (reserved words included).
-pub(super) fn is_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-
-    (first == '_' || first == '$' || first.is_ascii_alphabetic())
-        && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
 }
 
 /// `[key: string]: ...` admitting `rest` plus every declared field's type, because
@@ -516,8 +559,4 @@ fn render_wrapped_array_type(item: &TsType) -> String {
         | TsType::Record { .. } => format!("({})", render_ts_type(item)),
         _ => render_ts_type(item),
     }
-}
-
-pub(super) fn is_unknown_schema(schema: &Schema) -> bool {
-    schema.name.trim().is_empty() || schema.name == "unknown"
 }

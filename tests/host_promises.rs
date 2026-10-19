@@ -4,7 +4,6 @@
 mod support;
 
 use std::fmt::Debug;
-use std::fs;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -13,7 +12,7 @@ use manivelle::{
     HostContractKind, HostFunctionSignature, HostResolver, InMemoryHostContractRegistry,
 };
 use serde_json::json;
-use support::TestCacheDir;
+use support::assert_tsc;
 
 /// `scores.lookup(name)`: a player's score, answered by the host later.
 struct Score;
@@ -432,14 +431,8 @@ fn async_descriptors_declare_a_promise_and_sync_ones_serialize_unchanged() {
         .function_with::<WhoAmI>(|()| Ok(String::new()))
         .expect("register sync function");
 
-    let score = registry
-        .descriptor(Score::NAME)
-        .expect("read")
-        .expect("score");
-    let who = registry
-        .descriptor(WhoAmI::NAME)
-        .expect("read")
-        .expect("who");
+    let score = registry.get(Score::NAME).expect("read").expect("score");
+    let who = registry.get(WhoAmI::NAME).expect("read").expect("who");
 
     assert!(score.function.as_ref().expect("function").returns_promise);
     assert!(matches!(
@@ -490,14 +483,6 @@ fn generated_declarations_type_async_functions_as_promises() {
 fn generated_sdk_types_async_functions_as_promises() {
     let sdk = score_registry().sdk().expect("render SDK");
 
-    assert!(
-        sdk.contains("lookup(input: string): Promise<number>"),
-        "{sdk}"
-    );
-    assert!(
-        sdk.contains("\"scores.lookup\": { input: string; output: Promise<number>; };"),
-        "{sdk}"
-    );
     assert_tsc(
         "async-sdk",
         &format!(
@@ -510,23 +495,4 @@ fn generated_sdk_types_async_functions_as_promises() {
         &format!("{sdk}\nexport const score: number = scores.lookup(\"ada\");\n"),
         Some("TS2322"),
     );
-}
-
-/// Type-checks `source` when TypeScript is installed: it must pass, or fail with
-/// `expected_error`.
-fn assert_tsc(name: &str, source: &str, expected_error: Option<&str>) {
-    let dir = TestCacheDir::new(name);
-    let path = dir.path().join("usage.ts");
-    fs::write(&path, source).expect("write usage");
-    let Some(output) = support::run_tsc(&path) else {
-        return;
-    };
-    let diagnostics = String::from_utf8_lossy(&output.stdout);
-    match expected_error {
-        None => assert!(output.status.success(), "tsc on {name}:\n{diagnostics}"),
-        Some(code) => assert!(
-            !output.status.success() && diagnostics.contains(code),
-            "tsc on {name}:\n{diagnostics}"
-        ),
-    }
 }

@@ -95,25 +95,8 @@ pub(crate) fn discover_project(
     imports_of: &mut ImportsOf<'_>,
 ) -> Result<(DiscoveredProject, ProjectState), ProjectFailure> {
     let entry_path = normalize_entry_path(entry_path)?;
-    let (resolver, structure, known, structure_unchanged) = match previous {
-        Some(state)
-            if state.external_modules == *external_modules && !state.structure.changed() =>
-        {
-            (state.resolver, state.structure, state.modules, true)
-        }
-        Some(state) => (
-            ModuleResolver::for_entry(&entry_path)?,
-            WatchedFiles::default(),
-            state.modules,
-            false,
-        ),
-        None => (
-            ModuleResolver::for_entry(&entry_path)?,
-            WatchedFiles::default(),
-            HashMap::new(),
-            false,
-        ),
-    };
+    let (resolver, structure, known, structure_unchanged) =
+        reuse_state(previous, &entry_path, external_modules)?;
     let mut discovery = Discovery {
         resolver: &resolver,
         external_modules,
@@ -147,7 +130,7 @@ pub(crate) fn discover_project(
         modules.push(DiscoveredModule {
             module_id: module_id(&path),
             display_path: module.display_path.clone(),
-            source: module.source.clone(),
+            source: module.source.as_str().to_owned(),
             resolved_requests: module.resolved_requests.clone(),
         });
         known.insert(path, module);
@@ -168,10 +151,47 @@ pub(crate) fn discover_project(
     ))
 }
 
-struct Discovery<'a> {
+/// The resolver, the structure watched and the modules to start a discovery with: those of
+/// `previous` when they still hold for this project, fresh ones otherwise. The flag tells
+/// whether the previous resolutions still hold.
+fn reuse_state(
+    previous: Option<ProjectState>,
+    entry_path: &Path,
+    external_modules: &BTreeSet<String>,
+) -> Result<
+    (
+        ModuleResolver,
+        WatchedFiles,
+        HashMap<PathBuf, KnownModule>,
+        bool,
+    ),
+    EngineError,
+> {
+    match previous {
+        Some(state)
+            if state.external_modules == *external_modules && !state.structure.changed() =>
+        {
+            Ok((state.resolver, state.structure, state.modules, true))
+        }
+        Some(state) => Ok((
+            ModuleResolver::for_entry(entry_path)?,
+            WatchedFiles::default(),
+            state.modules,
+            false,
+        )),
+        None => Ok((
+            ModuleResolver::for_entry(entry_path)?,
+            WatchedFiles::default(),
+            HashMap::new(),
+            false,
+        )),
+    }
+}
+
+struct Discovery<'a, 'b> {
     resolver: &'a ModuleResolver,
     external_modules: &'a BTreeSet<String>,
-    imports_of: &'a mut ImportsOf<'a>,
+    imports_of: &'a mut ImportsOf<'b>,
     /// Modules of the previous discovery.
     known: HashMap<PathBuf, KnownModule>,
     /// Whether the previous resolutions still hold.
@@ -180,7 +200,7 @@ struct Discovery<'a> {
     modules: BTreeMap<PathBuf, KnownModule>,
 }
 
-impl Discovery<'_> {
+impl Discovery<'_, '_> {
     /// `path` is canonical: the entry is canonicalized once and resolution returns
     /// canonical paths, so it is also the module id.
     fn visit(&mut self, path: PathBuf) -> Result<(), EngineError> {

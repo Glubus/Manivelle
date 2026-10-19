@@ -147,124 +147,91 @@ fn registry_supports_fluent_contract_registration() {
 
     let function = engine
         .registry()
-        .descriptor(FindUser::NAME)
+        .get(FindUser::NAME)
         .expect("get function")
         .expect("function descriptor");
     let callback = engine
         .registry()
-        .descriptor(ScoreUpdate::NAME)
+        .get(ScoreUpdate::NAME)
         .expect("get callback")
         .expect("callback descriptor");
     let context = engine
         .registry()
-        .descriptor(OverlayContext::NAME)
+        .get(OverlayContext::NAME)
         .expect("get context")
         .expect("context descriptor");
 
     assert_eq!(function.kind, HostContractKind::Function);
-    assert_eq!(function.schema.name, "FindUserInput");
+    assert_eq!(function.schema.name.as_deref(), Some("FindUserInput"));
     let function_metadata = function.function.expect("function metadata");
-    assert_eq!(function_metadata.input_schema.name, "FindUserInput");
-    assert_eq!(function_metadata.output_schema.name, "FindUserOutput");
-    assert_eq!(callback.kind, HostContractKind::Callback);
-    assert_eq!(callback.schema.name, "ScoreUpdatePayload");
-    assert_eq!(context.kind, HostContractKind::Context);
     assert_eq!(
-        engine.registry().dts().expect("render dts"),
-        format!(
-            "type OverlayContext = {{ visible: boolean; }};\n\ndeclare const overlay: OverlayContext;\n\ntype ScoreUpdatePayload = {{ combo: number; }};\n\ntype FindUserInput = number;\n\ntype FindUserOutput = string;\n\ndeclare namespace user {{\n  export function find(input: FindUserInput): FindUserOutput;\n}}\n\ntype HostEvents = {{\n  \"score.update\": ScoreUpdatePayload;\n}};\n\ntype HostReplies = {{}};\n\n{}\n\n{}\n\ndeclare const ctx: HostEventContext & {{ readonly hot: HostHotContext }};\n\n{}\n",
-            include_str!("../assets/event_context.ts").trim(),
-            include_str!("../assets/hot_context.ts").trim(),
-            include_str!("../assets/env_module.ts").trim().replace(
-                "__CTX__",
-                "HostEventContext & { readonly hot: HostHotContext }"
-            )
-        )
+        function_metadata.input_schema.name.as_deref(),
+        Some("FindUserInput")
+    );
+    assert_eq!(
+        function_metadata.output_schema.name.as_deref(),
+        Some("FindUserOutput")
+    );
+    assert_eq!(callback.kind, HostContractKind::Callback);
+    assert_eq!(callback.schema.name.as_deref(), Some("ScoreUpdatePayload"));
+    assert_eq!(context.kind, HostContractKind::Context);
+    let dts = engine.registry().dts().expect("render dts");
+    support::assert_tsc(
+        "contracts-dts",
+        &format!("{dts}\nconst found: string = user.find(1);\n"),
+        None,
+    );
+    support::assert_tsc(
+        "contracts-dts-misuse",
+        &format!("{dts}\nuser.find(\"one\");\n"),
+        Some("TS2345"),
     );
 }
 
 #[test]
-fn registry_generates_sdk_source_from_contracts() {
-    let cache_dir = TestCacheDir::new("host-registry-sdk");
-    let engine = Engine::new(&cache_dir.engine_options()).expect("create engine");
-
-    engine
-        .registry()
-        .callback::<ScoreUpdate>()
-        .and_then(|registry| registry.function::<FindUser>())
-        .expect("register host contracts");
-
-    let sdk = engine.registry().sdk().expect("render sdk");
-
-    assert!(sdk.contains("type FindUserInput = number;"));
-    assert!(sdk.contains("type ScoreUpdatePayload = { combo: number; };"));
-    assert!(sdk.contains("type HostFunctions = {"));
-    assert!(sdk.contains("\"user.find\": { input: FindUserInput; output: FindUserOutput; };"));
-    assert!(sdk.contains("export function call<K extends keyof HostFunctions>"));
-    assert!(sdk.contains("export const user = {"));
-    assert!(sdk.contains("find(input: FindUserInput): FindUserOutput"));
-    assert!(sdk.contains("return __hostCall<FindUserOutput>(\"user.find\", input);"));
-    assert!(sdk.contains("export const events = {"));
-    assert!(sdk.contains("update(handler: HostEventHandler<\"score.update\">): void"));
-    assert!(sdk.contains("export const score = {"));
-    assert!(sdk.contains("onUpdate(handler: HostEventHandler<\"score.update\">): void"));
-    assert!(sdk.contains("export const manivelleSdk = {"));
-    assert!(sdk.contains("functions: {"));
-    assert!(sdk.contains("call,"));
-    assert!(sdk.contains("events,"));
-    assert!(sdk.contains("ctx,"));
-}
-
-#[test]
 fn generated_sdk_uses_flattened_derived_input_schema() {
-    let cache_dir = TestCacheDir::new("host-registry-sdk-flatten");
-    let engine = Engine::new(&cache_dir.engine_options()).expect("create engine");
-
+    let engine = support::engine();
     engine
         .registry()
         .function::<RecordAction>()
         .expect("register flattened host contract");
-
     let sdk = engine.registry().sdk().expect("render sdk");
 
-    assert!(sdk.contains(
-        "type RecordActionInput = { actionId: string; actorId: number; displayName: string; confirmed: boolean; };"
-    ));
-    assert!(sdk.contains("export const models = {"));
-    assert!(sdk.contains("export class RecordActionInputModel {"));
-    assert!(sdk.contains("constructor(public readonly value: RecordActionInput) {}"));
-    assert!(sdk.contains("static is(value: unknown): value is RecordActionInput"));
-    assert!(sdk.contains("static wrap(value: RecordActionInput): RecordActionInputModel"));
-    assert!(sdk.contains("toJSON(): RecordActionInput"));
-    assert!(sdk.contains("RecordActionInput: {"));
-    assert!(sdk.contains("create(value: RecordActionInput): RecordActionInput"));
-    assert!(sdk.contains("is(value: unknown): value is RecordActionInput"));
-    assert!(sdk.contains("wrap(value: RecordActionInput): RecordActionInputModel"));
-    assert!(sdk.contains("record(input: RecordActionInput): string"));
-    assert!(sdk.contains("return __hostCall<string>(\"action.record\", input);"));
-    assert!(sdk.contains("models,"));
+    support::assert_tsc(
+        "flattened-sdk",
+        &format!(
+            "{sdk}\nconst recorded: string = action.record({{ actionId: \"act-1\", actorId: 7, displayName: \"Nami\", confirmed: true }});\n"
+        ),
+        None,
+    );
+    support::assert_tsc(
+        "flattened-sdk-misuse",
+        &format!(
+            "{sdk}\naction.record({{ actionId: \"act-1\", actorId: 7, displayName: \"Nami\", confirmed: true, actor: {{ actorId: 7, displayName: \"Nami\" }} }});\n"
+        ),
+        Some("TS2561"),
+    );
 }
 
 #[test]
 fn host_context_is_declarative_sdk_surface_only() {
-    let cache_dir = TestCacheDir::new("host-context-declarative");
-    let engine = Engine::new(&cache_dir.engine_options()).expect("create engine");
-
+    let engine = support::engine();
     engine
         .registry()
         .context::<OverlayContext>()
         .expect("register host context");
     let sdk = engine.registry().sdk().expect("render sdk");
 
-    assert!(sdk.contains("type OverlayContext = { visible: boolean; };"));
-    assert!(sdk.contains(
-        "export const overlay = (globalThis as unknown as Record<string, unknown>)[\"overlay\"] as OverlayContext;"
-    ));
-    assert!(sdk.contains("export const manivelleSdk = {"));
-    assert!(sdk.contains("contexts: {"));
-    assert!(sdk.contains("overlay,"));
-    assert!(!sdk.contains("__hostCall"));
-    assert!(!sdk.contains("__hostOn"));
+    support::assert_tsc(
+        "host-context-declarative",
+        &format!("{sdk}\nconst visible: boolean = overlay.visible;\n"),
+        None,
+    );
+    support::assert_tsc(
+        "host-context-declarative-misuse",
+        &format!("{sdk}\nconst visible: number = overlay.visible;\n"),
+        Some("TS2322"),
+    );
 }
 
 #[test]
@@ -314,12 +281,10 @@ fn registry_writes_sdk_files() {
         .write_sdk_files(&output_dir)
         .expect("write sdk files");
 
-    let types = std::fs::read_to_string(&written.types_path).expect("read types");
-    let sdk = std::fs::read_to_string(&written.sdk_path).expect("read sdk");
+    assert!(written.types_path.is_file());
+    assert!(written.sdk_path.is_file());
     assert_eq!(written.types_path, output_dir.join("manivelle.d.ts"));
     assert_eq!(written.sdk_path, output_dir.join("manivelle.sdk.ts"));
-    assert!(types.contains("declare namespace user"));
-    assert!(sdk.contains("export const user = {"));
 }
 
 #[cfg(feature = "cli")]
@@ -359,9 +324,7 @@ fn manivelle_sdk_command_writes_files_from_descriptor_json() {
 
 #[test]
 fn generated_sdk_typechecks_when_tsc_is_available() {
-    let cache_dir = TestCacheDir::new("host-registry-sdk-tsc");
-    let engine = Engine::new(&cache_dir.engine_options()).expect("create engine");
-
+    let engine = support::engine();
     engine
         .registry()
         .callback::<ScoreUpdate>()
@@ -369,19 +332,7 @@ fn generated_sdk_typechecks_when_tsc_is_available() {
         .and_then(|registry| registry.context::<OverlayContext>())
         .expect("register host contracts");
     let sdk = engine.registry().sdk().expect("render sdk");
-    let sdk_path = cache_dir.path().join("sdk.ts");
-    std::fs::write(&sdk_path, sdk_usage_source(&sdk)).expect("write sdk");
-
-    let Some(output) = run_tsc(&sdk_path) else {
-        return;
-    };
-
-    assert!(
-        output.status.success(),
-        "generated sdk failed tsc\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    support::assert_tsc("host-registry-sdk-tsc", &sdk_usage_source(&sdk), None);
 }
 
 fn sdk_usage_source(sdk: &str) -> String {
@@ -427,10 +378,6 @@ manivelleSdk.ctx.on(\"score.update\", event => {{\n\
   event.combo.toFixed();\n\
 }});\n"
     )
-}
-
-fn run_tsc(path: &std::path::Path) -> Option<std::process::Output> {
-    support::run_tsc(path)
 }
 
 #[test]

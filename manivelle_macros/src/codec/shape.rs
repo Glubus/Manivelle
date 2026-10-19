@@ -7,7 +7,7 @@ use quote::quote;
 
 use super::field::{container_default_value, decoder, default_fn, default_value, encoder};
 use crate::attrs::DefaultValue;
-use crate::model::{Field, Shape, Style};
+use crate::model::{Container, Field, Shape, Style};
 
 /// Facts about the enclosing type that shape code needs.
 pub(super) struct Scope<'s> {
@@ -20,6 +20,18 @@ pub(super) struct Scope<'s> {
     pub(super) tag: Option<&'s str>,
 }
 
+impl<'s> Scope<'s> {
+    /// The scope of the shapes of `container`, without its container default or a tag.
+    pub(super) fn of(container: &Container<'_>, rust: &'s str) -> Self {
+        Self {
+            rust,
+            deny_unknown_fields: container.attrs.deny_unknown_fields,
+            container_default: None,
+            tag: None,
+        }
+    }
+}
+
 /// Expression of type `Result<Value>` encoding the shape; `accessors[i]` is a `&T`
 /// expression for field `i`.
 pub(super) fn encode_payload(
@@ -29,7 +41,7 @@ pub(super) fn encode_payload(
 ) -> TokenStream {
     match shape.style {
         Style::Unit => quote! {
-            ::manivelle::js::Result::Ok(::manivelle::js::Value::new_null(__ctx.clone()))
+            ::std::result::Result::Ok(::manivelle::js::Value::new_null(__ctx.clone()))
         },
         Style::Newtype => {
             let encode = encoder(&shape.fields[0]);
@@ -42,7 +54,7 @@ pub(super) fn encode_payload(
             quote!({
                 let __object = ::manivelle::js::Object::new(__ctx.clone())?;
                 #(#steps)*
-                ::manivelle::js::Result::Ok(__object.into_value())
+                ::std::result::Result::<_, ::manivelle::CodecError>::Ok(__object.into_value())
             })
         }
     }
@@ -64,12 +76,12 @@ pub(super) fn encode_fields_into(
             let encode = encoder(field);
             let step = if field.attrs.flatten {
                 quote! {
-                    ::manivelle::__derive::merge_object(&__object, (#encode)(#access, __ctx)?, #rust)?;
+                    ::manivelle::__private::derive::merge_object(&__object, (#encode)(#access, __ctx)?, #rust)?;
                 }
             } else {
                 let key = &field.name.serialize;
                 quote! {
-                    ::manivelle::__derive::encode_field(__ctx, &__object, #key, #access, #encode)?;
+                    ::manivelle::__private::derive::encode_field(__ctx, &__object, #key, #access, #encode)?;
                 }
             };
             match &field.attrs.skip_serializing_if {
@@ -89,12 +101,12 @@ fn encode_tuple(shape: &Shape<'_>, accessors: &[TokenStream]) -> TokenStream {
         .enumerate()
         .map(|(index, (field, access))| {
             let encode = encoder(field);
-            quote!(::manivelle::__derive::encode_item(__ctx, &__array, #index, #access, #encode)?;)
+            quote!(::manivelle::__private::derive::encode_item(__ctx, &__array, #index, #access, #encode)?;)
         });
     quote!({
         let __array = ::manivelle::js::Array::new(__ctx.clone())?;
         #(#items)*
-        ::manivelle::js::Result::Ok(__array.into_value())
+        ::std::result::Result::<_, ::manivelle::CodecError>::Ok(__array.into_value())
     })
 }
 
@@ -108,13 +120,13 @@ pub(super) fn decode_payload(
     match shape.style {
         Style::Unit => quote!({
             <() as ::manivelle::JsDecode>::decode_js(__ctx, __value)?;
-            ::manivelle::js::Result::Ok(#constructor)
+            ::std::result::Result::Ok(#constructor)
         }),
         Style::Newtype => {
             let field = &shape.fields[0];
             let member = &field.member;
             let decode = decoder(field);
-            quote!(::manivelle::js::Result::Ok(#constructor { #member: (#decode)(__ctx, __value)? }))
+            quote!(::std::result::Result::Ok(#constructor { #member: (#decode)(__ctx, __value)? }))
         }
         Style::Tuple => decode_tuple(scope, shape, constructor),
         Style::Struct => decode_struct(scope, shape, constructor),
@@ -133,15 +145,15 @@ fn decode_tuple(scope: &Scope<'_>, shape: &Shape<'_>, constructor: &TokenStream)
             }
             let decode = decoder(field);
             let value =
-                quote!(::manivelle::__derive::decode_item(__ctx, &__array, #position, #decode)?);
+                quote!(::manivelle::__private::derive::decode_item(__ctx, &__array, #position, #decode)?);
             position += 1;
             value
         })
         .collect();
     let members = shape.fields.iter().map(|field| &field.member);
     quote!({
-        let __array = ::manivelle::__codec_expect_array_len(__value, #rust, #position)?;
-        ::manivelle::js::Result::Ok(#constructor { #(#members: #values),* })
+        let __array = ::manivelle::__private::expect_array_len(__value, #rust, #position)?;
+        ::std::result::Result::Ok(#constructor { #(#members: #values),* })
     })
 }
 
@@ -150,10 +162,10 @@ fn decode_struct(scope: &Scope<'_>, shape: &Shape<'_>, constructor: &TokenStream
     let container_default = scope.container_default.is_some();
     let known = own_keys(scope, shape);
     let reject_unknown = (scope.deny_unknown_fields && !shape.has_flatten()).then(
-        || quote!(::manivelle::__derive::reject_unknown_fields(&__object, &[#(#known),*], #rust)?;),
+        || quote!(::manivelle::__private::derive::reject_unknown_fields(&__object, &[#(#known),*], #rust)?;),
     );
     let rest = shape.has_flatten().then(|| {
-        quote!(let __rest = ::manivelle::__derive::object_without(__ctx, &__object, &[#(#known),*])?;)
+        quote!(let __rest = ::manivelle::__private::derive::object_without(__ctx, &__object, &[#(#known),*])?;)
     });
     let default = scope.container_default.map(|default| {
         let value = container_default_value(default);
@@ -165,11 +177,11 @@ fn decode_struct(scope: &Scope<'_>, shape: &Shape<'_>, constructor: &TokenStream
         .iter()
         .map(|field| decode_struct_field(field, container_default));
     quote!({
-        let __object = ::manivelle::__codec_expect_object(__value, #rust)?;
+        let __object = ::manivelle::__private::expect_object(__value, #rust)?;
         #reject_unknown
         #rest
         #default
-        ::manivelle::js::Result::Ok(#constructor { #(#members: #values),* })
+        ::std::result::Result::Ok(#constructor { #(#members: #values),* })
     })
 }
 
@@ -196,10 +208,10 @@ fn decode_struct_field(field: &Field<'_>, container_default: bool) -> TokenStrea
     let decode = decoder(field);
     match default_fn(field, container_default) {
         Some(default) => quote! {
-            ::manivelle::__derive::decode_field_or(__ctx, &__object, &[#(#names),*], #decode, #default)?
+            ::manivelle::__private::derive::decode_field_or(__ctx, &__object, &[#(#names),*], #decode, #default)?
         },
         None => quote! {
-            ::manivelle::__derive::decode_field(__ctx, &__object, &[#(#names),*], #decode)?
+            ::manivelle::__private::derive::decode_field(__ctx, &__object, &[#(#names),*], #decode)?
         },
     }
 }

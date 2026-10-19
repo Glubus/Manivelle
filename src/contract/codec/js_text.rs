@@ -1,8 +1,8 @@
 //! Borrowed view of a JavaScript string that is guaranteed to be valid UTF-8.
 
-use rquickjs::{CString, Result as JsResult, String as JsString};
+use rquickjs::{CString, String as JsString};
 
-use super::codec_error;
+use super::CodecError;
 
 /// JavaScript string content checked once to be valid UTF-8, read without copying.
 ///
@@ -18,10 +18,10 @@ impl<'js> JsText<'js> {
     /// # Errors
     ///
     /// Fails when the string is not valid Unicode text.
-    pub fn new(string: JsString<'js>, rust: &'static str) -> JsResult<Self> {
+    pub fn new(string: JsString<'js>, rust: &'static str) -> Result<Self, CodecError> {
         let raw = string.to_cstring()?;
         if std::str::from_utf8(raw_bytes(&raw)).is_err() {
-            return Err(codec_error(
+            return Err(CodecError::from_js(
                 "string",
                 rust,
                 "expected Unicode text, got a string with lone surrogates",

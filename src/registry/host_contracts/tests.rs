@@ -1,8 +1,8 @@
+use super::InMemoryHostContractRegistry;
 use super::declarations::{
     ENV_MODULE_TYPE, EVENT_CONTEXT_TYPE, HOT_CONTEXT_TYPE, render_typescript_declarations,
 };
 use super::sdk::render_typescript_sdk;
-use super::{HostContractRegistry, InMemoryHostContractRegistry};
 use crate::contract::{
     HostCallback, HostCallbackDescriptor, HostContext, HostContract, HostContractAbi,
     HostContractDescriptor, HostContractKind, HostFunction, HostFunctionDescriptor,
@@ -99,10 +99,10 @@ impl HostContext for DemoContext {
 }
 
 #[test]
-fn register_function_stores_descriptor() {
+fn function_stores_descriptor() {
     let registry = InMemoryHostContractRegistry::new();
 
-    registry.register_function::<DemoFunction>().unwrap();
+    registry.function::<DemoFunction>().unwrap();
 
     let descriptor = registry.get(DemoFunction::NAME).unwrap().unwrap();
     assert_eq!(descriptor.name, DemoFunction::NAME);
@@ -119,10 +119,10 @@ fn register_function_stores_descriptor() {
 }
 
 #[test]
-fn register_callback_stores_descriptor() {
+fn callback_stores_descriptor() {
     let registry = InMemoryHostContractRegistry::new();
 
-    registry.register_callback::<DemoCallback>().unwrap();
+    registry.callback::<DemoCallback>().unwrap();
 
     let descriptor = registry.get(DemoCallback::NAME).unwrap().unwrap();
     assert_eq!(descriptor.name, DemoCallback::NAME);
@@ -137,17 +137,17 @@ fn register_callback_stores_descriptor() {
 }
 
 #[test]
-fn register_context_stores_descriptor() {
+fn context_stores_descriptor() {
     let registry = InMemoryHostContractRegistry::new();
 
-    registry.register_context::<DemoContext>().unwrap();
+    registry.context::<DemoContext>().unwrap();
 
     let descriptor = registry.get(DemoContext::NAME).unwrap().unwrap();
     assert_eq!(descriptor.name, DemoContext::NAME);
     assert_eq!(descriptor.kind, HostContractKind::Context);
     assert!(matches!(
         descriptor.abi,
-        HostContractAbi::Context { schema } if schema.name == "DemoContext"
+        HostContractAbi::Context { schema } if schema.name.as_deref() == Some("DemoContext")
     ));
 }
 
@@ -161,20 +161,20 @@ fn fluent_registration_chains_contracts() {
         .and_then(|registry| registry.context::<DemoContext>())
         .unwrap();
 
-    assert!(registry.descriptor(DemoCallback::NAME).unwrap().is_some());
-    assert!(registry.descriptor(DemoFunction::NAME).unwrap().is_some());
-    assert!(registry.descriptor(DemoContext::NAME).unwrap().is_some());
+    assert!(registry.get(DemoCallback::NAME).unwrap().is_some());
+    assert!(registry.get(DemoFunction::NAME).unwrap().is_some());
+    assert!(registry.get(DemoContext::NAME).unwrap().is_some());
 }
 
 #[test]
-fn list_returns_descriptors_sorted_by_name() {
+fn descriptors_returns_sorted_by_name() {
     let registry = InMemoryHostContractRegistry::new();
-    registry.register_context::<DemoContext>().unwrap();
-    registry.register_function::<DemoFunction>().unwrap();
-    registry.register_callback::<DemoCallback>().unwrap();
+    registry.context::<DemoContext>().unwrap();
+    registry.function::<DemoFunction>().unwrap();
+    registry.callback::<DemoCallback>().unwrap();
 
     let names = registry
-        .list()
+        .descriptors()
         .unwrap()
         .into_iter()
         .map(|descriptor| descriptor.name)
@@ -348,7 +348,7 @@ fn dts_is_generated_from_contract_schemas() {
         demo_callback(),
         function_descriptor::<DemoFunction>(
             Schema::typed("DemoFunctionInput", TsType::Void),
-            Schema::named("unknown"),
+            Schema::anonymous(TsType::Unknown),
         ),
     ]);
 
@@ -422,4 +422,68 @@ fn sdk_generates_event_wrapper_from_callback_contracts() {
     assert!(sdk.contains("export const manivelleSdk = {"));
     assert!(sdk.contains("events,"));
     assert!(sdk.contains("ctx,"));
+}
+
+mod lock_tests {
+    use std::sync::Arc;
+
+    use rquickjs::{Context, Function, Object, Runtime};
+
+    use super::super::bindings::{FunctionBindingStore, NativeContext};
+    use crate::contract::{HostContract, HostContractKind, HostFunctionSignature};
+    use crate::runner::host_fn::HostFnClass;
+    use crate::runner::host_promises::HostPromises;
+
+    struct Reentrant;
+
+    impl HostContract for Reentrant {
+        const NAME: &'static str = "test.reentrant";
+
+        fn kind() -> HostContractKind {
+            HostContractKind::Function
+        }
+    }
+
+    impl HostFunctionSignature for Reentrant {
+        type Input = ();
+        type Output = ();
+    }
+
+    #[test]
+    fn handler_runs_without_registry_lock() {
+        let store = Arc::new(FunctionBindingStore::default());
+        let weak = Arc::downgrade(&store);
+        store
+            .insert_plain::<Reentrant>(move |()| {
+                let store = weak.upgrade().expect("store alive");
+                let registry = store.by_name.try_lock();
+                assert!(
+                    registry.is_ok(),
+                    "handler must be able to register another binding"
+                );
+                Ok(())
+            })
+            .unwrap();
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|ctx| {
+            let target = Object::new(ctx.clone()).unwrap();
+            store
+                .install_native(
+                    &target,
+                    "script",
+                    &HostPromises::default().downgrade(),
+                    &NativeContext {
+                        execution: Arc::default(),
+                        class: HostFnClass::register(&ctx).unwrap(),
+                    },
+                    None,
+                    |_| None,
+                )
+                .unwrap();
+            let function: Function<'_> = target.get(Reentrant::NAME).unwrap();
+            function.call::<_, ()>(()).unwrap();
+        });
+    }
 }

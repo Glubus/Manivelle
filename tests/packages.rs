@@ -1,23 +1,21 @@
 use std::fs;
 use std::path::Path;
 
-use manivelle::{Engine, EngineError, EngineOptions};
+mod support;
+
+use manivelle::EngineError;
+use support::{engine, write_file};
 
 fn write_mod(root: &Path, name: &str, manifest_body: &str, source: &str) {
     let dir = root.join(name);
     fs::create_dir_all(&dir).unwrap();
-    fs::write(
-        dir.join("manivelle.kdl"),
-        format!(
+    write_file(
+        &dir.join("manivelle.kdl"),
+        &format!(
             "package \"{name}\" {{\n version \"1.0.0\"\n entry \"main.ts\"\n{manifest_body}\n}}\n"
         ),
-    )
-    .unwrap();
-    fs::write(dir.join("main.ts"), source).unwrap();
-}
-
-fn engine() -> Engine {
-    Engine::new(&EngineOptions::default()).unwrap()
+    );
+    write_file(&dir.join("main.ts"), source);
 }
 
 #[test]

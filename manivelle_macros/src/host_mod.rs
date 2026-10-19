@@ -3,8 +3,9 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Attribute, Error, Item, ItemMod, LitStr, Meta, parse::Parser, spanned::Spanned};
+use syn::{Attribute, Error, Item, ItemMod, LitStr, Meta, spanned::Spanned};
 
+use crate::args::{parse_args, take_value};
 use crate::host_fn::HostFnArgs;
 
 /// Rewrites every direct `#[host_fn]` and `#[host_event]` of the inline module to carry
@@ -36,17 +37,11 @@ pub(crate) fn expand_host_mod(args: TokenStream, mut module: ItemMod) -> syn::Re
 
 /// Reads `namespace = "..."`, the only argument.
 fn parse_namespace(args: TokenStream) -> syn::Result<Option<String>> {
-    let mut namespace = None;
-    let parser = syn::meta::parser(|meta| {
-        if meta.path.is_ident("namespace") && namespace.is_none() {
-            namespace = Some(meta.value()?.parse::<LitStr>()?.value());
-            Ok(())
-        } else {
-            Err(meta.error("expected `namespace = \"name\"`"))
-        }
-    });
-    parser.parse2(args)?;
-    Ok(namespace)
+    let mut namespace: Option<LitStr> = None;
+    parse_args(args, "expected `namespace = \"name\"`", |meta| {
+        take_value(meta, "namespace", &mut namespace)
+    })?;
+    Ok(namespace.map(|namespace| namespace.value()))
 }
 
 /// Gives each contract attribute in `attrs` its full name. `default_name` is the name a

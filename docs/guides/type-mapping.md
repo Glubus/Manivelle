@@ -179,17 +179,17 @@ the declaration and the runtime value together.
 A type that cannot use the derive implements the traits directly:
 
 ```rust
-use manivelle::js::{Ctx, Result, Value};
-use manivelle::{JsDecode, JsEncode};
+use manivelle::js::{Ctx, Value};
+use manivelle::{CodecError, JsDecode, JsEncode};
 
 impl JsEncode for Celsius {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<Value<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<Value<'js>, CodecError> {
         self.0.encode_js(ctx)
     }
 }
 
 impl JsDecode for Celsius {
-    fn decode_js<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> Result<Self> {
+    fn decode_js<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> Result<Self, CodecError> {
         f64::decode_js(ctx, value).map(Celsius)
     }
 }
@@ -197,7 +197,9 @@ impl JsDecode for Celsius {
 
 `manivelle::js` re-exports the QuickJS types these signatures use, at the exact version
 Manivelle is built with. Use it instead of a direct `rquickjs` dependency; it also
-provides `Runtime` and `Context` for unit-testing a codec.
+provides `Runtime` and `Context` for unit-testing a codec. A codec returns
+`CodecError`, which records the path of the failing value (`CodecError::at`) and
+converts into `rquickjs::Error` at the QuickJS boundary through `From`.
 
 `function` requires `Input: TsSchema + JsDecode` and
 `Output: TsSchema + JsEncode`; `callback` requires

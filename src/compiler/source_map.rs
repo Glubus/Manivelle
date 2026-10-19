@@ -5,6 +5,9 @@ use std::sync::Arc;
 
 use oxc_sourcemap::{JSONSourceMap, Token};
 
+/// The one source name of an encoded table: mappings carry positions only, never names.
+const PLACEHOLDER_SOURCE: &str = "";
+
 /// Line and column lookup from one transpiled module back to its TypeScript source.
 ///
 /// Positions are 0-based in the table. JavaScript columns are UTF-8 byte offsets, as
@@ -50,12 +53,13 @@ impl SourceMap {
     /// The table as source map `mappings` text, for the disk cache.
     pub(crate) fn encode(&self) -> String {
         let tokens = self.mappings.iter().map(Mapping::token).collect();
-        // One unnamed source: mappings only carry positions.
+        // One unnamed source: mappings only carry positions. `decode` reads it back under
+        // the same name, which is never used.
         oxc_sourcemap::SourceMap::new(
             None,
             Vec::new(),
             None,
-            vec![Cow::Borrowed("")],
+            vec![Cow::Borrowed(PLACEHOLDER_SOURCE)],
             Vec::new(),
             tokens,
             None,
@@ -71,7 +75,7 @@ impl SourceMap {
             file: None,
             mappings: mappings.to_owned(),
             source_root: None,
-            sources: vec![String::new()],
+            sources: vec![PLACEHOLDER_SOURCE.to_owned()],
             sources_content: None,
             names: Vec::new(),
             debug_id: None,

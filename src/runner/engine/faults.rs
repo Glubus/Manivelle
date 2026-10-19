@@ -75,7 +75,7 @@ impl Engine {
     /// Charges the memory the script allocates, until the guard drops, to its quota; `None`
     /// when there is no quota.
     pub(super) fn charge_to(&self, script: &EngineScript) -> Option<ChargeGuard<'_>> {
-        let (quota, owner) = (self.quota.as_ref()?, script.owner.as_ref()?);
+        let (quota, owner) = (self.faults.quota.as_ref()?, script.owner.as_ref()?);
         Some(quota.charge_to(owner))
     }
 
@@ -90,7 +90,7 @@ impl Engine {
         result: Result<T, EngineError>,
     ) -> Result<T, EngineError> {
         let (Err(EngineError::Execution { details }), Some(quota), Some(owner)) =
-            (&result, &self.quota, &script.owner)
+            (&result, &self.faults.quota, &script.owner)
         else {
             return result;
         };
@@ -159,18 +159,22 @@ impl Engine {
                 .as_ref()
                 .is_some_and(|owner| owner.take_refused())
         {
-            return self.quota.as_ref().map(|quota| Fault::Quota(quota.limit()));
+            return self
+                .faults
+                .quota
+                .as_ref()
+                .map(|quota| Fault::Quota(quota.limit()));
         }
         let ran_out_of_memory = details.starts_with(OUT_OF_MEMORY)
             || (looks_like_exhaustion(details) && pool_nearly_full(ctx));
-        (ran_out_of_memory && !self.memory_fault_seen.replace(true)).then_some(Fault::Memory)
+        (ran_out_of_memory && !self.faults.memory_fault_seen.replace(true)).then_some(Fault::Memory)
     }
 
     /// Counts a fault against `script`, quarantining it at the limit.
     fn count_fault(&self, script: &EngineScript) -> Standing {
         let faults = script.faults.get() + 1;
         script.faults.set(faults);
-        let allowed = self.max_script_faults;
+        let allowed = self.faults.max_script_faults;
         if allowed == 0 {
             return Standing::Unlimited;
         }
@@ -196,8 +200,10 @@ impl Engine {
             return false;
         }
         let stats = self.memory_stats();
-        stats.malloc_limit_bytes != 0
-            && stats.malloc_size_bytes * 10 >= stats.malloc_limit_bytes * 9
+        near_limit(
+            i128::from(stats.malloc_size_bytes),
+            i128::from(stats.malloc_limit_bytes),
+        )
     }
 }
 
@@ -205,6 +211,11 @@ impl Engine {
 /// already handling a failure: nothing, or a thrown `null`.
 fn looks_like_exhaustion(details: &str) -> bool {
     details.is_empty() || details.starts_with(NULL_EXCEPTION) || details.starts_with(OUT_OF_MEMORY)
+}
+
+/// Whether `used` is at least nine tenths of `limit`; a zero limit is no limit at all.
+fn near_limit(used: i128, limit: i128) -> bool {
+    limit != 0 && used * 10 >= limit * 9
 }
 
 /// Whether the engine's memory pool, measured from `ctx`, is at least nine tenths full.
@@ -215,7 +226,10 @@ fn pool_nearly_full(ctx: &Ctx<'_>) -> bool {
     let mut usage: qjs::JSMemoryUsage = unsafe { mem::zeroed() };
     // SAFETY: `ctx` is a live context, so its runtime is alive, and `usage` is writable.
     unsafe { qjs::JS_ComputeMemoryUsage(qjs::JS_GetRuntime(ctx.as_raw().as_ptr()), &mut usage) };
-    usage.malloc_limit != 0 && usage.malloc_size * 10 >= usage.malloc_limit * 9
+    near_limit(
+        i128::from(usage.malloc_size),
+        i128::from(usage.malloc_limit),
+    )
 }
 
 /// The error for a script that faulted: what it was doing, why it failed, and where it
@@ -261,8 +275,17 @@ fn drain_jobs(ctx: &Ctx<'_>) -> Result<(), EngineError> {
     if !unsafe { qjs::JS_IsJobPending(runtime) } {
         return Ok(());
     }
+    run_jobs(|| run_next_job(runtime))
+}
+
+/// Runs Promise jobs one after another until `next` reports there is none, with `None`,
+/// or with `Some` of whether that job threw. Every job runs even after one throws, so
+/// none is left for the next operation; the first error is returned.
+pub(super) fn run_jobs(
+    mut next: impl FnMut() -> Option<Result<(), EngineError>>,
+) -> Result<(), EngineError> {
     let mut first = None;
-    while let Some(outcome) = run_next_job(runtime) {
+    while let Some(outcome) = next() {
         if let Err(error) = outcome {
             first.get_or_insert(error);
         }

@@ -4,6 +4,8 @@ use std::io;
 
 use thiserror::Error;
 
+use crate::types::ScriptId;
+
 /// Error type for all engine operations.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -24,17 +26,23 @@ pub enum EngineError {
         /// Which option, and why it is refused.
         details: String,
     },
+    /// A host contract name is registered twice: a name stands for one contract.
+    #[error("host contract `{name}` is already registered")]
+    DuplicateContract {
+        /// The contract name that is already taken.
+        name: String,
+    },
     /// The requested script could not be found.
     #[error("script `{script_id}` is not loaded")]
     ScriptNotFound {
         /// Missing script identifier.
-        script_id: String,
+        script_id: ScriptId,
     },
     /// The requested export is missing or is not callable.
     #[error("function `{function_name}` is not exported by script `{script_id}`")]
     FunctionNotFound {
         /// Script identifier.
-        script_id: String,
+        script_id: ScriptId,
         /// Exported function name.
         function_name: String,
     },
@@ -44,7 +52,7 @@ pub enum EngineError {
         /// Host contract stable name.
         contract_name: String,
         /// Bridge direction being validated.
-        direction: &'static str,
+        direction: Direction,
         /// Validation failure details.
         details: String,
     },
@@ -91,4 +99,22 @@ pub enum EngineError {
     /// Filesystem operation failed.
     #[error("filesystem error: {0}")]
     Io(#[from] io::Error),
+}
+
+/// The direction in which a value crosses the host bridge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Direction {
+    /// From the script into the host: a function's input.
+    Input,
+    /// From the host back into the script: a function's output.
+    Output,
+}
+
+impl std::fmt::Display for Direction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Input => "input",
+            Self::Output => "output",
+        })
+    }
 }

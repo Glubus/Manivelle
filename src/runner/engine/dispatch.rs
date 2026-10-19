@@ -1,17 +1,20 @@
 //! Calling exports and delivering events and requests, and the settling that ends
 //! every operation.
 
-use rquickjs::{CatchResultExt, CaughtError, Ctx, Value as JsValue};
+use rquickjs::{CatchResultExt, Ctx, Value as JsValue};
 
 use crate::contract::{JsArgs, JsDecode, JsEncode, ScriptExport};
 use crate::error::EngineError;
-use crate::types::Emission;
+use crate::types::{Emission, ScriptId};
 
-use super::super::errors::{caught_js_error, in_typescript};
+use super::super::errors::{caught_js_error, pending_exception};
 use super::super::host_fn;
-use super::Engine;
+use super::super::source_locations::in_typescript;
+use super::super::tasks::RequestGuard;
 use super::delivery::Audience;
+use super::faults::run_jobs;
 use super::invoke::invoke;
+use super::{Engine, EngineScript};
 
 /// How a thrown `null` is described: QuickJS throws it when it runs out of memory while
 /// already handling an out of memory. Built without its assertions, the same failure
@@ -30,31 +33,41 @@ impl Engine {
         args: impl JsArgs,
     ) -> Result<R, EngineError> {
         let script = self.script(script_id)?;
-        let _charge = self.charge_to(script);
-        let _budget = self.budget();
-        let result = script.context.with(|ctx| {
-            let export = script.export(&self.export_atoms, &ctx, script_id, function)?;
-            let returned = invoke(&ctx, &export, &args)?;
-            // A number, a boolean or nothing owns no memory: read it where it is.
-            if let Some(value) = R::decode_scalar(returned) {
-                return Ok(value);
-            }
-            // SAFETY: `returned` is an owned value of `ctx`, which the wrapper releases.
-            let returned = unsafe { JsValue::from_raw(ctx.clone(), returned) };
-            let value = self.await_returned(&ctx, returned, || {
-                format!("function `{function}` of script `{script_id}`")
-            })?;
-            R::decode_js(&ctx, value)
-                .catch(&ctx)
-                .map_err(caught_js_error)
-        });
-        let result = self.explain_quota(
-            script_id,
-            script,
-            || format!("function `{function}`"),
-            result,
-        );
-        self.attribute_interrupt(self.settle(result))
+        self.run_in_script(script, |ctx| {
+            let result = self.call_export(&ctx, script, script_id, function, &args);
+            self.explain_quota(
+                script_id,
+                script,
+                || format!("function `{function}`"),
+                result,
+            )
+        })
+    }
+
+    /// The body of [`Engine::call`], run in the context of `script`.
+    fn call_export<'js, R: JsDecode>(
+        &self,
+        ctx: &Ctx<'js>,
+        script: &EngineScript,
+        script_id: &str,
+        function: &str,
+        args: &impl JsArgs,
+    ) -> Result<R, EngineError> {
+        let export = script.export(&self.shared.export_atoms, ctx, script_id, function)?;
+        let returned = invoke(ctx, &export, args)?;
+        // A number, a boolean or nothing owns no memory: read it where it is.
+        if let Some(value) = R::decode_scalar(returned) {
+            return Ok(value);
+        }
+        // SAFETY: `returned` is an owned value of `ctx`, which the wrapper releases.
+        let returned = unsafe { JsValue::from_raw(ctx.clone(), returned) };
+        let value = self.await_returned(ctx, returned, || {
+            format!("function `{function}` of script `{script_id}`")
+        })?;
+        R::decode_js(ctx, value)
+            .map_err(rquickjs::Error::from)
+            .catch(ctx)
+            .map_err(caught_js_error)
     }
 
     /// Calls the export declared by `E`, like [`Engine::call`], with its name, argument
@@ -83,7 +96,7 @@ impl Engine {
         payload: &P,
     ) -> Result<usize, EngineError> {
         let audience = self.everyone_listening_to(event);
-        let emission = self.dispatch(&audience, event, payload, false, |_, _, _| Ok(()));
+        let emission = self.run_audience(&audience, event, payload, false, |_, _, _| Ok(()));
         self.first_failure(emission)
     }
 
@@ -92,9 +105,9 @@ impl Engine {
     /// the errors no script owns. It never fails as a whole, so a host that disables
     /// the scripts that fail (or counts their failures) reads them all from one
     /// emission.
-    pub fn emit_report<P: JsEncode + ?Sized>(&self, event: &str, payload: &P) -> Emission<'_> {
+    pub fn emit_report<P: JsEncode + ?Sized>(&self, event: &str, payload: &P) -> Emission {
         let audience = self.everyone_listening_to(event);
-        let mut emission = self.dispatch(&audience, event, payload, false, |_, _, _| Ok(()));
+        let mut emission = self.run_audience(&audience, event, payload, false, |_, _, _| Ok(()));
         if emission.delivered > 0
             && self.execution.interrupt_requested()
             && emission.unattributed.is_none()
@@ -116,7 +129,7 @@ impl Engine {
         payload: &P,
     ) -> Result<usize, EngineError> {
         let audience = self.script_listening_to(script_id, event)?;
-        let emission = self.dispatch(&audience, event, payload, false, |_, _, _| Ok(()));
+        let emission = self.run_audience(&audience, event, payload, false, |_, _, _| Ok(()));
         self.first_failure(emission)
     }
 
@@ -133,7 +146,7 @@ impl Engine {
         &self,
         event: &str,
         payload: &P,
-    ) -> Result<Vec<(&str, R)>, EngineError> {
+    ) -> Result<Vec<(ScriptId, R)>, EngineError> {
         let audience = self.everyone_listening_to(event);
         self.request_audience(&audience, event, payload)
     }
@@ -157,9 +170,9 @@ impl Engine {
         audience: &Audience,
         event: &str,
         payload: &P,
-    ) -> Result<Vec<(&str, R)>, EngineError> {
+    ) -> Result<Vec<(ScriptId, R)>, EngineError> {
         let mut replies = Vec::new();
-        let emission = self.dispatch(
+        let emission = self.run_audience(
             audience,
             event,
             payload,
@@ -169,9 +182,10 @@ impl Engine {
                     format!("a `{event}` handler of script `{script_id}`")
                 })?;
                 let reply = R::decode_js(ctx, value)
+                    .map_err(rquickjs::Error::from)
                     .catch(ctx)
                     .map_err(caught_js_error)?;
-                replies.push((script_id, reply));
+                replies.push((script_id.clone(), reply));
                 Ok(())
             },
         );
@@ -195,7 +209,7 @@ impl Engine {
         let settled = promise.finish::<JsValue<'_>>().catch(ctx);
         self.rejections.forget(ctx, &returned);
         settled.map_err(|error| match error {
-            CaughtError::Error(rquickjs::Error::WouldBlock) => EngineError::Execution {
+            rquickjs::CaughtError::Error(rquickjs::Error::WouldBlock) => EngineError::Execution {
                 details: format!(
                     "{} returned a Promise that never settles: only script Promise jobs run on an Engine",
                     what()
@@ -205,26 +219,38 @@ impl Engine {
         })
     }
 
+    /// Runs `body` in the context of `script`, as an operation of its own: under the
+    /// script's quota charge and a budget of its own, then settling the Promise jobs it
+    /// queued, and judging the outcome.
+    pub(super) fn run_in_script<T>(
+        &self,
+        script: &EngineScript,
+        body: impl FnOnce(Ctx<'_>) -> Result<T, EngineError>,
+    ) -> Result<T, EngineError> {
+        let _charge = self.charge_to(script);
+        let _budget = self.budget();
+        let result = script.context.with(body);
+        self.attribute_interrupt(self.settle(result))
+    }
+
     /// Runs every job left in the queue, for all scripts, then reports in order: the
     /// operation's own error, a job that threw, a Promise rejection nobody handled,
     /// with its locations pointing at the TypeScript source. Runs even when the
     /// operation failed, so nothing leaks into the next one.
     pub(super) fn settle<T>(&self, result: Result<T, EngineError>) -> Result<T, EngineError> {
-        let mut job_error = None;
         // Asking is cheaper than running a job that is not there, and most operations
         // queue none.
-        while self.runtime.is_job_pending() {
-            match self.runtime.execute_pending_job() {
-                Ok(true) => {}
-                Ok(false) => break,
-                Err(exception) => {
-                    let error = exception.0.with(|ctx| {
-                        caught_js_error(CaughtError::from_error(&ctx, rquickjs::Error::Exception))
-                    });
-                    job_error.get_or_insert(error);
-                }
+        let mut job_error = run_jobs(|| {
+            if !self.runtime.is_job_pending() {
+                return None;
             }
-        }
+            match self.runtime.execute_pending_job() {
+                Ok(true) => Some(Ok(())),
+                Ok(false) => None,
+                Err(exception) => Some(Err(exception.0.with(|ctx| pending_exception(&ctx)))),
+            }
+        })
+        .err();
         self.harvest_tasks();
         let unhandled = self.rejections.take();
         if self.execution.budget_expired() {
@@ -239,6 +265,34 @@ impl Engine {
         match job_error.or(unhandled) {
             Some(error) => Err(self.reported(error)),
             None => Ok(value),
+        }
+    }
+
+    /// Polls the scripts' deferred tasks; one comparison when none is waiting.
+    #[inline]
+    fn harvest_tasks(&self) {
+        if self.scheduling.active_tasks.get() != 0 {
+            self.poll_tasks();
+        }
+    }
+
+    fn poll_tasks(&self) {
+        for script in self.scripts.values() {
+            let mut tasks = script.tasks.borrow_mut();
+            if !tasks.is_empty() {
+                let _charge = self.charge_to(script);
+                let before = tasks.len();
+                script.context.with(|ctx| {
+                    tasks.retain_mut(|task| !task.poll(&ctx, &self.rejections, &self.module_store));
+                });
+                self.scheduling
+                    .active_tasks
+                    .set(self.scheduling.active_tasks.get() - (before - tasks.len()));
+            }
+            script
+                .request_guards
+                .borrow_mut()
+                .retain(RequestGuard::is_pending);
         }
     }
 

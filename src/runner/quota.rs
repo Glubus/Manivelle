@@ -66,6 +66,10 @@ impl Quota {
             .iter()
             .position(|account| account.retired.get() && account.used.get() == 0);
         let index = free.unwrap_or_else(|| {
+            assert!(
+                accounts.len() < MAX_OWNERS,
+                "an engine holds at most {MAX_OWNERS} script owners"
+            );
             accounts.push(Account {
                 used: Cell::new(0),
                 refused: Cell::new(false),
@@ -76,9 +80,8 @@ impl Quota {
         let account = &accounts[index];
         account.retired.set(false);
         account.refused.set(false);
-        // The cap is 16 million scripts, far beyond what an engine holds.
-        let id = u32::try_from(index + 1).expect("owner id fits in 24 bits");
-        debug_assert!(index < MAX_OWNERS);
+        // Ids start at 1 (0 means no owner) and the cap keeps them within the header's owner bits.
+        let id = u32::try_from(index + 1).expect("owner id fits the cap");
         Owner {
             quota: Rc::clone(self),
             id,
@@ -107,10 +110,15 @@ impl Quota {
         true
     }
 
+    /// Gives back `bytes` charged to `owner`. Every block is refunded once, to the owner
+    /// it was charged to, and an account is reused only once it holds nothing, so `bytes`
+    /// never exceeds what `owner` holds.
     fn credit(&self, owner: u32, bytes: usize) {
         let accounts = self.accounts.borrow();
         let account = &accounts[owner as usize - 1];
-        account.used.set(account.used.get() - bytes);
+        let used = account.used.get();
+        debug_assert!(bytes <= used, "refund exceeds the owner's charge");
+        account.used.set(used - bytes);
     }
 }
 
@@ -218,12 +226,24 @@ fn header(size: usize, owner: u32) -> u64 {
     size as u64 | (u64::from(owner) << SIZE_BITS)
 }
 
+/// The layout of a block of `size` payload bytes, header included.
+///
+/// # Safety
+/// `size` must be a size this allocator accepted, so at most `SIZE_MASK`; the total is
+/// then a valid layout.
+unsafe fn block_layout(size: usize) -> Layout {
+    debug_assert!(size as u64 <= SIZE_MASK);
+    // SAFETY: `HEADER + size` is below 2^40 + 8, and `ALIGN` is a power of two.
+    unsafe { Layout::from_size_align_unchecked(HEADER + size, ALIGN) }
+}
+
 /// Reads the size and the owner recorded before `ptr`.
 ///
 /// # Safety
-/// `ptr` must be a pointer this allocator returned.
+/// `ptr` must be a pointer this allocator returned: a `u64` header written by [`header`]
+/// sits `HEADER` bytes before it.
 unsafe fn read_header(ptr: *mut u8) -> (usize, u32) {
-    // SAFETY: the caller guarantees a header precedes `ptr`.
+    // SAFETY: the caller guarantees a `u64` header precedes `ptr`.
     let word = unsafe { ptr.sub(HEADER).cast::<u64>().read() };
     ((word & SIZE_MASK) as usize, (word >> SIZE_BITS) as u32)
 }
@@ -251,7 +271,7 @@ unsafe impl Allocator for QuotaAllocator {
         unsafe {
             let (size, owner) = read_header(ptr);
             self.refund(owner, size);
-            let layout = Layout::from_size_align_unchecked(HEADER + size, ALIGN);
+            let layout = block_layout(size);
             alloc::dealloc(ptr.sub(HEADER), layout);
         }
     }
@@ -278,7 +298,7 @@ unsafe impl Allocator for QuotaAllocator {
         // SAFETY: the old block was allocated with this layout, and `new_size` is below
         // 2^40, so the new layout cannot overflow.
         let block = unsafe {
-            let layout = Layout::from_size_align_unchecked(HEADER + old_size, ALIGN);
+            let layout = block_layout(old_size);
             alloc::realloc(ptr.sub(HEADER), layout, HEADER + new_size)
         };
         if block.is_null() {

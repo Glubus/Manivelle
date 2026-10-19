@@ -1,16 +1,16 @@
 //! What every script context gets besides host contracts: `ctx.off`, `console` and the
 //! timer functions on the host-driven clock.
 
+mod support;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use manivelle::{ConsoleLevel, Engine, EngineError, EngineOptions};
+use manivelle::{ConsoleLevel, Engine, EngineError};
 use serde_json::json;
 
-fn engine() -> Engine {
-    Engine::new(&EngineOptions::default()).expect("create engine")
-}
+use support::engine;
 
 fn engine_with(source: &str) -> Engine {
     let mut engine = engine();

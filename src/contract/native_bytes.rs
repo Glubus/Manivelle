@@ -7,7 +7,7 @@ use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::codec::cautious_capacity;
-use super::{Schema, TsSchema, TsType};
+use super::{TsSchema, TsType};
 
 /// Byte payload that crosses the typed host bridge as a native-backed `Uint8Array`.
 ///
@@ -121,16 +121,12 @@ impl<'de> Visitor<'de> for NativeBytesVisitor {
 }
 
 impl TsSchema for NativeBytes {
-    fn schema_name() -> &'static str {
-        "NativeBytes"
+    fn schema_name() -> Option<&'static str> {
+        Some("NativeBytes")
     }
 
     fn ts_type() -> TsType {
         TsType::Uint8Array
-    }
-
-    fn schema() -> Schema {
-        Schema::typed(Self::schema_name(), Self::ts_type())
     }
 }
 

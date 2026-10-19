@@ -1,12 +1,10 @@
 //! `manivelle run`: starts the target of a package, with its packages or without, and stays
 //! connected to it.
 
-use std::error::Error;
 use std::fs;
-use std::hash::{BuildHasher, Hasher};
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, ExitStatus};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -17,7 +15,8 @@ use manivelle::protocol::{
     Command, FromProgram, PACKAGES_ENV, PROTOCOL_ENV, Reply, Request, TOKEN_ENV,
 };
 
-type Failure = Box<dyn Error>;
+use super::Failure;
+use super::roots::canonical_roots;
 
 /// How often `--watch` asks the target to reload the files that changed.
 const WATCH_EVERY: Duration = Duration::from_secs(1);
@@ -56,26 +55,8 @@ struct Plan {
 pub fn run_target(args: RunArgs) -> Result<(), Failure> {
     let plan = plan(&args)?;
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
-    let token = new_token();
-
-    let mut command = Process::new(&plan.target);
-    command
-        .args(&args.program_args)
-        .env(PROTOCOL_ENV, listener.local_addr()?.to_string())
-        .env(TOKEN_ENV, &token);
-    if plan.package_roots.is_empty() {
-        command.env_remove(PACKAGES_ENV);
-    } else {
-        command.env(PACKAGES_ENV, std::env::join_paths(&plan.package_roots)?);
-    }
-    println!(
-        "[manivelle] running {} with {} package location(s)",
-        plan.target.display(),
-        plan.package_roots.len()
-    );
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("cannot start {}: {error}", plan.target.display()))?;
+    let token = new_token()?;
+    let mut child = spawn_target(&plan, &args.program_args, listener.local_addr()?, &token)?;
 
     let status = match await_target(&listener, &mut child, &token, args.timeout) {
         Ok(Some(connection)) => attended(connection, &mut child, args.watch)?,
@@ -94,10 +75,43 @@ pub fn run_target(args: RunArgs) -> Result<(), Failure> {
             return Err(error);
         }
     };
+    exit_outcome(&plan.target, status)
+}
+
+/// Starts the target with the address to connect to, the token to show and the packages.
+fn spawn_target(
+    plan: &Plan,
+    program_args: &[String],
+    address: SocketAddr,
+    token: &str,
+) -> Result<Child, Failure> {
+    let mut command = Process::new(&plan.target);
+    command
+        .args(program_args)
+        .env(PROTOCOL_ENV, address.to_string())
+        .env(TOKEN_ENV, token);
+    if plan.package_roots.is_empty() {
+        command.env_remove(PACKAGES_ENV);
+    } else {
+        command.env(PACKAGES_ENV, std::env::join_paths(&plan.package_roots)?);
+    }
+    println!(
+        "[manivelle] running {} with {} package location(s)",
+        plan.target.display(),
+        plan.package_roots.len()
+    );
+    let child = command
+        .spawn()
+        .map_err(|error| format!("cannot start {}: {error}", plan.target.display()))?;
+    Ok(child)
+}
+
+/// Succeeds when the target exited successfully.
+fn exit_outcome(target: &Path, status: ExitStatus) -> Result<(), Failure> {
     if status.success() {
         Ok(())
     } else {
-        Err(format!("{} exited with {status}", plan.target.display()).into())
+        Err(format!("{} exited with {status}", target.display()).into())
     }
 }
 
@@ -118,17 +132,12 @@ fn plan(args: &RunArgs) -> Result<Plan, Failure> {
     let target = fs::canonicalize(&target)
         .map_err(|error| format!("cannot find the target {}: {error}", target.display()))?;
 
-    let mut package_roots: Vec<PathBuf> = Vec::new();
-    if !args.no_packages {
+    let package_roots = if args.no_packages {
+        Vec::new()
+    } else {
         let own = manifest.iter().map(|manifest| manifest.root.clone());
-        for root in own.chain(args.package_dirs.iter().cloned()) {
-            let root = fs::canonicalize(&root)
-                .map_err(|error| format!("cannot find {}: {error}", root.display()))?;
-            if !package_roots.contains(&root) {
-                package_roots.push(root);
-            }
-        }
-    }
+        canonical_roots(own.chain(args.package_dirs.iter().cloned()))?
+    };
     Ok(Plan {
         target,
         package_roots,
@@ -139,22 +148,13 @@ fn no_target() -> Failure {
     "no target to run: add `target \"../program\"` to the manifest, or pass --target".into()
 }
 
-/// A secret the target must show to be heard: 256 bits hashed from the operating
-/// system's randomness (every `RandomState` is seeded by it), the clock and the process.
-fn new_token() -> String {
-    let mut hasher = blake3::Hasher::new();
-    for _ in 0..4 {
-        let seed = std::collections::hash_map::RandomState::new()
-            .build_hasher()
-            .finish();
-        hasher.update(&seed.to_le_bytes());
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos());
-    hasher.update(&now.to_le_bytes());
-    hasher.update(&std::process::id().to_le_bytes());
-    hasher.finalize().to_hex().to_string()
+/// A secret the target must show to be heard: 256 bits from the operating system's random
+/// source, in hex.
+fn new_token() -> Result<String, Failure> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes)
+        .map_err(|error| format!("cannot read the operating system's randomness: {error}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 /// The connection of the target, once it showed the token.

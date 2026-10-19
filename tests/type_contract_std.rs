@@ -147,7 +147,7 @@ fn integers_outside_the_safe_range_fail_both_ways() {
 fn integers_reject_out_of_range_fractional_and_non_numeric_values() {
     assert_eq!(
         decode_error::<u8>("300"),
-        "Error converting from js 'int' into type 'u8': expected integer in u8 range, got 300"
+        "expected integer in u8 range, got 300"
     );
     assert!(decode_error::<u8>("-1").contains("got -1"));
     assert!(decode_error::<i32>("1.5").contains("expected integer in i32 range, got 1.5"));

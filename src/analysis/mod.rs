@@ -20,7 +20,7 @@ use crate::compiler::{discover_project, extract_static_import_requests};
 use crate::contract::{HostContractAbi, HostContractDescriptor, HostContractKind};
 use crate::error::EngineError;
 
-pub use check::{Finding, PackageReport, Severity, add_permissions, check_package};
+pub use check::{Finding, PackageReport, Severity, check_package};
 
 /// The names of a program's host functions, events and script exports, which the code is
 /// read against.

@@ -22,8 +22,8 @@ pub(super) fn encode_body(container: &Container<'_>, shape: &Shape<'_>) -> Token
             quote!(&self.#member)
         })
         .collect();
-    let rust = container.rust_name();
-    encode_payload(&scope(container, &rust), shape, &accessors)
+    let rust = container.ident.to_string();
+    encode_payload(&struct_scope(container, &rust), shape, &accessors)
 }
 
 /// Body of `decode_js` for a struct.
@@ -31,16 +31,15 @@ pub(super) fn decode_body(container: &Container<'_>, shape: &Shape<'_>) -> Token
     if let Some(field) = container.transparent_field() {
         return decode_transparent(shape, field);
     }
-    let rust = container.rust_name();
-    decode_payload(&scope(container, &rust), shape, &quote!(Self))
+    let rust = container.ident.to_string();
+    decode_payload(&struct_scope(container, &rust), shape, &quote!(Self))
 }
 
-fn scope<'s>(container: &'s Container<'_>, rust: &'s str) -> Scope<'s> {
+/// The scope of the struct body, which carries the struct's own `#[serde(default)]`.
+fn struct_scope<'s>(container: &'s Container<'_>, rust: &'s str) -> Scope<'s> {
     Scope {
-        rust,
-        deny_unknown_fields: container.attrs.deny_unknown_fields,
         container_default: container.attrs.default.as_ref(),
-        tag: None,
+        ..Scope::of(container, rust)
     }
 }
 
@@ -56,5 +55,5 @@ fn decode_transparent(shape: &Shape<'_>, forwarded: &Field<'_>) -> TokenStream {
             default_value(field, false)
         }
     });
-    quote!(::manivelle::js::Result::Ok(Self { #(#members: #values),* }))
+    quote!(::std::result::Result::Ok(Self { #(#members: #values),* }))
 }

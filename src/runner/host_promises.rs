@@ -12,8 +12,9 @@ use rquickjs::{
 };
 use rustc_hash::FxHashMap;
 
-use crate::contract::{EncodeReply, HostResolver, ReplyInbox, Settlement};
+use crate::contract::HostResolver;
 use crate::error::EngineError;
+use crate::runner::reply_inbox::{EncodeReply, ReplyInbox, Settlement};
 
 /// The async host calls of one script version, from start to settlement.
 ///
@@ -220,8 +221,9 @@ mod tests {
     use rquickjs::{Context, Ctx, Promise, Result as JsResult, Runtime};
 
     use super::{HostPromises, WeakHostPromises};
-    use crate::contract::{EncodeReply, HostResolver, ReplyValue};
+    use crate::contract::HostResolver;
     use crate::error::EngineError;
+    use crate::runner::reply_inbox::{EncodeReply, ReplyValue};
 
     struct Number(f64);
 
@@ -237,7 +239,7 @@ mod tests {
             if value < 0.0 {
                 return Err(EngineError::ContractValidation {
                     contract_name: "test.score".to_owned(),
-                    direction: "output",
+                    direction: crate::Direction::Output,
                     details: "negative".to_owned(),
                 });
             }

@@ -10,12 +10,12 @@ mod support;
 
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use manivelle::{Engine, EngineOptions};
-use support::TestCacheDir;
+use support::{TestCacheDir, stderr, stdout};
 
 /// The program `manivelle run` starts. Run on its own, it does nothing.
 #[test]
@@ -107,14 +107,6 @@ fn run_command(dir: &Path, out: &Path, extra: &[&str]) -> Command {
     command
 }
 
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
-}
-
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
-}
-
 fn report(out: &Path) -> String {
     fs::read_to_string(out.join("report")).expect("the target wrote its report")
 }
@@ -182,14 +174,10 @@ fn run_watch_reloads_a_mod_whose_files_changed() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("run manivelle");
-    let started = Instant::now();
-    while !dir.path().join("ready").exists() {
-        assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "the target never got ready"
-        );
-        sleep(Duration::from_millis(20));
-    }
+    let ready = support::wait_until(Duration::from_secs(20), || {
+        dir.path().join("ready").exists()
+    });
+    assert!(ready, "the target never got ready");
     fs::write(
         dir.path().join("main.ts"),
         "export function v(): number { return 22; }",

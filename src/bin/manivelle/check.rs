@@ -1,6 +1,7 @@
 //! `manivelle check`: validates packages without loading them into a program.
 
 use std::fs;
+use std::iter;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -10,7 +11,9 @@ use manivelle::{
     Severity, add_permissions, check_package, resolve_packages,
 };
 
-use super::{Failure, read_descriptors, run_program};
+use super::Failure;
+use super::export::{read_descriptors, run_program};
+use super::roots::canonical_roots;
 
 #[derive(Args)]
 pub struct CheckArgs {
@@ -43,14 +46,8 @@ pub struct CheckArgs {
 pub fn check(args: CheckArgs) -> Result<(), Failure> {
     let directory = fs::canonicalize(&args.directory)
         .map_err(|error| format!("cannot find {}: {error}", args.directory.display()))?;
-    let mut roots = vec![directory.clone()];
-    for dir in &args.package_dirs {
-        let dir = fs::canonicalize(dir)
-            .map_err(|error| format!("cannot find {}: {error}", dir.display()))?;
-        if !roots.contains(&dir) {
-            roots.push(dir);
-        }
-    }
+    let roots =
+        canonical_roots(iter::once(directory.clone()).chain(args.package_dirs.iter().cloned()))?;
     let packages = resolve_packages(&roots)?;
     let descriptors = contracts(&args)?;
     if args.fix && descriptors.is_none() {

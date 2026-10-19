@@ -11,10 +11,7 @@ use std::time::Duration;
 use criterion::{
     BenchmarkGroup, Criterion, criterion_group, criterion_main, measurement::WallTime,
 };
-use manivelle::{
-    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostFunction,
-    HostFunctionSignature,
-};
+use manivelle::{Engine, EngineOptions};
 use mlua::{Lua, LuaSerdeExt};
 use rquickjs::{Context, Ctx, Function, Object, Runtime, Value as JsValue, prelude::Func};
 use serde_json::{Value, json};
@@ -23,6 +20,11 @@ use serde_json::{Value, json};
 mod quickjs_json;
 
 use quickjs_json::{js_to_json, json_to_js};
+
+#[path = "support/workload.rs"]
+mod workload;
+
+use workload::{Inc, ScoreUpdate};
 
 const HOST_CALLS: u32 = 1_000;
 const FIB_N: u32 = 20;
@@ -83,45 +85,6 @@ fn payload() -> Value {
         "position": { "x": 1.5, "y": 2.5, "z": 3.5 },
         "stats": (1..=20).collect::<Vec<u32>>(),
     })
-}
-
-struct Inc;
-
-impl HostContract for Inc {
-    const NAME: &'static str = "math.inc";
-    const IMPORT_MODULE: &'static str = "bench";
-    const EXPORT_PATH: &'static [&'static str] = &["math", "inc"];
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
-    }
-}
-
-impl HostFunctionSignature for Inc {
-    type Input = f64;
-    type Output = f64;
-}
-
-impl HostFunction for Inc {
-    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
-        Ok(input + 1.0)
-    }
-}
-
-struct ScoreUpdate;
-
-impl HostContract for ScoreUpdate {
-    const NAME: &'static str = "score.update";
-    const IMPORT_MODULE: &'static str = "bench";
-    const EXPORT_PATH: &'static [&'static str] = &["score", "onUpdate"];
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Callback
-    }
-}
-
-impl HostCallback for ScoreUpdate {
-    type Payload = Value;
 }
 
 struct LuaBench {

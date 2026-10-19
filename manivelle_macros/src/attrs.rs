@@ -4,15 +4,19 @@
 //! serde produces. Attributes only the serde_json reference codec can honor are kept as
 //! [`JsonOnly`] entries; `check` rejects them unless the type or field opts in with
 //! `#[manivelle(codec = "json")]`.
+mod manivelle_attrs;
+mod serde_attrs;
 
-use proc_macro2::Group;
+use proc_macro2::{Group, Span};
 use syn::{
-    Attribute, Error, Expr, ExprPath, Ident, LitStr, Path, Result, Token, Type,
-    meta::ParseNestedMeta, parse::Parse, token::Paren,
+    Attribute, Error, Expr, ExprPath, LitStr, Path, Result, Token, Type, meta::ParseNestedMeta,
+    parse::Parse, token::Paren,
 };
 
+use self::manivelle_attrs::parse_manivelle;
+use self::serde_attrs::SerdeAttrs;
 use crate::directions::Directions;
-use crate::rename::{RenameRule, RenameRules, Renamed};
+use crate::rename::{RenameRules, Renamed};
 
 /// `#[serde(default)]` or `#[serde(default = "path")]`.
 pub(crate) enum DefaultValue {
@@ -79,24 +83,6 @@ impl ContainerAttrs {
         Ok(container)
     }
 
-    fn apply_manivelle(&mut self, meta: &ParseNestedMeta<'_>) -> Result<()> {
-        if meta.path.is_ident("name") || meta.path.is_ident("rename") {
-            self.schema_name = Some(string_value(meta)?);
-        } else if meta.path.is_ident("codec") {
-            self.json_codec = parse_json_codec(meta)?;
-        } else if let Some(codecs) = restricted_codecs(&meta.path) {
-            if std::mem::replace(&mut self.codecs_restricted, true) {
-                return Err(
-                    meta.error("use only one of `schema_only`, `encode_only` and `decode_only`")
-                );
-            }
-            self.codecs = codecs;
-        } else {
-            return Err(meta.error("unsupported manivelle type attribute"));
-        }
-        Ok(())
-    }
-
     fn check_tagging(&self, attrs: &[Attribute]) -> Result<()> {
         let message = if self.untagged && (self.tag.is_some() || self.content.is_some()) {
             "serde untagged cannot be combined with tag or content"
@@ -105,11 +91,12 @@ impl ContainerAttrs {
         } else {
             return Ok(());
         };
-        let serde_attr = attrs
-            .iter()
-            .find(|attr| attr.path().is_ident("serde"))
-            .expect("tagging attributes come from a serde attribute");
-        Err(Error::new_spanned(serde_attr, message))
+        Err(
+            match attrs.iter().find(|attr| attr.path().is_ident("serde")) {
+                Some(serde_attr) => Error::new_spanned(serde_attr, message),
+                None => Error::new(Span::call_site(), message),
+            },
+        )
     }
 }
 
@@ -156,31 +143,6 @@ impl FieldAttrs {
         parse_manivelle(&field.attrs, |meta| attrs.apply_manivelle(&meta))?;
         Ok(attrs)
     }
-
-    fn apply_manivelle(&mut self, meta: &ParseNestedMeta<'_>) -> Result<()> {
-        if meta.path.is_ident("rename") {
-            self.schema_rename = Some(string_value(meta)?);
-            self.schema_only.push(SchemaOnly {
-                path: meta.path.clone(),
-                serde_equivalent: "rename = \"...\"",
-            });
-        } else if meta.path.is_ident("optional") {
-            self.schema_optional = true;
-            self.schema_only.push(SchemaOnly {
-                path: meta.path.clone(),
-                serde_equivalent: "default",
-            });
-        } else if meta.path.is_ident("codec") {
-            self.json_codec = parse_json_codec(meta)?;
-        } else if meta.path.is_ident("with") {
-            self.with = Some(parsed_string(meta)?);
-        } else if meta.path.is_ident("type") {
-            self.ts_type = Some(string_value(meta)?);
-        } else {
-            return Err(meta.error("unsupported manivelle field attribute"));
-        }
-        Ok(())
-    }
 }
 
 /// Enum variant attributes.
@@ -217,220 +179,6 @@ impl VariantAttrs {
         };
         parse_manivelle(&variant.attrs, |meta| attrs.apply_manivelle(&meta))?;
         Ok(attrs)
-    }
-
-    fn apply_manivelle(&mut self, meta: &ParseNestedMeta<'_>) -> Result<()> {
-        if !meta.path.is_ident("rename") {
-            return Err(meta.error("unsupported manivelle enum variant attribute"));
-        }
-        self.schema_rename = Some(string_value(meta)?);
-        self.schema_only.push(SchemaOnly {
-            path: meta.path.clone(),
-            serde_equivalent: "rename = \"...\"",
-        });
-        Ok(())
-    }
-}
-
-/// Every serde key TsSchema reads, gathered from all `#[serde]` attributes of one item.
-/// Serde itself rejects keys used in the wrong position, so one parser serves all.
-#[derive(Default)]
-struct SerdeAttrs {
-    rename: Renamed,
-    rename_all: RenameRules,
-    rename_all_fields: RenameRules,
-    aliases: Vec<String>,
-    tag: Option<String>,
-    content: Option<String>,
-    untagged: Option<Path>,
-    transparent: bool,
-    deny_unknown_fields: bool,
-    default: Option<DefaultValue>,
-    skip_serializing: bool,
-    skip_deserializing: bool,
-    skip_serializing_if: Option<ExprPath>,
-    flatten: bool,
-    serialize_with: Option<ExprPath>,
-    deserialize_with: Option<ExprPath>,
-    into: Option<Type>,
-    from: Option<Type>,
-    json_only: Vec<JsonOnly>,
-}
-
-impl SerdeAttrs {
-    fn parse(attrs: &[Attribute]) -> Result<Self> {
-        let mut parsed = Self::default();
-        for attr in attrs.iter().filter(|attr| attr.path().is_ident("serde")) {
-            attr.parse_nested_meta(|meta| parsed.apply(&meta))?;
-        }
-        Ok(parsed)
-    }
-
-    fn apply(&mut self, meta: &ParseNestedMeta<'_>) -> Result<()> {
-        let key = meta
-            .path
-            .get_ident()
-            .map(Ident::to_string)
-            .unwrap_or_default();
-        match key.as_str() {
-            "rename" => parse_renamed(meta, &mut self.rename)?,
-            "rename_all" => parse_rename_rules(meta, &mut self.rename_all)?,
-            "rename_all_fields" => parse_rename_rules(meta, &mut self.rename_all_fields)?,
-            "alias" => self.aliases.push(string_value(meta)?),
-            "tag" => self.tag = Some(string_value(meta)?),
-            "content" => self.content = Some(string_value(meta)?),
-            "untagged" => self.untagged = Some(meta.path.clone()),
-            "transparent" => self.transparent = true,
-            "deny_unknown_fields" => self.deny_unknown_fields = true,
-            "default" => self.default = Some(parse_default(meta)?),
-            "skip" => {
-                self.skip_serializing = true;
-                self.skip_deserializing = true;
-            }
-            "skip_serializing" => self.skip_serializing = true,
-            "skip_deserializing" => self.skip_deserializing = true,
-            "skip_serializing_if" => self.skip_serializing_if = Some(parsed_string(meta)?),
-            "flatten" => self.flatten = true,
-            "with" => self.apply_with(meta)?,
-            "serialize_with" => {
-                self.serialize_with = Some(parsed_string(meta)?);
-                self.push_json_only(meta, Directions::ENCODE);
-            }
-            "deserialize_with" => {
-                self.deserialize_with = Some(parsed_string(meta)?);
-                self.push_json_only(meta, Directions::DECODE);
-            }
-            "into" => {
-                self.into = Some(parsed_string(meta)?);
-                self.push_json_only(meta, Directions::ENCODE);
-            }
-            "from" | "try_from" => {
-                self.from = Some(parsed_string(meta)?);
-                self.push_json_only(meta, Directions::DECODE);
-            }
-            "crate" | "expecting" => skip_value(meta)?,
-            "other" | "borrow" => self.skip_json_only(meta, Directions::DECODE)?,
-            "getter" => self.skip_json_only(meta, Directions::ENCODE)?,
-            _ => self.skip_json_only(meta, Directions::BOTH)?,
-        }
-        Ok(())
-    }
-
-    /// `with = "module"` is `serialize_with = "module::serialize"` plus
-    /// `deserialize_with = "module::deserialize"`.
-    fn apply_with(&mut self, meta: &ParseNestedMeta<'_>) -> Result<()> {
-        let module: ExprPath = parsed_string(meta)?;
-        let function = |name: &str| {
-            let mut path = module.clone();
-            path.path
-                .segments
-                .push(Ident::new(name, proc_macro2::Span::call_site()).into());
-            path
-        };
-        self.serialize_with = Some(function("serialize"));
-        self.deserialize_with = Some(function("deserialize"));
-        self.push_json_only(meta, Directions::BOTH);
-        Ok(())
-    }
-
-    fn skip_json_only(&mut self, meta: &ParseNestedMeta<'_>, directions: Directions) -> Result<()> {
-        self.push_json_only(meta, directions);
-        skip_value(meta)
-    }
-
-    fn push_json_only(&mut self, meta: &ParseNestedMeta<'_>, directions: Directions) {
-        self.json_only.push(JsonOnly {
-            path: meta.path.clone(),
-            directions,
-        });
-    }
-}
-
-fn parse_manivelle(
-    attrs: &[Attribute],
-    mut apply: impl FnMut(ParseNestedMeta<'_>) -> Result<()>,
-) -> Result<()> {
-    for attr in attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("manivelle"))
-    {
-        attr.parse_nested_meta(&mut apply)?;
-    }
-    Ok(())
-}
-
-/// Codec directions selected by `schema_only`, `encode_only` or `decode_only`.
-fn restricted_codecs(path: &Path) -> Option<Directions> {
-    if path.is_ident("schema_only") {
-        Some(Directions::NONE)
-    } else if path.is_ident("encode_only") {
-        Some(Directions::ENCODE)
-    } else if path.is_ident("decode_only") {
-        Some(Directions::DECODE)
-    } else {
-        None
-    }
-}
-
-fn parse_json_codec(meta: &ParseNestedMeta<'_>) -> Result<bool> {
-    let codec: LitStr = meta.value()?.parse()?;
-    if codec.value() == "json" {
-        Ok(true)
-    } else {
-        Err(Error::new_spanned(
-            codec,
-            "unsupported manivelle codec, expected \"json\"",
-        ))
-    }
-}
-
-/// `rename = "name"` or `rename(serialize = "a", deserialize = "b")`.
-fn parse_renamed(meta: &ParseNestedMeta<'_>, renamed: &mut Renamed) -> Result<()> {
-    if meta.input.peek(Token![=]) {
-        let name = string_value(meta)?;
-        renamed.serialize = Some(name.clone());
-        renamed.deserialize = Some(name);
-        return Ok(());
-    }
-    meta.parse_nested_meta(|direction| {
-        let name = Some(string_value(&direction)?);
-        if direction.path.is_ident("serialize") {
-            renamed.serialize = name;
-        } else if direction.path.is_ident("deserialize") {
-            renamed.deserialize = name;
-        } else {
-            return Err(direction.error("expected `serialize` or `deserialize`"));
-        }
-        Ok(())
-    })
-}
-
-/// `rename_all = "rule"` or `rename_all(serialize = "a", deserialize = "b")`.
-fn parse_rename_rules(meta: &ParseNestedMeta<'_>, rules: &mut RenameRules) -> Result<()> {
-    if meta.input.peek(Token![=]) {
-        let rule = RenameRule::parse(&meta.value()?.parse()?)?;
-        rules.serialize = Some(rule);
-        rules.deserialize = Some(rule);
-        return Ok(());
-    }
-    meta.parse_nested_meta(|direction| {
-        let rule = Some(RenameRule::parse(&direction.value()?.parse()?)?);
-        if direction.path.is_ident("serialize") {
-            rules.serialize = rule;
-        } else if direction.path.is_ident("deserialize") {
-            rules.deserialize = rule;
-        } else {
-            return Err(direction.error("expected `serialize` or `deserialize`"));
-        }
-        Ok(())
-    })
-}
-
-fn parse_default(meta: &ParseNestedMeta<'_>) -> Result<DefaultValue> {
-    if meta.input.peek(Token![=]) {
-        Ok(DefaultValue::Path(parsed_string(meta)?))
-    } else {
-        Ok(DefaultValue::Trait)
     }
 }
 

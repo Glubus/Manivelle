@@ -9,10 +9,11 @@ use crate::host_fn::{HostFnArgs, doc_text};
 /// Keeps the struct or enum and makes it the contract of an event whose payload it is:
 /// `HostContract`, `HostCallback` and, with `reply = Type`, `HostRequest`.
 pub(crate) fn expand_host_event(args: TokenStream, item: &Item) -> syn::Result<TokenStream> {
-    let parsed = HostFnArgs::parse(args.clone())?;
+    let span = args.span();
+    let parsed = HostFnArgs::parse(args)?;
     let name = parsed
         .name
-        .ok_or_else(|| Error::new(args.span(), "missing `name = \"event.name\"`"))?;
+        .ok_or_else(|| Error::new(span, "missing `name = \"event.name\"`"))?;
     let (ident, generics, attrs) = match item {
         Item::Struct(item) => (&item.ident, &item.generics, &item.attrs),
         Item::Enum(item) => (&item.ident, &item.generics, &item.attrs),

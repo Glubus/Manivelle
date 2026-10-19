@@ -2,18 +2,21 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Error, Item, LitStr, Type, parse::Parser, spanned::Spanned};
+use syn::{Error, Item, LitStr, Type, spanned::Spanned};
+
+use crate::args::{parse_args, take_value};
 
 /// Keeps the struct and implements `ScriptExport` for it.
 pub(crate) fn expand_script_export(args: TokenStream, item: &Item) -> syn::Result<TokenStream> {
+    let span = args.span();
     let Arguments {
         name,
         args: arguments,
         output,
-    } = Arguments::parse(args.clone())?;
+    } = Arguments::parse(args)?;
     let name = name.ok_or_else(|| {
         Error::new(
-            args.span(),
+            span,
             "missing `name = \"exportName\"`, the function the script exports",
         )
     })?;
@@ -60,21 +63,15 @@ impl Arguments {
             args: None,
             output: None,
         };
-        let parser = syn::meta::parser(|meta| {
-            if meta.path.is_ident("name") && parsed.name.is_none() {
-                parsed.name = Some(meta.value()?.parse()?);
-            } else if meta.path.is_ident("args") && parsed.args.is_none() {
-                parsed.args = Some(meta.value()?.parse()?);
-            } else if meta.path.is_ident("output") && parsed.output.is_none() {
-                parsed.output = Some(meta.value()?.parse()?);
-            } else {
-                return Err(meta.error(
-                    "expected `name = \"export\"`, and optionally `args = (A, B)` and `output = T`",
-                ));
-            }
-            Ok(())
-        });
-        parser.parse2(tokens)?;
+        parse_args(
+            tokens,
+            "expected `name = \"export\"`, and optionally `args = (A, B)` and `output = T`",
+            |meta| {
+                Ok(take_value(meta, "name", &mut parsed.name)?
+                    || take_value(meta, "args", &mut parsed.args)?
+                    || take_value(meta, "output", &mut parsed.output)?)
+            },
+        )?;
         Ok(parsed)
     }
 }

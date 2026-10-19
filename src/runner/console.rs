@@ -6,9 +6,10 @@ use std::rc::Rc;
 
 use rquickjs::{Ctx, Function};
 
-use super::errors::{js_error, locations_in_typescript};
+use super::errors::js_error;
 use super::host_fn;
 use super::module_loader::ModuleStore;
+use super::source_locations::locations_in_typescript;
 use crate::error::EngineError;
 
 /// Severity of one `console` call, from the method a script called.

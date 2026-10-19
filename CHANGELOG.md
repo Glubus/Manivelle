@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+### Changed (breaking)
+
+- `HostContractRegistry` is removed: its methods are inherent on `InMemoryHostContractRegistry`.
+  The `register_*` names are gone (`register_function` → `function`, `register_function_with`
+  → `function_with`, `register_function_with_caller` → `function_with_caller`,
+  `register_async_function_with` → `async_function_with`,
+  `register_async_function_with_caller` → `async_function_with_caller`, `register_callback`
+  → `callback`, `register_request` → `request`, `register_context` → `context`).
+- `InMemoryHostContractRegistry::descriptor(name)` is `get(name)`; `list()` is
+  `descriptors()`; `typescript_declarations()` is `dts()` and `typescript_sdk()` is `sdk()`.
+- `EngineError::ContractValidation::direction` is the new `Direction` enum
+  (`Direction::Input` / `Direction::Output`, displayed as before) instead of `&str`.
+- A host contract name registered twice fails with the new `EngineError::DuplicateContract
+  { name }` instead of `EngineError::InvalidOptions`.
+- `ScriptId` is a newtype (`pub struct ScriptId`) instead of `type ScriptId = String`. It
+  shares its text on clone and derefs to `str`; it implements `Display`, `AsRef<str>`,
+  `Borrow<str>`, `PartialEq<str>`, `From<&str>` and `From<String>`, and `as_str()` returns
+  the text. Build one with `ScriptId::from(name)` and compare it with `== "name"`.
+- `EngineError::ScriptNotFound::script_id` and `EngineError::FunctionNotFound::script_id`
+  are `ScriptId` instead of `String`.
+- `Emission<'a>` is `Emission`: it has no lifetime, and `failures` is
+  `Vec<(ScriptId, EngineError)>` instead of `Vec<(&str, EngineError)>`, so it owns the ids.
+- `ReloadReport::reloaded`, `ReloadReport::failed` and `ReloadReport::dispose_failed` hold
+  `ScriptId` instead of `String`.
+- `Engine::request` returns `Vec<(ScriptId, R)>` instead of `Vec<(&str, R)>`, and
+  `Engine::request_deferred` returns `PendingCall<Vec<(ScriptId, R)>>` instead of
+  `PendingCall<Vec<(String, R)>>`.
+- `JsEncode::encode_js`, `JsDecode::decode_js` and `JsArgs::encode_args` return
+  `Result<_, CodecError>` instead of `rquickjs::Result`. `CodecError` holds the path to the
+  failing value as data (`path: Vec<PathSegment>`, where `PathSegment` is `Field`, `Index` or
+  `Key`) and the cause. Its `Display` output is unchanged; `CodecError::at` adds a segment,
+  and `From` converts it into `rquickjs::Error` at the QuickJS boundary.
+- `Schema.name` is `Option<String>`: `None` is an anonymous shape rendered inline, replacing
+  the `"unknown"` sentinel. `Schema::named` is removed; use `Schema::typed(name, ts_type)` or
+  `Schema::anonymous(ts_type)`. `Schema::declared_name()` returns the alias name. A
+  serialized `Schema` shows `null` where it showed `"unknown"`.
+- `TsSchema::schema_name()` returns `Option<&'static str>`: `None`, the default, is an
+  anonymous type. A hand-written impl returns `Some("Name")`. The derive output is
+  unchanged in TypeScript.
+- `manivelle::js::String` and `manivelle::js::Result` are removed: they shadowed the std
+  names. `manivelle::js::Error` remains.
+- The macro support items are reachable only through `#[doc(hidden)] manivelle::__private`
+  (`__private::derive`, `__private::expect_object`, `__private::expect_array_len`,
+  `__private::ObjectSchema`, `__private::schema_type_ref`, `__private::push_schema_dependency`,
+  `__private::serde`). The nine `__xxx` re-exports and `manivelle::__serde` are removed.
+  `codec::derive` is no longer a public module.
+
 ### Added
 
 - `#[host_fn(name = "user.find")]` (feature `derive`): declares a host function

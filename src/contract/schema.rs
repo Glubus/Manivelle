@@ -25,12 +25,12 @@ thread_local! {
 /// Future derive/proc-macro support should target this trait. Runtime host contracts
 /// can then use `T::schema()` instead of hand-building [`Schema`] values.
 pub trait TsSchema {
-    /// Stable TypeScript schema name.
+    /// Stable TypeScript schema name, or `None` for an anonymous type.
     ///
-    /// Primitive and container implementations intentionally use `unknown` so the
-    /// declaration renderer emits the inline type shape instead of a top-level alias.
-    fn schema_name() -> &'static str {
-        "unknown"
+    /// Primitive and container implementations are anonymous, so the declaration renderer
+    /// emits their inline type shape instead of a top-level alias.
+    fn schema_name() -> Option<&'static str> {
+        None
     }
 
     /// TypeScript type shape represented by this Rust type.
@@ -43,8 +43,11 @@ pub trait TsSchema {
 
     /// Full schema metadata for this Rust type.
     fn schema() -> Schema {
-        Schema::typed(Self::schema_name(), Self::ts_type())
-            .with_dependencies(Self::schema_dependencies())
+        let schema = match Self::schema_name() {
+            Some(name) => Schema::typed(name, Self::ts_type()),
+            None => Schema::anonymous(Self::ts_type()),
+        };
+        schema.with_dependencies(Self::schema_dependencies())
     }
 
     /// Validates one JSON value against this type's generated schema.
@@ -89,7 +92,7 @@ where
     dependencies.extend(T::schema_dependencies());
 
     let schema = T::schema();
-    if has_declaration_name(&schema) {
+    if schema.declared_name().is_some() {
         dependencies.push(schema);
     }
 }
@@ -109,10 +112,9 @@ impl SchemaDependencyGuard {
     where
         T: TsSchema,
     {
-        let name = T::schema_name();
-        if !has_declaration_name_str(name) {
+        let Some(name) = declared_schema_name(T::schema_name()) else {
             return DependencyGuardState::Unnamed;
-        }
+        };
 
         let entered = SCHEMA_DEPENDENCY_STACK.with(|stack| {
             let mut stack = stack.borrow_mut();
@@ -149,20 +151,15 @@ pub fn schema_type_ref<T>() -> TsType
 where
     T: TsSchema,
 {
-    let name = T::schema_name();
-    if has_declaration_name_str(name) {
-        TsType::TypeRef(name.to_owned())
-    } else {
-        T::ts_type()
+    match declared_schema_name(T::schema_name()) {
+        Some(name) => TsType::TypeRef(name.to_owned()),
+        None => T::ts_type(),
     }
 }
 
-fn has_declaration_name(schema: &Schema) -> bool {
-    has_declaration_name_str(&schema.name)
-}
-
-fn has_declaration_name_str(name: &str) -> bool {
-    !name.trim().is_empty() && name != "unknown"
+/// The schema name of `T` when it is declared, rather than anonymous or blank.
+fn declared_schema_name(name: Option<&'static str>) -> Option<&'static str> {
+    name.filter(|name| !name.trim().is_empty())
 }
 
 /// Named schemas referenced by a container of `T`.
@@ -266,7 +263,7 @@ macro_rules! transparent_schemas {
     ($($pointer:ident),+ $(,)?) => {
         $(
             impl<T: TsSchema> TsSchema for $pointer<T> {
-                fn schema_name() -> &'static str {
+                fn schema_name() -> Option<&'static str> {
                     T::schema_name()
                 }
 
@@ -341,8 +338,8 @@ mod tests {
     struct NamedDependencyBomb;
 
     impl TsSchema for NamedDependencyBomb {
-        fn schema_name() -> &'static str {
-            "NamedDependencyBomb"
+        fn schema_name() -> Option<&'static str> {
+            Some("NamedDependencyBomb")
         }
 
         fn ts_type() -> TsType {

@@ -34,8 +34,8 @@ impl Engine {
     /// A call that finds no timer due, which is most frames, is one comparison however
     /// many scripts are loaded.
     pub fn advance_timers(&self, elapsed: Duration) -> Result<usize, EngineError> {
-        let now = self.timer_clock.advance(elapsed);
-        if now < self.earliest_timer.get() {
+        let now = self.scheduling.timer_clock.advance(elapsed);
+        if now < self.scheduling.earliest_timer.get() {
             // No script has a timer due yet: nothing to look at, in any context.
             return Ok(0);
         }
@@ -56,7 +56,7 @@ impl Engine {
     /// once the clock gets there. A quarantined script's timers never fire, so they do not
     /// count.
     fn refresh_earliest_timer(&self) {
-        self.earliest_timer.set(
+        self.scheduling.earliest_timer.set(
             self.scripts
                 .values()
                 .filter(|script| !script.quarantined.get())
@@ -75,21 +75,20 @@ impl Engine {
         args: impl JsArgs,
     ) -> Result<PendingCall<R>, EngineError> {
         let script = self.script(script_id)?;
-        let _charge = self.charge_to(script);
-        let _budget = self.budget();
-        let result = script.context.with(|ctx| {
-            let export = script.export(&self.export_atoms, &ctx, script_id, function)?;
+        self.run_in_script(script, |ctx| {
+            let export = script.export(&self.shared.export_atoms, &ctx, script_id, function)?;
             let returned = invoke(&ctx, &export, &args)?;
             // SAFETY: `returned` is an owned value of `ctx`, which the wrapper releases.
             let returned = unsafe { JsValue::from_raw(ctx.clone(), returned) };
             let handle = PendingCall::new();
             if let Some(task) = ScriptTask::observe(&ctx, returned, &handle)? {
                 script.tasks.borrow_mut().push(task);
-                self.active_tasks.set(self.active_tasks.get() + 1);
+                self.scheduling
+                    .active_tasks
+                    .set(self.scheduling.active_tasks.get() + 1);
             }
             Ok(handle)
-        });
-        self.attribute_interrupt(self.settle(result))
+        })
     }
 
     /// Delivers queued host replies on the engine thread and drains their Promise
@@ -97,7 +96,7 @@ impl Engine {
     /// answer queued, which is most frames, is one atomic read however many scripts
     /// are loaded; only a script with an answer waiting is entered.
     pub fn pump(&self) -> Result<(), EngineError> {
-        if !self.host_wake.swap(false, Ordering::AcqRel) {
+        if !self.scheduling.host_wake.swap(false, Ordering::AcqRel) {
             // No resolver queued an answer since the last pump.
             return Ok(());
         }
@@ -115,7 +114,7 @@ impl Engine {
         }
         if stopped || first_error.is_some() {
             // Answers may still wait: the next pump looks again.
-            self.host_wake.store(true, Ordering::Release);
+            self.scheduling.host_wake.store(true, Ordering::Release);
         }
         self.begin_settle_slice();
         self.attribute_interrupt(self.settle(first_error.map_or(Ok(()), Err)))
@@ -155,18 +154,21 @@ impl Engine {
         let handle = PendingCall::new();
         let replies = RequestResults::new(handle.clone());
         let audience = self.everyone_listening_to(event);
-        let emission = self.dispatch(&audience, event, payload, true, |script_id, ctx, value| {
-            let script = self.script(script_id)?;
-            script
-                .request_guards
-                .borrow_mut()
-                .push(RequestGuard::new(&replies));
-            if let Some(task) = RequestResults::observe(&replies, ctx, script_id, value)? {
-                script.tasks.borrow_mut().push(task);
-                self.active_tasks.set(self.active_tasks.get() + 1);
-            }
-            Ok(())
-        });
+        let emission =
+            self.run_audience(&audience, event, payload, true, |script_id, ctx, value| {
+                let script = self.script(script_id)?;
+                script
+                    .request_guards
+                    .borrow_mut()
+                    .push(RequestGuard::new(&replies));
+                if let Some(task) = RequestResults::observe(&replies, ctx, script_id, value)? {
+                    script.tasks.borrow_mut().push(task);
+                    self.scheduling
+                        .active_tasks
+                        .set(self.scheduling.active_tasks.get() + 1);
+                }
+                Ok(())
+            });
         let delivery = self.first_failure(emission);
         if let Err(error) = delivery {
             replies.borrow_mut().fail(error);
@@ -179,33 +181,6 @@ impl Engine {
                 .retain(RequestGuard::is_pending);
         }
         Ok(handle)
-    }
-
-    /// Polls the scripts' deferred tasks; one comparison when none is waiting.
-    #[inline]
-    pub(super) fn harvest_tasks(&self) {
-        if self.active_tasks.get() != 0 {
-            self.poll_tasks();
-        }
-    }
-
-    fn poll_tasks(&self) {
-        for script in self.scripts.values() {
-            let mut tasks = script.tasks.borrow_mut();
-            if !tasks.is_empty() {
-                let _charge = self.charge_to(script);
-                let before = tasks.len();
-                script.context.with(|ctx| {
-                    tasks.retain_mut(|task| !task.poll(&ctx, &self.rejections, &self.module_store));
-                });
-                self.active_tasks
-                    .set(self.active_tasks.get() - (before - tasks.len()));
-            }
-            script
-                .request_guards
-                .borrow_mut()
-                .retain(RequestGuard::is_pending);
-        }
     }
 }
 
@@ -230,13 +205,16 @@ impl TimerPass<'_> {
         let mut start = 0;
         while start < count && !self.stopped {
             let Some((_, first)) = engine.scripts.get_index(start) else {
-                return;
+                // Unreachable while the scripts change only through `&mut self`: skip the
+                // position rather than the rest of the pass.
+                start += 1;
+                continue;
             };
-            let end = engine.context_run_end(first, start, count, |index| index);
-            if (start..end).any(|position| self.is_due(position)) {
-                self.fire_run(first, start..end);
+            let run = engine.run_len(first, start + 1..count);
+            if (start..start + run).any(|position| self.is_due(position)) {
+                self.fire_run(first, start..start + run);
             }
-            start = end;
+            start += run;
         }
     }
 

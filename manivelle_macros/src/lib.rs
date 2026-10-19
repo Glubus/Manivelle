@@ -1,5 +1,6 @@
 //! Derive macros for `manivelle`.
 
+mod args;
 mod attrs;
 mod check;
 mod codec;

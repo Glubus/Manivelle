@@ -58,8 +58,8 @@ impl WatchedFiles {
         }
     }
 
-    /// Watches every path of `other` with its stamp, replacing the stamp of a path
-    /// both watch.
+    /// Watches every path of `other` with its stamp. A path both watch takes the stamp of
+    /// `other`.
     pub(crate) fn merge(&mut self, other: Self) {
         self.0.extend(other.0);
     }

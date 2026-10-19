@@ -9,10 +9,12 @@ use rquickjs::{CatchResultExt, Ctx, Persistent, Promise, Value as JsValue};
 
 use crate::contract::JsDecode;
 use crate::error::EngineError;
+use crate::types::ScriptId;
 
-use super::errors::{caught_js_error, in_typescript, js_error};
+use super::errors::{caught_js_error, js_error};
 use super::module_loader::ModuleStore;
 use super::promise_rejections::UnhandledRejections;
+use super::source_locations::in_typescript;
 
 /// A script result that can complete after a later host-driven operation. Polling or
 /// taking the result never executes JavaScript; the engine drives it through `pump`,
@@ -99,14 +101,14 @@ impl<R: JsDecode + 'static> RequestLifetime for RefCell<RequestResults<R>> {
 /// Aggregates handler replies in registration order, even when Promise resolution
 /// happens in another order. All handlers run before the result is published.
 pub(super) struct RequestResults<R> {
-    handle: PendingCall<Vec<(String, R)>>,
-    replies: Vec<Option<Result<(String, R), EngineError>>>,
+    handle: PendingCall<Vec<(ScriptId, R)>>,
+    replies: Vec<Option<Result<(ScriptId, R), EngineError>>>,
     active: bool,
     finished: bool,
 }
 
 impl<R: JsDecode + 'static> RequestResults<R> {
-    pub(super) fn new(handle: PendingCall<Vec<(String, R)>>) -> Rc<RefCell<Self>> {
+    pub(super) fn new(handle: PendingCall<Vec<(ScriptId, R)>>) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
             handle,
             replies: Vec::new(),
@@ -118,7 +120,7 @@ impl<R: JsDecode + 'static> RequestResults<R> {
     pub(super) fn observe<'js>(
         state: &Rc<RefCell<Self>>,
         ctx: &Ctx<'js>,
-        script_id: &str,
+        script_id: &ScriptId,
         value: JsValue<'js>,
     ) -> Result<Option<ScriptTask>, EngineError> {
         let slot = {
@@ -127,15 +129,14 @@ impl<R: JsDecode + 'static> RequestResults<R> {
             state.replies.push(None);
             slot
         };
-        let id = script_id.to_owned();
+        let id = script_id.clone();
         let completed = Rc::clone(state);
         let cancelled = state.borrow().handle.clone();
         ScriptTask::watch(
             ctx,
             value,
             Box::new(move |ctx, outcome| {
-                let reply = outcome
-                    .and_then(|value| R::decode_js(ctx, value).catch(ctx).map_err(caught_js_error));
+                let reply = outcome.and_then(|value| decode_reply::<R>(ctx, value));
                 completed
                     .borrow_mut()
                     .record(slot, reply.map(|reply| (id, reply)));
@@ -154,7 +155,7 @@ impl<R: JsDecode + 'static> RequestResults<R> {
         self.complete_if_ready();
     }
 
-    fn record(&mut self, slot: usize, result: Result<(String, R), EngineError>) {
+    fn record(&mut self, slot: usize, result: Result<(ScriptId, R), EngineError>) {
         self.replies[slot] = Some(result);
         self.complete_if_ready();
     }
@@ -163,10 +164,11 @@ impl<R: JsDecode + 'static> RequestResults<R> {
         if self.finished || !self.active || self.replies.iter().any(Option::is_none) {
             return;
         }
+        // Every slot is filled: the check above returns while one is still empty.
         let mut first_error = None;
         let mut replies = Vec::with_capacity(self.replies.len());
-        for slot in self.replies.drain(..) {
-            match slot.expect("all request handlers have completed") {
+        for slot in self.replies.drain(..).flatten() {
+            match slot {
                 Ok(reply) => replies.push(reply),
                 Err(error) => {
                     first_error.get_or_insert(error);
@@ -177,6 +179,14 @@ impl<R: JsDecode + 'static> RequestResults<R> {
         self.finished = true;
         self.handle.complete(first_error.map_or(Ok(replies), Err));
     }
+}
+
+/// Decodes a script's reply as `R`; a failed conversion is the operation's error.
+fn decode_reply<'js, R: JsDecode>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<R, EngineError> {
+    R::decode_js(ctx, value)
+        .map_err(rquickjs::Error::from)
+        .catch(ctx)
+        .map_err(caught_js_error)
 }
 
 type TaskFinish = Box<dyn for<'js> FnOnce(&Ctx<'js>, Result<JsValue<'js>, EngineError>)>;
@@ -199,9 +209,7 @@ impl ScriptTask {
             ctx,
             value,
             Box::new(move |ctx, value| {
-                result.complete(value.and_then(|value| {
-                    R::decode_js(ctx, value).catch(ctx).map_err(caught_js_error)
-                }));
+                result.complete(value.and_then(|value| decode_reply::<R>(ctx, value)));
             }),
             Box::new(move || cancelled.complete(Err(EngineError::Cancelled))),
         )

@@ -117,11 +117,11 @@ object, a few hundred nanoseconds for a small one. For data sent every frame:
 ## Requests
 
 `request(event, &payload)` delivers an event like `emit` and returns what each
-handler returned, as `Vec<(&str, R)>` pairs of script id and reply, in delivery
+handler returned, as `Vec<(ScriptId, R)>` pairs of script id and reply, in delivery
 order:
 
 ```rust
-let labels: Vec<(&str, String)> = engine.request("menu.label", "save")?;
+let labels: Vec<(ScriptId, String)> = engine.request("menu.label", "save")?;
 ```
 
 ```ts

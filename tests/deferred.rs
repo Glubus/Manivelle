@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use manivelle::{Engine, EngineError, EngineOptions};
+use manivelle::{Engine, EngineError, EngineOptions, ScriptId};
 
 #[test]
 fn deferred_call_waits_for_a_host_clock_then_returns_its_value() {
@@ -102,8 +102,8 @@ fn deferred_request_keeps_delivery_order_when_handlers_resolve_later() {
     assert_eq!(
         result.take().expect("ready").expect("replies"),
         vec![
-            ("first".to_owned(), "slow".to_owned()),
-            ("second".to_owned(), "fast".to_owned()),
+            (ScriptId::from("first"), "slow".to_owned()),
+            (ScriptId::from("second"), "fast".to_owned()),
         ]
     );
 }

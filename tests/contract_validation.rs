@@ -24,8 +24,8 @@ macro_rules! declared {
         struct $name(Value);
 
         impl TsSchema for $name {
-            fn schema_name() -> &'static str {
-                stringify!($name)
+            fn schema_name() -> Option<&'static str> {
+                Some(stringify!($name))
             }
 
             fn ts_type() -> TsType {
@@ -41,7 +41,7 @@ macro_rules! declared {
             fn encode_js<'js>(
                 &self,
                 ctx: &manivelle::js::Ctx<'js>,
-            ) -> manivelle::js::Result<manivelle::js::Value<'js>> {
+            ) -> Result<manivelle::js::Value<'js>, manivelle::CodecError> {
                 self.0.encode_js(ctx)
             }
         }
@@ -50,7 +50,7 @@ macro_rules! declared {
             fn decode_js<'js>(
                 ctx: &manivelle::js::Ctx<'js>,
                 value: manivelle::js::Value<'js>,
-            ) -> manivelle::js::Result<Self> {
+            ) -> Result<Self, manivelle::CodecError> {
                 Value::decode_js(ctx, value).map($name)
             }
         }

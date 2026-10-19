@@ -56,10 +56,10 @@ pub(super) fn object_schema(
 /// `ObjectSchema` expression built by `steps`, which add to `object`.
 pub(super) fn object_block(steps: &[TokenStream]) -> TokenStream {
     if steps.is_empty() {
-        return quote!(::manivelle::__ObjectSchema::new());
+        return quote!(::manivelle::__private::ObjectSchema::new());
     }
     quote!({
-        let mut object = ::manivelle::__ObjectSchema::new();
+        let mut object = ::manivelle::__private::ObjectSchema::new();
         #(#steps)*
         object
     })
@@ -77,7 +77,7 @@ pub(super) fn type_ref(field: &Field<'_>) -> TokenStream {
         Some(text) => quote!(::manivelle::TsType::TypeRef(::std::string::String::from(#text))),
         None => {
             let ty = field.ty;
-            quote!(::manivelle::__schema_type_ref::<#ty>())
+            quote!(::manivelle::__private::schema_type_ref::<#ty>())
         }
     }
 }
@@ -89,7 +89,7 @@ pub(super) fn dependency(field: &Field<'_>) -> Option<TokenStream> {
         .attrs
         .ts_type
         .is_none()
-        .then(|| quote!(::manivelle::__push_schema_dependency::<#ty>(&mut dependencies);))
+        .then(|| quote!(::manivelle::__private::push_schema_dependency::<#ty>(&mut dependencies);))
 }
 
 pub(super) fn shape_dependencies(

@@ -43,7 +43,7 @@ impl ScriptExport for Missing {
 }
 
 fn engine() -> Engine {
-    let mut engine = Engine::new(&EngineOptions::default()).unwrap();
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .load_script(
             "rules",
@@ -69,7 +69,7 @@ fn call_typed_reports_an_export_the_script_lacks() {
 
 #[test]
 fn registered_exports_become_the_script_exports_type() {
-    let engine = Engine::new(&EngineOptions::default()).unwrap();
+    let engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .registry()
         .script_export::<Reset>()
@@ -96,7 +96,7 @@ fn registered_exports_become_the_script_exports_type() {
 
 #[test]
 fn an_export_and_a_host_function_with_the_same_name_coexist() {
-    let engine = Engine::new(&EngineOptions::default()).unwrap();
+    let engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .registry()
         .function_with::<AddContract>(Ok)
@@ -112,6 +112,6 @@ fn an_export_and_a_host_function_with_the_same_name_coexist() {
         2,
         "one function, one export (registered twice)"
     );
-    let function = engine.registry().descriptor("add").unwrap().unwrap();
+    let function = engine.registry().get("add").unwrap().unwrap();
     assert_eq!(function.kind, HostContractKind::Function);
 }

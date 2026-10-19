@@ -3,86 +3,31 @@
 //! `manivelle init --from <program>`: the tool starts a program that opted in, takes its
 //! scripting API and sets up a script project.
 //!
-//! The program is this very test executable, started with a filter that selects
-//! `export_child`, which registers a contract and calls `Engine::setup_protocol`.
+//! The program is the `init_program` example, which registers a contract and calls
+//! `Engine::setup_protocol`. `cargo test` builds examples into `target/<profile>/examples`,
+//! next to the `deps` directory that holds this test executable.
 
 mod support;
 
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
-use std::time::Duration;
 
-use manivelle::{
-    Engine, EngineError, EngineOptions, HostContract, HostContractKind, HostFunction,
-    HostFunctionSignature, TsSchema,
-};
-use serde::{Deserialize, Serialize};
-use support::TestCacheDir;
+use support::{TestCacheDir, example_program, stderr};
 
-#[derive(Deserialize, TsSchema)]
-#[serde(rename_all = "camelCase")]
-struct AddInput {
-    left: i32,
-    right: i32,
-}
-
-#[derive(Serialize, TsSchema)]
-#[serde(rename_all = "camelCase")]
-struct AddOutput {
-    value: i32,
-}
-
-struct Add;
-
-impl HostContract for Add {
-    const NAME: &'static str = "math.add";
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
-    }
-}
-
-impl HostFunctionSignature for Add {
-    type Input = AddInput;
-    type Output = AddOutput;
-}
-
-impl HostFunction for Add {
-    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
-        Ok(AddOutput {
-            value: input.left + input.right,
-        })
-    }
-}
-
-/// The program `manivelle init` starts: an application that opted in.
-#[test]
-fn export_child() {
-    if std::env::var_os("MANIVELLE_TEST_HANG").is_some() {
-        std::thread::sleep(Duration::from_secs(30));
-    }
-    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
-    engine.registry().function::<Add>().expect("register");
-    // Writes the SDK when the tool asked for it; the test ends either way.
-    engine.setup_protocol().expect("set up the protocol");
-}
-
-fn init(directory: &Path, filter: &str, extra: &[&str]) -> Output {
-    let program = std::env::current_exe().expect("test executable");
+/// Runs `manivelle init` on `directory` with `extra` options, and `program_args` passed on
+/// to the program.
+fn init(directory: &Path, extra: &[&str], program_args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_manivelle"))
         .arg("init")
         .arg(directory)
         .arg("--from")
-        .arg(program)
+        .arg(example_program("init_program"))
         .args(extra)
-        .args(["--", "--exact", filter, "--nocapture"])
+        .arg("--")
+        .args(program_args)
         .output()
         .expect("run manivelle")
-}
-
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
 #[test]
@@ -90,7 +35,7 @@ fn init_writes_the_declarations_of_the_program_and_a_project_around_them() {
     let dir = TestCacheDir::new("cli-init");
     let project = dir.path().join("my-mod");
 
-    let output = init(&project, "export_child", &[]);
+    let output = init(&project, &[], &[]);
 
     assert!(output.status.success(), "{}", stderr(&output));
     let types = fs::read_to_string(project.join("manivelle/manivelle.d.ts")).expect("types");
@@ -104,14 +49,13 @@ fn init_writes_the_declarations_of_the_program_and_a_project_around_them() {
     let manifest = fs::read_to_string(project.join("manivelle.kdl")).expect("manifest");
     assert!(manifest.contains("package \"my-mod\""), "{manifest}");
     assert!(manifest.contains("// math.add"), "{manifest}");
-    let program = std::env::current_exe().expect("test executable");
     let target = manifest
         .lines()
         .find_map(|line| line.trim().strip_prefix("target "))
         .expect("a target line");
     assert!(
         target.contains(
-            program
+            example_program("init_program")
                 .file_name()
                 .and_then(|n| n.to_str())
                 .expect("file name")
@@ -131,7 +75,7 @@ fn init_writes_the_declarations_of_the_program_and_a_project_around_them() {
 fn the_project_init_writes_type_checks() {
     let dir = TestCacheDir::new("cli-init-tsc");
     let project = dir.path().join("my-mod");
-    let output = init(&project, "export_child", &[]);
+    let output = init(&project, &[], &[]);
     assert!(output.status.success(), "{}", stderr(&output));
     fs::write(
         project.join("src/main.ts"),
@@ -163,12 +107,12 @@ export function run(): number {
 fn running_init_again_updates_the_declarations_and_keeps_the_authors_files() {
     let dir = TestCacheDir::new("cli-init-again");
     let project = dir.path().join("my-mod");
-    assert!(init(&project, "export_child", &[]).status.success());
+    assert!(init(&project, &[], &[]).status.success());
     fs::write(project.join("manivelle/manivelle.d.ts"), "stale").expect("stale types");
     fs::write(project.join("src/main.ts"), "// mine\n").expect("edit script");
     fs::write(project.join("tsconfig.json"), "{ \"mine\": true }").expect("edit tsconfig");
 
-    let output = init(&project, "export_child", &[]);
+    let output = init(&project, &[], &[]);
 
     assert!(output.status.success(), "{}", stderr(&output));
     let types = fs::read_to_string(project.join("manivelle/manivelle.d.ts")).expect("types");
@@ -190,8 +134,8 @@ fn init_can_name_the_generated_files() {
 
     let output = init(
         &project,
-        "export_child",
         &["--types=game.d.ts", "--sdk", "game.sdk.ts"],
+        &[],
     );
 
     assert!(output.status.success(), "{}", stderr(&output));
@@ -206,8 +150,8 @@ fn a_program_that_did_not_opt_in_is_reported_and_leaves_no_files() {
     let dir = TestCacheDir::new("cli-init-no-optin");
     let project = dir.path().join("my-mod");
 
-    // Selects no test: the program starts and exits cleanly without exporting.
-    let output = init(&project, "no_such_test", &[]);
+    // The program exits cleanly without calling `Engine::setup_protocol`.
+    let output = init(&project, &[], &["no-opt-in"]);
 
     assert!(!output.status.success());
     assert!(
@@ -222,22 +166,14 @@ fn a_program_that_did_not_opt_in_is_reported_and_leaves_no_files() {
 fn a_program_that_never_exits_is_stopped_at_the_timeout() {
     let dir = TestCacheDir::new("cli-init-timeout");
     let project = dir.path().join("my-mod");
-    let program = std::env::current_exe().expect("test executable");
 
     let output = Command::new(env!("CARGO_BIN_EXE_manivelle"))
         .env("MANIVELLE_TEST_HANG", "1")
         .arg("init")
         .arg(&project)
         .arg("--from")
-        .arg(program)
-        .args([
-            "--timeout",
-            "1",
-            "--",
-            "--exact",
-            "export_child",
-            "--nocapture",
-        ])
+        .arg(example_program("init_program"))
+        .args(["--timeout", "1"])
         .output()
         .expect("run manivelle");
 
@@ -261,15 +197,15 @@ fn file_names_that_could_leave_the_project_are_refused() {
         "sub/dir.d.ts",
         "plain.txt",
     ] {
-        let output = init(&project, "export_child", &["--types", bad]);
+        let output = init(&project, &["--types", bad], &[]);
 
         assert!(!output.status.success(), "{bad} was accepted");
         assert!(!project.exists(), "{bad} left files behind");
     }
     let same = init(
         &project,
-        "export_child",
         &["--types", "same.d.ts", "--sdk", "same.d.ts"],
+        &[],
     );
     assert!(!same.status.success());
 }
@@ -309,7 +245,7 @@ fn a_symbolic_link_in_the_project_is_replaced_and_never_followed() {
     symlink(&victim, project.join("manivelle/manivelle.d.ts")).expect("link to a file");
     symlink(&created, project.join("tsconfig.json")).expect("dangling link");
 
-    let output = init(&project, "export_child", &[]);
+    let output = init(&project, &[], &[]);
 
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(fs::read_to_string(&victim).expect("victim"), "PRECIOUS");
