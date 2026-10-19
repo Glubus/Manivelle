@@ -71,6 +71,20 @@ let output: serde_json::Value = engine.call("weather-rules", "run", ())?;
 engine.emit("user.found", &UserFoundPayload { user_id: 7, display_name: "Ada".into() })?;
 ```
 
+With the `derive` feature, `#[host_fn]` writes the marker and its three impls from a
+plain function, and the optional `#[host_mod]` prefixes the names of a module's functions:
+
+```rust
+#[host_fn(name = "user.find")]
+fn find_user(input: FindUserInput) -> Result<FindUserOutput, EngineError> {
+    Ok(FindUserOutput { display_name: format!("user {}", input.user_id) })
+}
+
+engine.registry().function::<FindUser>()?;
+```
+
+See [Register Host Functions And Callbacks](docs/guides/register-host-functions.md).
+
 Scripts call host functions and handle host events:
 
 ```ts

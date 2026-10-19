@@ -6,6 +6,8 @@ mod codec;
 mod directions;
 mod expand;
 mod generics;
+mod host_fn;
+mod host_mod;
 mod model;
 mod rename;
 mod schema;
@@ -72,6 +74,57 @@ use expand::expand_ts_schema;
 pub fn derive_ts_schema(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
     expand_ts_schema(&input)
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+/// Declares a host function contract from a plain Rust function.
+///
+/// ```ignore
+/// #[host_fn(name = "user.find")]
+/// fn find_user(input: FindUserInput) -> Result<FindUserOutput, EngineError> {
+///     Ok(FindUserOutput { display_name: format!("user {}", input.user_id) })
+/// }
+/// ```
+///
+/// Keeps the function and generates a marker type named after it in `PascalCase`
+/// (`FindUser`) with the same visibility. The marker implements `HostContract` (the
+/// given `name`), `HostFunctionSignature` (`Input` is the parameter type, `()` without
+/// parameter; `Output` is the `T` of `Result<T, EngineError>`) and `HostFunction`, so it
+/// registers with `registry.function::<FindUser>()`.
+///
+/// The function must not be `async` or generic, and takes at most one parameter.
+#[proc_macro_attribute]
+pub fn host_fn(args: TokenStream, item: TokenStream) -> TokenStream {
+    let function = parse_macro_input!(item as syn::ItemFn);
+    host_fn::expand_host_fn(args.into(), &function)
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+/// Prefixes the contract names of the `#[host_fn]` functions of an inline module.
+///
+/// ```ignore
+/// #[host_mod(namespace = "math")] // or `#[host_mod]`: the module's name
+/// mod math {
+///     #[host_fn]                                   // "math.add"
+///     pub fn add(input: AddInput) -> Result<AddOutput, EngineError> { /* ... */ }
+///
+///     #[host_fn(name = "debug.log", no_namespace)] // "debug.log", not prefixed
+///     pub fn log(input: LogInput) -> Result<(), EngineError> { /* ... */ }
+/// }
+/// ```
+///
+/// Inside the module, `#[host_fn]` without `name` takes the function's name, and a
+/// given `name` is prefixed too. `no_namespace` keeps `name` as the full name. Only the
+/// module's own functions are rewritten: a nested module needs its own `#[host_mod]`.
+/// The module must be inline, since a macro cannot read `mod name;`. Marker types stay
+/// in the module and follow the function's visibility, so use `pub fn` to register
+/// them from outside (`math::Add`).
+#[proc_macro_attribute]
+pub fn host_mod(args: TokenStream, item: TokenStream) -> TokenStream {
+    let module = parse_macro_input!(item as syn::ItemMod);
+    host_mod::expand_host_mod(args.into(), module)
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

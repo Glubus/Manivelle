@@ -45,7 +45,7 @@ pub use contract::{
 };
 pub use error::EngineError;
 #[cfg(feature = "derive")]
-pub use manivelle_macros::TsSchema;
+pub use manivelle_macros::{TsSchema, host_fn, host_mod};
 pub use registry::{
     HostContractRegistry, InMemoryHostContractRegistry,
     render_typescript_declarations_for_descriptors, render_typescript_sdk_for_descriptors,

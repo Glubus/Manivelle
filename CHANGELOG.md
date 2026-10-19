@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `#[host_fn(name = "user.find")]` (feature `derive`): declares a host function
+  from a plain `fn(input) -> Result<Output, EngineError>`. It generates the marker type
+  (`FindUser`) with its `HostContract`, `HostFunctionSignature` and `HostFunction`
+  impls, ready for `registry.function::<FindUser>()`.
+- `#[host_mod]` (feature `derive`), optional: on an inline module it prefixes the
+  `#[host_fn]` names of its functions with the namespace (`#[host_mod(namespace = "math")]`,
+  or the module's name when bare). Inside it, `#[host_fn]` takes the function's name when
+  `name` is omitted, and `no_namespace` keeps `name` as the full contract name.
+
 ## 0.1.2
 
 ### Added

@@ -1,0 +1,13 @@
+error: a host function takes at most one input; group fields in a struct
+ --> tests/ui/host_fn/two_inputs.rs:4:8
+  |
+4 | fn add(left: f64, right: f64) -> Result<f64, EngineError> {
+  |        ^^^^
+
+warning: unused import: `EngineError`
+ --> tests/ui/host_fn/two_inputs.rs:1:17
+  |
+1 | use manivelle::{EngineError, host_fn};
+  |                 ^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

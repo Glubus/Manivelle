@@ -100,6 +100,51 @@ TypeScript shape.
 `HostFunctionSignature` is what scripts see: the input and output types.
 `HostFunction` adds the static `call` that implements it.
 
+### Shortcut: `#[host_fn]`
+
+With the `derive` feature, the three impls above reduce to the function itself.
+The marker type is named after the function in `PascalCase` (`find_user` → `FindUser`):
+
+```rust
+use manivelle::{EngineError, host_fn};
+
+#[host_fn(name = "user.find")]
+fn find_user(input: FindUserInput) -> Result<FindUserOutput, EngineError> {
+    Ok(FindUserOutput { user_id: input.user_id, display_name: format!("user-{}", input.user_id), active: true, roles: vec![] })
+}
+
+// registry.function::<FindUser>()?;
+```
+
+The function takes zero or one parameter (`Input` is `()` without one), and cannot be
+`async` or generic. Closures and `async_function_with` keep the manual form.
+
+### Group Functions Under A Namespace: `#[host_mod]`
+
+`#[host_mod]` is optional. On an inline module, it prefixes the contract names of its
+`#[host_fn]` functions, so `name` can be left out:
+
+```rust
+use manivelle::{EngineError, host_fn, host_mod};
+
+#[host_mod(namespace = "math")] // or `#[host_mod]`: uses the module's name
+mod math {
+    use super::*;
+
+    #[host_fn]                                   // "math.add"
+    pub fn add(input: AddInput) -> Result<AddOutput, EngineError> { /* ... */ }
+
+    #[host_fn(name = "debug.log", no_namespace)] // "debug.log", not prefixed
+    pub fn log(input: LogInput) -> Result<(), EngineError> { /* ... */ }
+}
+
+// registry.function::<math::Add>()?;
+```
+
+Use `pub fn` to register the marker from outside the module. Only the module's own
+functions are rewritten: a nested module needs its own `#[host_mod]`. `mod name;` in
+another file is not supported, because a macro cannot read it.
+
 ## Implement A Host Function With A Closure
 
 A contract that only implements `HostFunctionSignature` is registered together
