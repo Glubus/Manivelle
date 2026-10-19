@@ -2,10 +2,10 @@
 //! element, slices and vectors one argument per item.
 
 use rquickjs::function::Args;
-use rquickjs::{Ctx, Result as JsResult, qjs};
+use rquickjs::{Ctx, qjs};
 
 use super::super::arity::for_each_tuple;
-use super::{JsArgs, JsEncode, at_path};
+use super::{CodecError, JsArgs, JsEncode};
 
 /// Encodes argument `index` and appends it, prefixing errors with `arguments[index]`.
 fn push_argument<'js, T: JsEncode + ?Sized>(
@@ -13,15 +13,16 @@ fn push_argument<'js, T: JsEncode + ?Sized>(
     args: &mut Args<'js>,
     index: usize,
     argument: &T,
-) -> JsResult<()> {
+) -> Result<(), CodecError> {
     let value = argument
         .encode_js(ctx)
-        .map_err(|error| at_path(error, format_args!("arguments[{index}]")))?;
-    args.push_arg(value)
+        .map_err(|error| error.at(index).at("arguments"))?;
+    args.push_arg(value)?;
+    Ok(())
 }
 
 impl JsArgs for () {
-    fn encode_args<'js>(&self, ctx: &Ctx<'js>) -> JsResult<Args<'js>> {
+    fn encode_args<'js>(&self, ctx: &Ctx<'js>) -> Result<Args<'js>, CodecError> {
         Ok(Args::new(ctx.clone(), 0))
     }
 
@@ -33,7 +34,7 @@ impl JsArgs for () {
 macro_rules! tuple_args {
     ($len:literal => $($index:tt $name:ident),+) => {
         impl<$($name: JsEncode),+> JsArgs for ($($name,)+) {
-            fn encode_args<'js>(&self, ctx: &Ctx<'js>) -> JsResult<Args<'js>> {
+            fn encode_args<'js>(&self, ctx: &Ctx<'js>) -> Result<Args<'js>, CodecError> {
                 let mut args = Args::new(ctx.clone(), $len);
                 $(push_argument(ctx, &mut args, $index, &self.$index)?;)+
                 Ok(args)
@@ -51,7 +52,7 @@ macro_rules! tuple_args {
 for_each_tuple!(tuple_args);
 
 impl<T: JsEncode> JsArgs for [T] {
-    fn encode_args<'js>(&self, ctx: &Ctx<'js>) -> JsResult<Args<'js>> {
+    fn encode_args<'js>(&self, ctx: &Ctx<'js>) -> Result<Args<'js>, CodecError> {
         let mut args = Args::new(ctx.clone(), self.len());
         for (index, argument) in self.iter().enumerate() {
             push_argument(ctx, &mut args, index, argument)?;
@@ -69,7 +70,7 @@ impl<T: JsEncode> JsArgs for [T] {
 }
 
 impl<T: JsEncode> JsArgs for Vec<T> {
-    fn encode_args<'js>(&self, ctx: &Ctx<'js>) -> JsResult<Args<'js>> {
+    fn encode_args<'js>(&self, ctx: &Ctx<'js>) -> Result<Args<'js>, CodecError> {
         self.as_slice().encode_args(ctx)
     }
 
@@ -79,7 +80,7 @@ impl<T: JsEncode> JsArgs for Vec<T> {
 }
 
 impl<A: JsArgs + ?Sized> JsArgs for &A {
-    fn encode_args<'js>(&self, ctx: &Ctx<'js>) -> JsResult<Args<'js>> {
+    fn encode_args<'js>(&self, ctx: &Ctx<'js>) -> Result<Args<'js>, CodecError> {
         (**self).encode_args(ctx)
     }
 

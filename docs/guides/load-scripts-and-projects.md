@@ -7,7 +7,9 @@ unloaded. After a script is loaded, Rust calls its exported functions by:
 - export name: the TypeScript function exported by the script
 
 `script_id` is not a file path and not a package name. It is an id chosen by
-your application. Good examples:
+your application. The load methods take it as `impl Into<ScriptId>` (a `&str` or a
+`String`), and the engine reports it back as a `ScriptId`, which displays as its text
+and compares with a string literal. Good examples:
 
 - `weather-rules`
 - `mod:zoro_moveset`

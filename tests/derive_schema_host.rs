@@ -184,9 +184,9 @@ impl manivelle::HostCallback for AutoInvoiceCreated {
 
 #[test]
 fn derive_ts_schema_for_serde_transparent_newtypes() {
-    assert_eq!(UserId::schema_name(), "UserId");
+    assert_eq!(UserId::schema_name(), Some("UserId"));
     assert_eq!(UserId::ts_type(), TsType::Number);
-    assert_eq!(SessionToken::schema_name(), "SessionToken");
+    assert_eq!(SessionToken::schema_name(), Some("SessionToken"));
     assert_eq!(SessionToken::ts_type(), TsType::String);
 }
 
@@ -291,9 +291,18 @@ fn typed_function_registration_uses_input_and_output_ts_schema() {
     let dts = registry.dts().expect("render declarations");
     let sdk = registry.sdk().expect("render SDK");
 
-    assert_eq!(descriptor.schema.name, "AutoCreateInvoiceInput");
-    assert_eq!(function.input_schema.name, "AutoCreateInvoiceInput");
-    assert_eq!(function.output_schema.name, "AutoCreateInvoiceOutput");
+    assert_eq!(
+        descriptor.schema.name.as_deref(),
+        Some("AutoCreateInvoiceInput")
+    );
+    assert_eq!(
+        function.input_schema.name.as_deref(),
+        Some("AutoCreateInvoiceInput")
+    );
+    assert_eq!(
+        function.output_schema.name.as_deref(),
+        Some("AutoCreateInvoiceOutput")
+    );
     assert!(dts.contains("type AutoCreateInvoiceInput = { accountId: string; total: number; };"));
     assert!(
         dts.contains("type AutoCreateInvoiceOutput = { invoiceId: string; accepted: boolean; };")
@@ -319,8 +328,14 @@ fn typed_callback_registration_uses_payload_ts_schema() {
     let dts = registry.dts().expect("render declarations");
     let sdk = registry.sdk().expect("render SDK");
 
-    assert_eq!(descriptor.schema.name, "AutoInvoiceCreatedPayload");
-    assert_eq!(callback.payload_schema.name, "AutoInvoiceCreatedPayload");
+    assert_eq!(
+        descriptor.schema.name.as_deref(),
+        Some("AutoInvoiceCreatedPayload")
+    );
+    assert_eq!(
+        callback.payload_schema.name.as_deref(),
+        Some("AutoInvoiceCreatedPayload")
+    );
     assert!(
         dts.contains("type AutoInvoiceCreatedPayload = { invoiceId: string; total: number; };")
     );

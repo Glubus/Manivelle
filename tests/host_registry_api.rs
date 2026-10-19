@@ -162,12 +162,18 @@ fn registry_supports_fluent_contract_registration() {
         .expect("context descriptor");
 
     assert_eq!(function.kind, HostContractKind::Function);
-    assert_eq!(function.schema.name, "FindUserInput");
+    assert_eq!(function.schema.name.as_deref(), Some("FindUserInput"));
     let function_metadata = function.function.expect("function metadata");
-    assert_eq!(function_metadata.input_schema.name, "FindUserInput");
-    assert_eq!(function_metadata.output_schema.name, "FindUserOutput");
+    assert_eq!(
+        function_metadata.input_schema.name.as_deref(),
+        Some("FindUserInput")
+    );
+    assert_eq!(
+        function_metadata.output_schema.name.as_deref(),
+        Some("FindUserOutput")
+    );
     assert_eq!(callback.kind, HostContractKind::Callback);
-    assert_eq!(callback.schema.name, "ScoreUpdatePayload");
+    assert_eq!(callback.schema.name.as_deref(), Some("ScoreUpdatePayload"));
     assert_eq!(context.kind, HostContractKind::Context);
     let dts = engine.registry().dts().expect("render dts");
     support::assert_tsc(

@@ -95,7 +95,10 @@ impl SchemaEmitter {
     /// Appends the alias of `schema` to `sections`, after those of its dependencies. A
     /// schema that is unknown or already emitted adds nothing.
     pub(super) fn emit(&mut self, schema: &Schema, sections: &mut Vec<String>) {
-        if is_unknown_schema(schema) || !self.emitted.insert(schema.name.clone()) {
+        let Some(name) = schema.declared_name() else {
+            return;
+        };
+        if !self.emitted.insert(name.to_owned()) {
             return;
         }
 
@@ -107,13 +110,11 @@ impl SchemaEmitter {
             schema.ts_type,
             TsType::Object(_) | TsType::OpenObject { .. }
         ) {
-            self.models
-                .insert(schema.name.clone(), schema.ts_type.clone());
+            self.models.insert(name.to_owned(), schema.ts_type.clone());
         }
 
         sections.push(format!(
-            "type {} = {};",
-            schema.name,
+            "type {name} = {};",
             render_ts_type(&schema.ts_type)
         ));
     }
@@ -377,10 +378,9 @@ pub(super) fn render_doc_comment(docs: &str, indent: &str) -> String {
 }
 
 pub(super) fn schema_type_name(schema: &Schema) -> String {
-    if schema.name.trim().is_empty() || schema.name == "unknown" {
-        render_ts_type(&schema.ts_type)
-    } else {
-        schema.name.clone()
+    match schema.declared_name() {
+        Some(name) => name.to_owned(),
+        None => render_ts_type(&schema.ts_type),
     }
 }
 
@@ -559,8 +559,4 @@ fn render_wrapped_array_type(item: &TsType) -> String {
         | TsType::Record { .. } => format!("({})", render_ts_type(item)),
         _ => render_ts_type(item),
     }
-}
-
-pub(super) fn is_unknown_schema(schema: &Schema) -> bool {
-    schema.name.trim().is_empty() || schema.name == "unknown"
 }

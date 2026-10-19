@@ -114,7 +114,7 @@ fn emit_report_attributes_each_failure_to_its_script() {
 
     assert_eq!(report.delivered, 3);
     assert!(report.unattributed.is_none(), "{:?}", report.unattributed);
-    let failed: Vec<&str> = report.failures.iter().map(|(id, _)| *id).collect();
+    let failed: Vec<&str> = report.failures.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(failed, ["first_bad", "second_bad"]);
     for (id, error) in &report.failures {
         assert!(
@@ -146,7 +146,7 @@ fn emit_report_names_the_script_that_ran_out_of_time() {
 
     let report = engine.emit_report("rank", &1);
 
-    let failed: Vec<&str> = report.failures.iter().map(|(id, _)| *id).collect();
+    let failed: Vec<&str> = report.failures.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(failed, ["slow"]);
     assert_eq!(received(&engine, "ok"), 1.0);
 }

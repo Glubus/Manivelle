@@ -344,7 +344,7 @@ impl HostRequest for MenuLabel {
 
 engine.registry().request::<MenuLabel>()?;
 
-let labels: Vec<(&str, String)> = engine.request("menu.label", "save")?;
+let labels: Vec<(ScriptId, String)> = engine.request("menu.label", "save")?;
 ```
 
 Each reply comes with the id of the script that gave it. An `async` handler's

@@ -2,8 +2,8 @@
 
 use manivelle::{
     Caller, Engine, EngineError, EngineOptions, HostContract, HostFunction, HostResolver,
-    ScriptExport, TsSchema, host_event, host_fn, host_fn_async, host_fn_with_ctx, host_mod,
-    script_export,
+    ScriptExport, ScriptId, TsSchema, host_event, host_fn, host_fn_async, host_fn_with_ctx,
+    host_mod, script_export,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -283,8 +283,8 @@ fn events_are_declared_from_their_payload_type() {
         1
     );
     assert_eq!(engine.call::<f64>("s", "last", ()).unwrap(), 7.0);
-    let replies: Vec<(&str, u32)> = engine.request(Ask::NAME, &Ask { n: 41 }).unwrap();
-    assert_eq!(replies, [("s", 42)]);
+    let replies: Vec<(ScriptId, u32)> = engine.request(Ask::NAME, &Ask { n: 41 }).unwrap();
+    assert_eq!(replies, [(ScriptId::from("s"), 42)]);
 
     let declarations = engine.registry().dts().unwrap();
     assert!(

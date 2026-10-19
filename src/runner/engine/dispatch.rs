@@ -5,7 +5,7 @@ use rquickjs::{CatchResultExt, Ctx, Value as JsValue};
 
 use crate::contract::{JsArgs, JsDecode, JsEncode, ScriptExport};
 use crate::error::EngineError;
-use crate::types::Emission;
+use crate::types::{Emission, ScriptId};
 
 use super::super::errors::{caught_js_error, pending_exception};
 use super::super::host_fn;
@@ -64,7 +64,10 @@ impl Engine {
         let value = self.await_returned(ctx, returned, || {
             format!("function `{function}` of script `{script_id}`")
         })?;
-        R::decode_js(ctx, value).catch(ctx).map_err(caught_js_error)
+        R::decode_js(ctx, value)
+            .map_err(rquickjs::Error::from)
+            .catch(ctx)
+            .map_err(caught_js_error)
     }
 
     /// Calls the export declared by `E`, like [`Engine::call`], with its name, argument
@@ -102,7 +105,7 @@ impl Engine {
     /// the errors no script owns. It never fails as a whole, so a host that disables
     /// the scripts that fail (or counts their failures) reads them all from one
     /// emission.
-    pub fn emit_report<P: JsEncode + ?Sized>(&self, event: &str, payload: &P) -> Emission<'_> {
+    pub fn emit_report<P: JsEncode + ?Sized>(&self, event: &str, payload: &P) -> Emission {
         let audience = self.everyone_listening_to(event);
         let mut emission = self.run_audience(&audience, event, payload, false, |_, _, _| Ok(()));
         if emission.delivered > 0
@@ -143,7 +146,7 @@ impl Engine {
         &self,
         event: &str,
         payload: &P,
-    ) -> Result<Vec<(&str, R)>, EngineError> {
+    ) -> Result<Vec<(ScriptId, R)>, EngineError> {
         let audience = self.everyone_listening_to(event);
         self.request_audience(&audience, event, payload)
     }
@@ -167,7 +170,7 @@ impl Engine {
         audience: &Audience,
         event: &str,
         payload: &P,
-    ) -> Result<Vec<(&str, R)>, EngineError> {
+    ) -> Result<Vec<(ScriptId, R)>, EngineError> {
         let mut replies = Vec::new();
         let emission = self.run_audience(
             audience,
@@ -179,9 +182,10 @@ impl Engine {
                     format!("a `{event}` handler of script `{script_id}`")
                 })?;
                 let reply = R::decode_js(ctx, value)
+                    .map_err(rquickjs::Error::from)
                     .catch(ctx)
                     .map_err(caught_js_error)?;
-                replies.push((script_id, reply));
+                replies.push((script_id.clone(), reply));
                 Ok(())
             },
         );

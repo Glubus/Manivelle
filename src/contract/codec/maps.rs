@@ -6,11 +6,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{BuildHasher, Hash};
 
-use rquickjs::{Ctx, Filter, Object, Result as JsResult, String as JsString, Value as JsValue};
+use rquickjs::{Ctx, Filter, Object, String as JsString, Value as JsValue};
 
 use super::stack_text::StackText;
 use super::{
-    JsDecode, JsEncode, at_path, codec_error, define_property, expect_object, is_dropped_by_json,
+    CodecError, JsDecode, JsEncode, PathSegment, define_property, expect_object, is_dropped_by_json,
 };
 
 /// Room for the decimal text of any integer key, `-170141183460469231731687303715884105728`.
@@ -97,18 +97,18 @@ fn is_canonical_integer(text: &str) -> bool {
 fn encode_entries<'js, 'a, K, V>(
     ctx: &Ctx<'js>,
     entries: impl IntoIterator<Item = (&'a K, &'a V)>,
-) -> JsResult<JsValue<'js>>
+) -> Result<JsValue<'js>, CodecError>
 where
     K: MapKey + 'a,
     V: JsEncode + 'a,
 {
     let object = Object::new(ctx.clone())?;
     for (key, value) in entries {
-        key.with_text(|text| {
+        key.with_text(|text| -> Result<(), CodecError> {
             let value = value
                 .encode_js(ctx)
-                .map_err(|error| at_path(error, format_args!("[{text}]")))?;
-            define_property(&object, text, value)
+                .map_err(|error| error.at(PathSegment::Key(text.to_string())))?;
+            Ok(define_property(&object, text, value)?)
         })?;
     }
     Ok(object.into_value())
@@ -121,7 +121,7 @@ fn decode_entries<'js, K, V>(
     value: JsValue<'js>,
     rust: &'static str,
     mut insert: impl FnMut(K, V),
-) -> JsResult<()>
+) -> Result<(), CodecError>
 where
     K: MapKey,
     V: JsDecode,
@@ -134,22 +134,20 @@ where
         }
         let key = key.to_string()?;
         let value =
-            V::decode_js(ctx, value).map_err(|error| at_path(error, format_args!("[{key}]")))?;
+            V::decode_js(ctx, value).map_err(|error| error.at(PathSegment::Key(key.clone())))?;
         insert(decode_key(key, rust)?, value);
     }
     Ok(())
 }
 
-fn decode_key<K: MapKey>(text: String, rust: &'static str) -> JsResult<K> {
+fn decode_key<K: MapKey>(text: String, rust: &'static str) -> Result<K, CodecError> {
     K::from_text(text).map_err(|text| {
-        at_path(
-            codec_error(
-                "string",
-                rust,
-                format!("expected {}, got {text:?}", K::expected()),
-            ),
-            format_args!("[{text}]"),
+        CodecError::from_js(
+            "string",
+            rust,
+            format!("expected {}, got {text:?}", K::expected()),
         )
+        .at(PathSegment::Key(text))
     })
 }
 
@@ -158,7 +156,7 @@ where
     K: MapKey,
     V: JsEncode,
 {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         encode_entries(ctx, self)
     }
 }
@@ -169,7 +167,7 @@ where
     V: JsDecode,
     S: BuildHasher + Default,
 {
-    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         let mut map = HashMap::with_hasher(S::default());
         decode_entries(ctx, value, "HashMap", |key, value| {
             map.insert(key, value);
@@ -183,7 +181,7 @@ where
     K: MapKey,
     V: JsEncode,
 {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         encode_entries(ctx, self)
     }
 }
@@ -193,7 +191,7 @@ where
     K: MapKey + Ord,
     V: JsDecode,
 {
-    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         let mut map = BTreeMap::new();
         decode_entries(ctx, value, "BTreeMap", |key, value| {
             map.insert(key, value);

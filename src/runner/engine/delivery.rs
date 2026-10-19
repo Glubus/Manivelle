@@ -13,7 +13,7 @@ use super::super::events::{Handlers, deliver, deliver_discarding};
 use super::{Engine, EngineScript, script_not_found};
 use crate::contract::JsEncode;
 use crate::error::EngineError;
-use crate::types::Emission;
+use crate::types::{Emission, ScriptId};
 
 /// The scripts an event is delivered to, as positions in load order.
 pub(super) enum Audience {
@@ -45,8 +45,8 @@ impl Engine {
         event: &str,
         payload: &P,
         keep_results: bool,
-        on_return: impl for<'js> FnMut(&'a str, &Ctx<'js>, JsValue<'js>) -> Result<(), EngineError>,
-    ) -> Emission<'a> {
+        on_return: impl for<'js> FnMut(&'a ScriptId, &Ctx<'js>, JsValue<'js>) -> Result<(), EngineError>,
+    ) -> Emission {
         if matches!(audience, Audience::Nobody) {
             return Emission::default();
         }
@@ -67,7 +67,7 @@ impl Engine {
 
     /// What [`Engine::emit`] returns for an emission: the first error, the interrupt
     /// taking precedence over any, else how many scripts it delivered to.
-    pub(super) fn first_failure(&self, emission: Emission<'_>) -> Result<usize, EngineError> {
+    pub(super) fn first_failure(&self, emission: Emission) -> Result<usize, EngineError> {
         let delivered = emission.delivered;
         let error = (emission.failures.into_iter().next())
             .map(|(_, error)| error)
@@ -136,7 +136,7 @@ struct Delivery<'a, 'e, P: ?Sized, F> {
     /// The scripts a handler list was taken from.
     delivered: usize,
     /// The error of each script whose handlers failed, in delivery order.
-    failures: Vec<(&'a str, EngineError)>,
+    failures: Vec<(ScriptId, EngineError)>,
     /// Set once the host interrupts the operation: no handler is entered after that.
     /// A script that runs out of its own budget does not stop the others.
     stopped: bool,
@@ -145,7 +145,7 @@ struct Delivery<'a, 'e, P: ?Sized, F> {
 impl<'a, 'e, P, F> Delivery<'a, 'e, P, F>
 where
     P: JsEncode + ?Sized,
-    F: for<'js> FnMut(&'a str, &Ctx<'js>, JsValue<'js>) -> Result<(), EngineError>,
+    F: for<'js> FnMut(&'a ScriptId, &Ctx<'js>, JsValue<'js>) -> Result<(), EngineError>,
 {
     /// Delivers to the scripts at `listeners`, one context visit per run of scripts that
     /// share a context.
@@ -178,7 +178,7 @@ where
                         }
                     }
                 }
-                Err(error) => self.encoding_failed(run, js_error(error)),
+                Err(error) => self.encoding_failed(run, js_error(error.into())),
             });
     }
 
@@ -194,7 +194,7 @@ where
         self.delivered += 1;
         let outcome = self.run_handlers(ctx, id, script, &handlers, payload);
         if let Err(error) = outcome {
-            self.failures.push((id, error));
+            self.failures.push((id.clone(), error));
         }
         self.stopped = self.engine.execution.interrupt_requested();
     }
@@ -202,7 +202,7 @@ where
     fn run_handlers<'js>(
         &mut self,
         ctx: &Ctx<'js>,
-        id: &'a str,
+        id: &'a ScriptId,
         script: &EngineScript,
         handlers: &Handlers,
         payload: &JsValue<'js>,
@@ -242,13 +242,14 @@ where
             if script.signals.events.listens(self.event) {
                 self.delivered += 1;
                 let details = details.clone();
-                self.failures.push((id, EngineError::Execution { details }));
+                self.failures
+                    .push((id.clone(), EngineError::Execution { details }));
             }
         }
     }
 
     /// Settles what the handlers left, and reports what happened.
-    fn finish(self) -> Emission<'a> {
+    fn finish(self) -> Emission {
         let Self {
             engine,
             delivered,

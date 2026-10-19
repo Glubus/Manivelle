@@ -99,7 +99,7 @@ fn faults_over_the_quota_are_attributed_and_quarantine_the_script() {
 
     for round in 1..=3 {
         let report = engine.emit_report("grab", &500);
-        let failed: Vec<&str> = report.failures.iter().map(|(id, _)| *id).collect();
+        let failed: Vec<&str> = report.failures.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(failed, ["hog"], "round {round}");
         let (_, error) = &report.failures[0];
         assert!(

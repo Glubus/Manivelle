@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use manivelle::{
     Engine, EngineOptions, HostContract, HostContractKind, HostFunctionSignature, HostResolver,
-    PendingCall, TsSchema,
+    PendingCall, ScriptId, TsSchema,
 };
 
 /// The per-frame event payload, encoded natively into a JavaScript object.
@@ -146,7 +146,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     assert_eq!((version, waves), (2.0, 2.0));
 
     run_frames(&engine, &mut tick, 50)?; // one more second: the new version's timer
-    let status: Vec<(&str, String)> = engine.request("status", &())?;
+    let status: Vec<(ScriptId, String)> = engine.request("status", &())?;
     for (script, reply) in &status {
         println!("status from {script}: {reply}");
     }
@@ -154,9 +154,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         status,
         [
             // The reload kept the spawner's place in the delivery order.
-            ("spawner", "spawner v2: waves=3".to_owned()),
+            (ScriptId::from("spawner"), "spawner v2: waves=3".to_owned()),
             (
-                "hud",
+                ScriptId::from("hud"),
                 "hud: Asteroids playing frames=150 tick=149".to_owned()
             ),
         ]

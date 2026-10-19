@@ -8,6 +8,10 @@ use crate::runner::reply_inbox::{EncodeReply, ReplyInbox, Settlement};
 
 /// Settles the Promise a script received from an async host function.
 ///
+/// Not a [`HostRequest`](crate::HostRequest) reply: a request's handlers answer
+/// synchronously through their return value, while a resolver settles the Promise of one
+/// async function call later, from any thread.
+///
 /// A handler registered with
 /// [`InMemoryHostContractRegistry::async_function_with`](crate::InMemoryHostContractRegistry::async_function_with)
 /// or one of its siblings receives one resolver per call. The resolver is `Send`: keep

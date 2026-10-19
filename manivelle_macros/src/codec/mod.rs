@@ -26,9 +26,9 @@ fn encode_impl(container: &Container<'_>) -> TokenStream {
         (
             with_predicate(
                 container.generics,
-                parse_quote!(Self: ::manivelle::__serde::Serialize),
+                parse_quote!(Self: ::manivelle::__private::serde::Serialize),
             ),
-            quote!(::manivelle::__derive::json_encode(self, __ctx)),
+            quote!(::manivelle::__private::derive::json_encode(self, __ctx)),
         )
     } else {
         let body = match &container.body {
@@ -48,7 +48,7 @@ fn encode_impl(container: &Container<'_>) -> TokenStream {
             fn encode_js<'__js>(
                 &self,
                 __ctx: &::manivelle::js::Ctx<'__js>,
-            ) -> ::manivelle::js::Result<::manivelle::js::Value<'__js>> {
+            ) -> ::std::result::Result<::manivelle::js::Value<'__js>, ::manivelle::CodecError> {
                 #body
             }
         }
@@ -59,12 +59,12 @@ fn decode_impl(container: &Container<'_>) -> TokenStream {
     if container.attrs.json_codec {
         let generics = with_predicate(
             container.generics,
-            parse_quote!(Self: ::manivelle::__serde::de::DeserializeOwned),
+            parse_quote!(Self: ::manivelle::__private::serde::de::DeserializeOwned),
         );
         return decode_trait_impl(
             container,
             &generics,
-            &quote!(::manivelle::__derive::json_decode(__ctx, __value)),
+            &quote!(::manivelle::__private::derive::json_decode(__ctx, __value)),
         );
     }
     let generics = bound_type_params(container.generics, &parse_quote!(::manivelle::JsDecode));
@@ -103,7 +103,7 @@ fn decode_trait_impl(
             fn decode_js<'__js>(
                 __ctx: &::manivelle::js::Ctx<'__js>,
                 __value: ::manivelle::js::Value<'__js>,
-            ) -> ::manivelle::js::Result<Self> {
+            ) -> ::std::result::Result<Self, ::manivelle::CodecError> {
                 #body
             }
         }

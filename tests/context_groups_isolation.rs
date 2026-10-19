@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use manivelle::{ConsoleLevel, Engine, EngineOptions, HostResolver};
+use manivelle::{ConsoleLevel, Engine, EngineOptions, HostResolver, ScriptId};
 use serde_json::json;
 use support::{COUNTER, Lookup, count, group_engine};
 
@@ -74,14 +74,14 @@ fn events_reach_every_script_in_load_order_whatever_its_group() {
             .expect("load script");
     }
 
-    let replies: Vec<(&str, String)> = engine.request("tick", &json!({})).expect("request");
+    let replies: Vec<(ScriptId, String)> = engine.request("tick", &json!({})).expect("request");
 
     assert_eq!(
         replies,
         [
-            ("one", String::from("one")),
-            ("two", String::from("two")),
-            ("three", String::from("three"))
+            (ScriptId::from("one"), String::from("one")),
+            (ScriptId::from("two"), String::from("two")),
+            (ScriptId::from("three"), String::from("three"))
         ]
     );
 }

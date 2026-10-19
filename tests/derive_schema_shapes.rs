@@ -114,7 +114,7 @@ struct OutputView {
 
 #[test]
 fn derive_ts_schema_for_named_struct_fields() {
-    assert_eq!(InvoicePayload::schema_name(), "InvoicePayload");
+    assert_eq!(InvoicePayload::schema_name(), Some("InvoicePayload"));
     assert_eq!(
         InvoicePayload::ts_type(),
         TsType::Object(vec![
@@ -247,9 +247,12 @@ fn derive_ts_schema_for_recursive_box_field() {
 
     let schema = RecursiveNode::schema();
 
-    assert_eq!(schema.name, "RecursiveNode");
+    assert_eq!(schema.name.as_deref(), Some("RecursiveNode"));
     assert_eq!(schema.dependencies.len(), 1);
-    assert_eq!(schema.dependencies[0].name, "RecursiveNode");
+    assert_eq!(
+        schema.dependencies[0].name.as_deref(),
+        Some("RecursiveNode")
+    );
 }
 
 #[test]

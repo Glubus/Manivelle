@@ -3,6 +3,7 @@
 
 mod support;
 
+use manivelle::ScriptId;
 use serde_json::json;
 use support::{TestCacheDir, group_engine};
 
@@ -63,11 +64,17 @@ fn the_scripts_of_a_group_are_handed_one_payload_object_and_other_scripts_their_
         .expect("load");
     engine.load_script("fourth", mutating).expect("load");
 
-    let replies: Vec<(&str, u32)> = engine.request("tick", &json!({ "n": 0 })).expect("request");
+    let replies: Vec<(ScriptId, u32)> =
+        engine.request("tick", &json!({ "n": 0 })).expect("request");
 
     assert_eq!(
         replies,
-        [("first", 1), ("second", 2), ("third", 1), ("fourth", 1)],
+        [
+            (ScriptId::from("first"), 1),
+            (ScriptId::from("second"), 2),
+            (ScriptId::from("third"), 1),
+            (ScriptId::from("fourth"), 1),
+        ],
         "a group's scripts share the event they are handed"
     );
 }
@@ -96,8 +103,8 @@ fn a_script_of_another_group_in_between_does_not_break_the_load_order() {
             .expect("load");
     }
 
-    let replies: Vec<(&str, String)> = engine.request("tick", &json!({})).expect("request");
+    let replies: Vec<(ScriptId, String)> = engine.request("tick", &json!({})).expect("request");
 
-    let ids: Vec<&str> = replies.iter().map(|(id, _)| *id).collect();
+    let ids: Vec<&str> = replies.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(ids, ["a1", "b1", "a2", "a3", "b2"]);
 }

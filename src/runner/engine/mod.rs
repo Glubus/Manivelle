@@ -401,7 +401,7 @@ impl EngineScript {
         value
             .into_function()
             .ok_or_else(|| EngineError::FunctionNotFound {
-                script_id: script_id.to_owned(),
+                script_id: ScriptId::from(script_id),
                 function_name: name.to_owned(),
             })
     }
@@ -432,6 +432,6 @@ fn new_runtime(
 
 fn script_not_found(id: &str) -> EngineError {
     EngineError::ScriptNotFound {
-        script_id: id.to_owned(),
+        script_id: ScriptId::from(id),
     }
 }

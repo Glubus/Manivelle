@@ -55,5 +55,5 @@ fn decode_transparent(shape: &Shape<'_>, forwarded: &Field<'_>) -> TokenStream {
             default_value(field, false)
         }
     });
-    quote!(::manivelle::js::Result::Ok(Self { #(#members: #values),* }))
+    quote!(::std::result::Result::Ok(Self { #(#members: #values),* }))
 }

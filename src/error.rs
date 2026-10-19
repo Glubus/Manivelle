@@ -4,6 +4,8 @@ use std::io;
 
 use thiserror::Error;
 
+use crate::types::ScriptId;
+
 /// Error type for all engine operations.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -34,13 +36,13 @@ pub enum EngineError {
     #[error("script `{script_id}` is not loaded")]
     ScriptNotFound {
         /// Missing script identifier.
-        script_id: String,
+        script_id: ScriptId,
     },
     /// The requested export is missing or is not callable.
     #[error("function `{function_name}` is not exported by script `{script_id}`")]
     FunctionNotFound {
         /// Script identifier.
-        script_id: String,
+        script_id: ScriptId,
         /// Exported function name.
         function_name: String,
     },

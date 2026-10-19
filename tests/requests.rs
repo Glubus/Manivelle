@@ -2,7 +2,9 @@
 
 mod support;
 
-use manivelle::{Engine, EngineError, HostCallback, HostContract, HostContractKind, HostRequest};
+use manivelle::{
+    Engine, EngineError, HostCallback, HostContract, HostContractKind, HostRequest, ScriptId,
+};
 use serde_json::json;
 
 use support::{assert_tsc, engine};
@@ -49,22 +51,22 @@ fn replies_come_back_in_load_then_registration_order_with_their_script() {
         ),
     ]);
 
-    let replies: Vec<(&str, String)> = engine.request("menu.label", "save").expect("request");
+    let replies: Vec<(ScriptId, String)> = engine.request("menu.label", "save").expect("request");
 
     assert_eq!(
         replies,
         [
-            ("zeta", "zeta:save".to_owned()),
-            ("zeta", "zeta2:save".to_owned()),
-            ("alpha", "alpha:save".to_owned()),
+            (ScriptId::from("zeta"), "zeta:save".to_owned()),
+            (ScriptId::from("zeta"), "zeta2:save".to_owned()),
+            (ScriptId::from("alpha"), "alpha:save".to_owned()),
         ]
     );
 }
 
 /// Which scripts answer `menu.label`, in order.
 fn answering(engine: &Engine) -> Vec<String> {
-    let replies: Vec<(&str, String)> = engine.request("menu.label", "x").expect("request");
-    replies.iter().map(|(id, _)| (*id).to_owned()).collect()
+    let replies: Vec<(ScriptId, String)> = engine.request("menu.label", "x").expect("request");
+    replies.iter().map(|(id, _)| id.to_string()).collect()
 }
 
 #[test]
@@ -112,16 +114,16 @@ fn an_async_handler_replies_with_what_its_promise_resolves_to() {
            export {};"#,
     )]);
 
-    let replies: Vec<(&str, String)> = engine.request("menu.label", "load").expect("request");
+    let replies: Vec<(ScriptId, String)> = engine.request("menu.label", "load").expect("request");
 
-    assert_eq!(replies, [("script", "LOAD".to_owned())]);
+    assert_eq!(replies, [(ScriptId::from("script"), "LOAD".to_owned())]);
 }
 
 #[test]
 fn a_request_nobody_handles_has_no_replies() {
     let engine = engine_with(&[("script", "export {};")]);
 
-    let replies: Vec<(&str, String)> = engine.request("menu.label", "x").expect("request");
+    let replies: Vec<(ScriptId, String)> = engine.request("menu.label", "x").expect("request");
 
     assert!(replies.is_empty());
 }

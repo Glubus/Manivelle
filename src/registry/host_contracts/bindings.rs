@@ -7,8 +7,7 @@ use rquickjs::{Ctx, Exception, Object, Result as JsResult, Value as JsValue};
 
 use crate::contract::validation::Snapshot;
 use crate::contract::{
-    Caller, HostFunctionSignature, HostResolver, JsDecode, JsEncode,
-    js_value_to_validation_snapshot,
+    Caller, HostFunctionSignature, HostResolver, JsDecode, JsEncode, js_to_snapshot,
 };
 use crate::error::EngineError;
 use crate::packages::PermissionSet;
@@ -96,7 +95,7 @@ fn check_input<'js>(
         return Ok(());
     };
     validator
-        .validate_input(&js_value_to_validation_snapshot(ctx, input.clone())?)
+        .validate_input(&js_to_snapshot(ctx, input.clone())?)
         .map_err(js_host_error)
 }
 
@@ -110,7 +109,7 @@ fn check_output<'js>(
         return Ok(());
     };
     validator
-        .validate_output(&js_value_to_validation_snapshot(ctx, output.clone())?)
+        .validate_output(&js_to_snapshot(ctx, output.clone())?)
         .map_err(js_host_error)
 }
 
@@ -140,7 +139,7 @@ struct NativeReply<T>(T);
 
 impl<T: JsEncode + Send> ReplyValue for NativeReply<T> {
     fn into_js<'js>(self: Box<Self>, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
-        self.0.encode_js(ctx)
+        self.0.encode_js(ctx).map_err(rquickjs::Error::from)
     }
 }
 
@@ -154,7 +153,7 @@ struct ValidatedReply<T> {
 impl<T: JsEncode + Send> ReplyValue for ValidatedReply<T> {
     fn into_js<'js>(self: Box<Self>, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
         let output = self.output.encode_js(ctx)?;
-        let snapshot = js_value_to_validation_snapshot(ctx, output.clone())?;
+        let snapshot = js_to_snapshot(ctx, output.clone())?;
         self.validator
             .validate_output(&snapshot)
             .map_err(|error| Exception::throw_message(ctx, &error.to_string()))?;
@@ -280,7 +279,7 @@ where
                 &encode,
                 || {
                     check_input(ctx, validator.as_deref(), &input)?;
-                    C::Input::decode_js(ctx, input)
+                    C::Input::decode_js(ctx, input).map_err(rquickjs::Error::from)
                 },
                 |input, resolver| (self.handler)(&caller, input, resolver),
             )

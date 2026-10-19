@@ -3,18 +3,18 @@
 use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::hash::{BuildHasher, Hash};
 
-use rquickjs::{Array, Ctx, Result as JsResult, Value as JsValue};
+use rquickjs::{Array, Ctx, Value as JsValue};
 
 use super::{
-    JsDecode, JsEncode, array_length, cautious_capacity, decode_item, encode_item, expect_array,
-    expect_array_len,
+    CodecError, JsDecode, JsEncode, array_length, cautious_capacity, decode_item, encode_item,
+    expect_array, expect_array_len,
 };
 
 /// Encodes `items` as a JavaScript array, prefixing errors with the item index.
 fn encode_items<'js, 'a, T>(
     ctx: &Ctx<'js>,
     items: impl IntoIterator<Item = &'a T>,
-) -> JsResult<JsValue<'js>>
+) -> Result<JsValue<'js>, CodecError>
 where
     T: JsEncode + 'a,
 {
@@ -33,7 +33,7 @@ pub(super) fn decode_collection<'js, T, C>(
     rust: &'static str,
     create: impl FnOnce(usize) -> C,
     mut insert: impl FnMut(&mut C, T),
-) -> JsResult<C>
+) -> Result<C, CodecError>
 where
     T: JsDecode,
 {
@@ -47,38 +47,38 @@ where
 }
 
 impl<T: JsEncode> JsEncode for [T] {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         encode_items(ctx, self)
     }
 }
 
 impl<T: JsEncode> JsEncode for Vec<T> {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         encode_items(ctx, self)
     }
 }
 
 impl<T: JsDecode> JsDecode for Vec<T> {
-    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         decode_collection(ctx, value, "Vec", Vec::with_capacity, Vec::push)
     }
 }
 
 impl<T: JsDecode> JsDecode for Box<[T]> {
-    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         decode_collection(ctx, value, "Box<[T]>", Vec::with_capacity, Vec::push)
             .map(Vec::into_boxed_slice)
     }
 }
 
 impl<T: JsEncode> JsEncode for VecDeque<T> {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         encode_items(ctx, self)
     }
 }
 
 impl<T: JsDecode> JsDecode for VecDeque<T> {
-    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         decode_collection(
             ctx,
             value,
@@ -90,14 +90,14 @@ impl<T: JsDecode> JsDecode for VecDeque<T> {
 }
 
 impl<T: JsEncode, const N: usize> JsEncode for [T; N] {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         encode_items(ctx, self)
     }
 }
 
 /// Fixed-size arrays need exactly `N` items, like `serde_json`.
 impl<T: JsDecode, const N: usize> JsDecode for [T; N] {
-    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         let array = expect_array_len(value, "[T; N]", N)?;
         let mut failure = None;
         let items: [Option<T>; N] = std::array::from_fn(|index| {
@@ -118,7 +118,7 @@ impl<T: JsDecode, const N: usize> JsDecode for [T; N] {
 
 /// Sets cross as arrays; duplicate items collapse, as with `serde_json`.
 impl<T: JsEncode, S> JsEncode for HashSet<T, S> {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         encode_items(ctx, self)
     }
 }
@@ -128,7 +128,7 @@ where
     T: JsDecode + Eq + Hash,
     S: BuildHasher + Default,
 {
-    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         decode_collection(
             ctx,
             value,
@@ -142,13 +142,13 @@ where
 }
 
 impl<T: JsEncode> JsEncode for BTreeSet<T> {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         encode_items(ctx, self)
     }
 }
 
 impl<T: JsDecode + Ord> JsDecode for BTreeSet<T> {
-    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         decode_collection(
             ctx,
             value,

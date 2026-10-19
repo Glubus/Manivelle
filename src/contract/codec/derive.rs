@@ -3,25 +3,26 @@
 //! Only macro output calls these functions. They keep the generated code small and put
 //! every derive-specific error message in one place.
 
-use rquickjs::{
-    Array, Ctx, Error as JsError, Object, Result as JsResult, String as JsString, Value as JsValue,
-};
+use rquickjs::{Array, Ctx, Object, String as JsString, Value as JsValue};
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::field_atoms::define_field;
 pub use super::js_text::JsText;
-use super::{JsDecode, JsEncode, at_path, codec_error, define_property_named, is_dropped_by_json};
+use super::{CodecError, JsDecode, JsEncode, define_property_named, is_dropped_by_json};
 
 /// Encodes `value` through the serde_json reference path (`#[manivelle(codec = "json")]`).
 pub fn json_encode<'js, T: Serialize + ?Sized>(
     value: &T,
     ctx: &Ctx<'js>,
-) -> JsResult<JsValue<'js>> {
+) -> Result<JsValue<'js>, CodecError> {
     json_encode_with(value, ctx, T::serialize)
 }
 
 /// Decodes `value` through the serde_json reference path (`#[manivelle(codec = "json")]`).
-pub fn json_decode<'js, T: DeserializeOwned>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<T> {
+pub fn json_decode<'js, T: DeserializeOwned>(
+    ctx: &Ctx<'js>,
+    value: JsValue<'js>,
+) -> Result<T, CodecError> {
     json_decode_with(ctx, value, T::deserialize)
 }
 
@@ -33,9 +34,9 @@ pub fn json_encode_with<'js, T: ?Sized>(
         &T,
         serde_json::value::Serializer,
     ) -> Result<serde_json::Value, serde_json::Error>,
-) -> JsResult<JsValue<'js>> {
+) -> Result<JsValue<'js>, CodecError> {
     let json = serialize(value, serde_json::value::Serializer).map_err(|error| {
-        JsError::new_into_js_message(std::any::type_name::<T>(), "json", error.to_string())
+        CodecError::into_js(std::any::type_name::<T>(), "json", error.to_string())
     })?;
     json.encode_js(ctx)
 }
@@ -45,10 +46,10 @@ pub fn json_decode_with<'js, T>(
     ctx: &Ctx<'js>,
     value: JsValue<'js>,
     deserialize: impl FnOnce(serde_json::Value) -> Result<T, serde_json::Error>,
-) -> JsResult<T> {
+) -> Result<T, CodecError> {
     let json = serde_json::Value::decode_js(ctx, value)?;
     deserialize(json)
-        .map_err(|error| codec_error("json", std::any::type_name::<T>(), error.to_string()))
+        .map_err(|error| CodecError::from_js("json", std::any::type_name::<T>(), error.to_string()))
 }
 
 /// Returns the first present property among `names` (a field name followed by its
@@ -57,7 +58,7 @@ pub fn json_decode_with<'js, T>(
 pub fn field_value<'js>(
     object: &Object<'js>,
     names: &[&'static str],
-) -> JsResult<Option<JsValue<'js>>> {
+) -> Result<Option<JsValue<'js>>, CodecError> {
     for name in names {
         let value: JsValue<'js> = object.get(*name)?;
         if !is_dropped_by_json(&value) {
@@ -74,10 +75,10 @@ pub fn decode_field<'js, T>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,
     names: &[&'static str],
-    decode: impl FnOnce(&Ctx<'js>, JsValue<'js>) -> JsResult<T>,
-) -> JsResult<T> {
+    decode: impl FnOnce(&Ctx<'js>, JsValue<'js>) -> Result<T, CodecError>,
+) -> Result<T, CodecError> {
     match field_value(object, names)? {
-        Some(value) => decode(ctx, value).map_err(|error| at_path(error, names[0])),
+        Some(value) => decode(ctx, value).map_err(|error| error.at(names[0])),
         None => decode(ctx, JsValue::new_undefined(ctx.clone()))
             .map_err(|_| missing_field(names[0], std::any::type_name::<T>())),
     }
@@ -89,11 +90,11 @@ pub fn decode_field_or<'js, T>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,
     names: &[&'static str],
-    decode: impl FnOnce(&Ctx<'js>, JsValue<'js>) -> JsResult<T>,
+    decode: impl FnOnce(&Ctx<'js>, JsValue<'js>) -> Result<T, CodecError>,
     default: impl FnOnce() -> T,
-) -> JsResult<T> {
+) -> Result<T, CodecError> {
     match field_value(object, names)? {
-        Some(value) => decode(ctx, value).map_err(|error| at_path(error, names[0])),
+        Some(value) => decode(ctx, value).map_err(|error| error.at(names[0])),
         None => Ok(default()),
     }
 }
@@ -103,12 +104,12 @@ pub fn require_field<'js>(
     object: &Object<'js>,
     name: &'static str,
     rust: &'static str,
-) -> JsResult<JsValue<'js>> {
+) -> Result<JsValue<'js>, CodecError> {
     field_value(object, &[name])?.ok_or_else(|| missing_field(name, rust))
 }
 
-fn missing_field(name: &'static str, rust: &'static str) -> JsError {
-    at_path(codec_error("undefined", rust, "missing field"), name)
+fn missing_field(name: &'static str, rust: &'static str) -> CodecError {
+    CodecError::from_js("undefined", rust, "missing field").at(name)
 }
 
 /// Encodes `value` through `encode` into `object[name]`, prefixing errors with `name`.
@@ -118,10 +119,10 @@ pub fn encode_field<'js, T: ?Sized>(
     object: &Object<'js>,
     name: &'static str,
     value: &T,
-    encode: impl FnOnce(&T, &Ctx<'js>) -> JsResult<JsValue<'js>>,
-) -> JsResult<()> {
-    let value = encode(value, ctx).map_err(|error| at_path(error, name))?;
-    define_field(ctx, object, name, value)
+    encode: impl FnOnce(&T, &Ctx<'js>) -> Result<JsValue<'js>, CodecError>,
+) -> Result<(), CodecError> {
+    let value = encode(value, ctx).map_err(|error| error.at(name))?;
+    Ok(define_field(ctx, object, name, value)?)
 }
 
 /// Encodes `value` through `encode` into `array[index]`, prefixing errors with `[index]`.
@@ -130,10 +131,10 @@ pub fn encode_item<'js, T: ?Sized>(
     array: &Array<'js>,
     index: usize,
     value: &T,
-    encode: impl FnOnce(&T, &Ctx<'js>) -> JsResult<JsValue<'js>>,
-) -> JsResult<()> {
-    let value = encode(value, ctx).map_err(|error| at_path(error, format_args!("[{index}]")))?;
-    array.set(index, value)
+    encode: impl FnOnce(&T, &Ctx<'js>) -> Result<JsValue<'js>, CodecError>,
+) -> Result<(), CodecError> {
+    let value = encode(value, ctx).map_err(|error| error.at(index))?;
+    Ok(array.set(index, value)?)
 }
 
 /// Decodes `array[index]` through `decode`, prefixing errors with `[index]`.
@@ -141,10 +142,10 @@ pub fn decode_item<'js, T>(
     ctx: &Ctx<'js>,
     array: &Array<'js>,
     index: usize,
-    decode: impl FnOnce(&Ctx<'js>, JsValue<'js>) -> JsResult<T>,
-) -> JsResult<T> {
+    decode: impl FnOnce(&Ctx<'js>, JsValue<'js>) -> Result<T, CodecError>,
+) -> Result<T, CodecError> {
     let value: JsValue<'js> = array.get(index)?;
-    decode(ctx, value).map_err(|error| at_path(error, format_args!("[{index}]")))
+    decode(ctx, value).map_err(|error| error.at(index))
 }
 
 /// Copies the own enumerable properties of `source` into `target`, for
@@ -154,7 +155,7 @@ pub fn merge_object<'js>(
     target: &Object<'js>,
     source: JsValue<'js>,
     rust: &'static str,
-) -> JsResult<()> {
+) -> Result<(), CodecError> {
     if source.is_null() || source.is_undefined() {
         return Ok(());
     }
@@ -163,7 +164,7 @@ pub fn merge_object<'js>(
         .into_object()
         .filter(|object| !object.as_value().is_array())
         .ok_or_else(|| {
-            JsError::new_into_js_message(
+            CodecError::into_js(
                 kind,
                 rust,
                 format!("expected a struct or map to merge into {rust}, got {kind}"),
@@ -183,7 +184,7 @@ pub fn object_without<'js>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,
     excluded: &[&'static str],
-) -> JsResult<Object<'js>> {
+) -> Result<Object<'js>, CodecError> {
     let rest = Object::new(ctx.clone())?;
     for property in object.props::<JsString<'js>, JsValue<'js>>() {
         let (key, value) = property?;
@@ -200,11 +201,11 @@ pub fn reject_unknown_fields<'js>(
     object: &Object<'js>,
     known: &[&'static str],
     rust: &'static str,
-) -> JsResult<()> {
+) -> Result<(), CodecError> {
     for key in object.keys::<JsString<'js>>() {
         let key = JsText::new(key?, rust)?;
         if !known.contains(&key.as_str()) {
-            return Err(codec_error(
+            return Err(CodecError::from_js(
                 "object",
                 rust,
                 format!(
@@ -219,11 +220,14 @@ pub fn reject_unknown_fields<'js>(
 }
 
 /// Reads a variant name from a JS string without copying it into a Rust `String`.
-pub fn variant_name<'js>(value: JsValue<'js>, rust: &'static str) -> JsResult<JsText<'js>> {
+pub fn variant_name<'js>(
+    value: JsValue<'js>,
+    rust: &'static str,
+) -> Result<JsText<'js>, CodecError> {
     let kind = value.type_name();
     match value.into_string() {
         Some(name) => JsText::new(name, rust),
-        None => Err(codec_error(
+        None => Err(CodecError::from_js(
             kind,
             rust,
             format!("expected variant name string, got {kind}"),
@@ -236,9 +240,9 @@ pub fn tag_field<'js>(
     object: &Object<'js>,
     tag: &'static str,
     rust: &'static str,
-) -> JsResult<JsText<'js>> {
+) -> Result<JsText<'js>, CodecError> {
     let value = require_field(object, tag, rust)?;
-    variant_name(value, rust).map_err(|error| at_path(error, tag))
+    variant_name(value, rust).map_err(|error| error.at(tag))
 }
 
 /// Splits an externally tagged enum value into its variant name and payload. A string
@@ -246,7 +250,7 @@ pub fn tag_field<'js>(
 pub fn external_variant<'js>(
     value: JsValue<'js>,
     rust: &'static str,
-) -> JsResult<(JsText<'js>, Option<JsValue<'js>>)> {
+) -> Result<(JsText<'js>, Option<JsValue<'js>>), CodecError> {
     if value.is_string() {
         return Ok((variant_name(value, rust)?, None));
     }
@@ -254,7 +258,7 @@ pub fn external_variant<'js>(
     let mut properties = object.props::<JsString<'js>, JsValue<'js>>();
     match (properties.next().transpose()?, properties.next()) {
         (Some((name, payload)), None) => Ok((JsText::new(name, rust)?, Some(payload))),
-        _ => Err(codec_error(
+        _ => Err(CodecError::from_js(
             "object",
             rust,
             "expected variant name string or object with exactly one key",
@@ -268,9 +272,9 @@ pub fn variant_payload<'js>(
     payload: Option<JsValue<'js>>,
     rust: &'static str,
     variant: &'static str,
-) -> JsResult<JsValue<'js>> {
+) -> Result<JsValue<'js>, CodecError> {
     payload.ok_or_else(|| {
-        codec_error(
+        CodecError::from_js(
             "string",
             rust,
             format!("expected payload for variant `{variant}`, got bare variant name"),
@@ -279,7 +283,7 @@ pub fn variant_payload<'js>(
 }
 
 /// Checks the optional payload of a unit variant: absent, or a value `()` accepts.
-pub fn unit_payload<'js>(ctx: &Ctx<'js>, payload: Option<JsValue<'js>>) -> JsResult<()> {
+pub fn unit_payload<'js>(ctx: &Ctx<'js>, payload: Option<JsValue<'js>>) -> Result<(), CodecError> {
     match payload {
         Some(payload) => <() as JsDecode>::decode_js(ctx, payload),
         None => Ok(()),
@@ -291,8 +295,8 @@ pub fn unknown_variant(
     found: &str,
     rust: &'static str,
     variants: &'static [&'static str],
-) -> JsError {
-    codec_error(
+) -> CodecError {
+    CodecError::from_js(
         "string",
         rust,
         format!("unknown variant `{found}`, expected {}", one_of(variants)),
@@ -300,8 +304,8 @@ pub fn unknown_variant(
 }
 
 /// Error for an untagged enum value that no variant accepts.
-pub fn untagged_mismatch(value: &JsValue<'_>, rust: &'static str) -> JsError {
-    codec_error(
+pub fn untagged_mismatch(value: &JsValue<'_>, rust: &'static str) -> CodecError {
+    CodecError::from_js(
         value.type_name(),
         rust,
         format!("data did not match any variant of untagged enum {rust}"),
@@ -309,8 +313,8 @@ pub fn untagged_mismatch(value: &JsValue<'_>, rust: &'static str) -> JsError {
 }
 
 /// Error for encoding a `#[serde(skip_serializing)]` variant.
-pub fn skipped_variant(rust: &'static str, variant: &'static str) -> JsError {
-    JsError::new_into_js_message(
+pub fn skipped_variant(rust: &'static str, variant: &'static str) -> CodecError {
+    CodecError::into_js(
         rust,
         "value",
         format!("the enum variant {rust}::{variant} cannot be serialized"),

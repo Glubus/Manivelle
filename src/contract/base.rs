@@ -2,7 +2,7 @@
 
 use super::{
     HostContractAbi, HostContractDescriptor, HostContractKind, HostImportBinding, HostMetadata,
-    Schema,
+    Schema, TsType,
 };
 
 /// Base contract trait. Traits produce the contract model, not just runtime hooks.
@@ -38,7 +38,7 @@ pub trait HostContract {
         HostContractDescriptor {
             name: Self::NAME.to_owned(),
             kind: Self::kind(),
-            schema: Schema::named("unknown"),
+            schema: Schema::anonymous(TsType::Unknown),
             metadata: Self::metadata(),
             import: HostImportBinding {
                 module: Self::IMPORT_MODULE.to_owned(),

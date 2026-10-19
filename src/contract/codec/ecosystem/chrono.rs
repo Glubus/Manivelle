@@ -5,10 +5,10 @@
 use std::fmt::{self, Display, Write};
 
 use ::chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Utc};
-use rquickjs::{Ctx, Result as JsResult, Value as JsValue};
+use rquickjs::{Ctx, Value as JsValue};
 
 use super::super::text::{decode_parsed, encode_display};
-use super::super::{JsDecode, JsEncode};
+use super::super::{CodecError, JsDecode, JsEncode};
 use crate::contract::{TsSchema, TsType};
 
 /// What a `DateTime` string must be, for decode errors.
@@ -18,13 +18,13 @@ macro_rules! naive_codecs {
     ($($ty:ident => $format:literal, $expected:literal),+ $(,)?) => {
         $(
             impl JsEncode for $ty {
-                fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+                fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
                     encode_display(ctx, &format_args!($format, self), stringify!($ty))
                 }
             }
 
             impl JsDecode for $ty {
-                fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+                fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
                     decode_parsed(value, stringify!($ty), $expected)
                 }
             }
@@ -46,7 +46,7 @@ naive_codecs!(
 );
 
 impl<Tz: TimeZone> JsEncode for DateTime<Tz> {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         let offset = Rfc3339Offset(self.offset().fix());
         encode_display(
             ctx,
@@ -57,14 +57,14 @@ impl<Tz: TimeZone> JsEncode for DateTime<Tz> {
 }
 
 impl JsDecode for DateTime<FixedOffset> {
-    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         decode_parsed(value, "DateTime<FixedOffset>", DATE_TIME_EXPECTED)
     }
 }
 
 /// Any offset is accepted and converted to UTC, as `serde` does.
 impl JsDecode for DateTime<Utc> {
-    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         decode_parsed::<DateTime<FixedOffset>>(value, "DateTime<Utc>", DATE_TIME_EXPECTED)
             .map(|date_time| date_time.with_timezone(&Utc))
     }

@@ -3,10 +3,10 @@
 
 use std::fmt::Display;
 
-use rquickjs::{Ctx, Result as JsResult, Value as JsValue, qjs};
+use rquickjs::{Ctx, Value as JsValue, qjs};
 
 use super::stack_text::StackText;
-use super::{JsDecode, JsEncode, encode_error, mismatch};
+use super::{CodecError, JsDecode, JsEncode, mismatch};
 
 /// Largest integer JavaScript numbers represent exactly: 2^53 − 1.
 const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
@@ -24,7 +24,7 @@ macro_rules! integer_codecs {
     ($expected:literal: $($ty:ty),+ $(,)?) => {
         $(
             impl JsEncode for $ty {
-                fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+                fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
                     encode_integer(ctx, *self, stringify!($ty))
                 }
 
@@ -34,7 +34,7 @@ macro_rules! integer_codecs {
             }
 
             impl JsDecode for $ty {
-                fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+                fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
                     decode_integer(
                         &value,
                         stringify!($ty),
@@ -53,7 +53,11 @@ macro_rules! integer_codecs {
 integer_codecs!("integer": i8, i16, i32, u8, u16, u32);
 integer_codecs!("safe integer": i64, i128, isize, u64, u128, usize);
 
-fn encode_integer<'js, T>(ctx: &Ctx<'js>, value: T, rust: &'static str) -> JsResult<JsValue<'js>>
+fn encode_integer<'js, T>(
+    ctx: &Ctx<'js>,
+    value: T,
+    rust: &'static str,
+) -> Result<JsValue<'js>, CodecError>
 where
     T: Copy + Display,
     i32: TryFrom<T>,
@@ -66,7 +70,7 @@ where
         Ok(wide) if wide.unsigned_abs() <= MAX_SAFE_INTEGER => {
             Ok(JsValue::new_float(ctx.clone(), wide as f64))
         }
-        _ => Err(encode_error(
+        _ => Err(CodecError::into_js(
             rust,
             "number",
             format!("{value} is outside the JavaScript safe integer range ±(2^53 - 1)"),
@@ -129,7 +133,11 @@ fn scalar_safe_integer(value: qjs::JSValue) -> Option<i64> {
     }
 }
 
-fn decode_integer<T>(value: &JsValue<'_>, rust: &'static str, expected: &str) -> JsResult<T>
+fn decode_integer<T>(
+    value: &JsValue<'_>,
+    rust: &'static str,
+    expected: &str,
+) -> Result<T, CodecError>
 where
     T: TryFrom<i64>,
 {
@@ -146,7 +154,7 @@ fn safe_integer(value: &JsValue<'_>) -> Option<i64> {
 }
 
 impl JsEncode for f64 {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         Ok(number_value(ctx, *self))
     }
 
@@ -156,7 +164,7 @@ impl JsEncode for f64 {
 }
 
 impl JsDecode for f64 {
-    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         decode_number(&value, "f64")
     }
 
@@ -166,7 +174,7 @@ impl JsDecode for f64 {
 }
 
 impl JsEncode for f32 {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, CodecError> {
         Ok(number_value(ctx, widen_f32(*self)))
     }
 
@@ -176,7 +184,7 @@ impl JsEncode for f32 {
 }
 
 impl JsDecode for f32 {
-    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Self> {
+    fn decode_js<'js>(_ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Self, CodecError> {
         decode_number(&value, "f32").map(|number| number as f32)
     }
 
@@ -185,7 +193,7 @@ impl JsDecode for f32 {
     }
 }
 
-fn decode_number(value: &JsValue<'_>, rust: &'static str) -> JsResult<f64> {
+fn decode_number(value: &JsValue<'_>, rust: &'static str) -> Result<f64, CodecError> {
     value
         .as_number()
         .ok_or_else(|| mismatch(value, rust, "number"))

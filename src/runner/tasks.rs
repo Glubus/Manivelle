@@ -9,6 +9,7 @@ use rquickjs::{CatchResultExt, Ctx, Persistent, Promise, Value as JsValue};
 
 use crate::contract::JsDecode;
 use crate::error::EngineError;
+use crate::types::ScriptId;
 
 use super::errors::{caught_js_error, js_error};
 use super::module_loader::ModuleStore;
@@ -100,14 +101,14 @@ impl<R: JsDecode + 'static> RequestLifetime for RefCell<RequestResults<R>> {
 /// Aggregates handler replies in registration order, even when Promise resolution
 /// happens in another order. All handlers run before the result is published.
 pub(super) struct RequestResults<R> {
-    handle: PendingCall<Vec<(String, R)>>,
-    replies: Vec<Option<Result<(String, R), EngineError>>>,
+    handle: PendingCall<Vec<(ScriptId, R)>>,
+    replies: Vec<Option<Result<(ScriptId, R), EngineError>>>,
     active: bool,
     finished: bool,
 }
 
 impl<R: JsDecode + 'static> RequestResults<R> {
-    pub(super) fn new(handle: PendingCall<Vec<(String, R)>>) -> Rc<RefCell<Self>> {
+    pub(super) fn new(handle: PendingCall<Vec<(ScriptId, R)>>) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
             handle,
             replies: Vec::new(),
@@ -119,7 +120,7 @@ impl<R: JsDecode + 'static> RequestResults<R> {
     pub(super) fn observe<'js>(
         state: &Rc<RefCell<Self>>,
         ctx: &Ctx<'js>,
-        script_id: &str,
+        script_id: &ScriptId,
         value: JsValue<'js>,
     ) -> Result<Option<ScriptTask>, EngineError> {
         let slot = {
@@ -128,7 +129,7 @@ impl<R: JsDecode + 'static> RequestResults<R> {
             state.replies.push(None);
             slot
         };
-        let id = script_id.to_owned();
+        let id = script_id.clone();
         let completed = Rc::clone(state);
         let cancelled = state.borrow().handle.clone();
         ScriptTask::watch(
@@ -154,7 +155,7 @@ impl<R: JsDecode + 'static> RequestResults<R> {
         self.complete_if_ready();
     }
 
-    fn record(&mut self, slot: usize, result: Result<(String, R), EngineError>) {
+    fn record(&mut self, slot: usize, result: Result<(ScriptId, R), EngineError>) {
         self.replies[slot] = Some(result);
         self.complete_if_ready();
     }
@@ -182,7 +183,10 @@ impl<R: JsDecode + 'static> RequestResults<R> {
 
 /// Decodes a script's reply as `R`; a failed conversion is the operation's error.
 fn decode_reply<'js, R: JsDecode>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<R, EngineError> {
-    R::decode_js(ctx, value).catch(ctx).map_err(caught_js_error)
+    R::decode_js(ctx, value)
+        .map_err(rquickjs::Error::from)
+        .catch(ctx)
+        .map_err(caught_js_error)
 }
 
 type TaskFinish = Box<dyn for<'js> FnOnce(&Ctx<'js>, Result<JsValue<'js>, EngineError>)>;

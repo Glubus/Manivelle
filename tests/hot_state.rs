@@ -58,8 +58,8 @@ struct TickPayload {
 }
 
 impl TsSchema for TickPayload {
-    fn schema_name() -> &'static str {
-        "TickPayload"
+    fn schema_name() -> Option<&'static str> {
+        Some("TickPayload")
     }
 
     fn ts_type() -> TsType {
@@ -68,7 +68,7 @@ impl TsSchema for TickPayload {
 }
 
 impl JsEncode for TickPayload {
-    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> manivelle::js::Result<JsValue<'js>> {
+    fn encode_js<'js>(&self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, manivelle::CodecError> {
         let payload = Object::new(ctx.clone())?;
         payload.set("frame", self.frame)?;
         Ok(payload.into_value())

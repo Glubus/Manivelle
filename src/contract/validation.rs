@@ -140,9 +140,11 @@ fn collect_dependencies<'a>(
     dependencies: &mut HashMap<&'a str, Dependency<'a>>,
 ) {
     for schema in schemas {
-        if !dependencies.contains_key(schema.name.as_str()) {
+        if let Some(name) = schema.declared_name()
+            && !dependencies.contains_key(name)
+        {
             let id = dependencies.len();
-            dependencies.insert(schema.name.as_str(), Dependency { id, schema });
+            dependencies.insert(name, Dependency { id, schema });
         }
         collect_dependencies(&schema.dependencies, dependencies);
     }

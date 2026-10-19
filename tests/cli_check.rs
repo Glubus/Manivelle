@@ -3,8 +3,8 @@
 //! `manivelle check`: validates packages, and their permissions against a program's
 //! contracts.
 //!
-//! The program is this very test executable, started with a filter that selects
-//! `export_child`, which registers a contract and calls `Engine::setup_protocol`.
+//! The program is the `check_program` example, which registers a contract and calls
+//! `Engine::setup_protocol`.
 
 mod support;
 
@@ -12,9 +12,10 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use manivelle::{Engine, EngineOptions, HostContract, HostContractKind, HostFunctionSignature};
-use support::{TestCacheDir, stderr, stdout};
+use manivelle::{HostContract, HostContractKind, HostFunctionSignature};
+use support::{TestCacheDir, example_program, stderr, stdout};
 
+/// The `math.add` contract that `check_program` registers, for the descriptors test.
 struct Add;
 
 impl HostContract for Add {
@@ -28,17 +29,6 @@ impl HostContract for Add {
 impl HostFunctionSignature for Add {
     type Input = f64;
     type Output = f64;
-}
-
-/// The program `manivelle check --from` starts.
-#[test]
-fn export_child() {
-    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
-    engine
-        .registry()
-        .function_with::<Add>(Ok)
-        .expect("register");
-    engine.setup_protocol().expect("set up the protocol");
 }
 
 fn package(dir: &Path, permissions: &str, with_entry: bool) {
@@ -65,18 +55,8 @@ fn check(dir: &Path, extra: &[&str]) -> Output {
 }
 
 fn check_from_program(dir: &Path) -> Output {
-    let exe = std::env::current_exe().expect("test executable");
-    check(
-        dir,
-        &[
-            "--from",
-            exe.to_str().expect("utf-8 path"),
-            "--",
-            "--exact",
-            "export_child",
-            "--nocapture",
-        ],
-    )
+    let program = example_program("check_program");
+    check(dir, &["--from", program.to_str().expect("utf-8 path")])
 }
 
 #[test]
@@ -200,18 +180,10 @@ fn code_that_uses_an_unlisted_function_fails_and_fix_adds_the_permission() {
         stderr(&output)
     );
 
-    let exe = std::env::current_exe().expect("test executable");
+    let program = example_program("check_program");
     let fixed = check(
         dir.path(),
-        &[
-            "--fix",
-            "--from",
-            exe.to_str().expect("utf-8 path"),
-            "--",
-            "--exact",
-            "export_child",
-            "--nocapture",
-        ],
+        &["--fix", "--from", program.to_str().expect("utf-8 path")],
     );
     assert!(fixed.status.success(), "{}", stderr(&fixed));
     assert!(

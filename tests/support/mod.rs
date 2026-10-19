@@ -220,6 +220,26 @@ pub(crate) fn fixture(relative: &str) -> PathBuf {
         .join(relative)
 }
 
+/// The example program `name` (`examples/<name>.rs`), found from the location of this test
+/// executable: `cargo test` builds examples into `target/<profile>/examples`, next to the
+/// `deps` directory that holds the test executable.
+pub(crate) fn example_program(name: &str) -> PathBuf {
+    let test_executable = std::env::current_exe().expect("test executable");
+    let profile_dir = test_executable
+        .parent()
+        .and_then(Path::parent)
+        .expect("target profile directory");
+    let program = profile_dir
+        .join("examples")
+        .join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        program.is_file(),
+        "{} is missing: build it with `cargo test` or `cargo build --example {name} --all-features`",
+        program.display()
+    );
+    program
+}
+
 /// `import { whoami } from "host"`: the id of the calling script.
 pub(crate) struct WhoAmI;
 

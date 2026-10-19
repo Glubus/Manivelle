@@ -7,6 +7,5 @@
 
 pub use rquickjs::function::Args;
 pub use rquickjs::{
-    Array, ArrayBuffer, Context, Ctx, Error, Function, Object, Result, Runtime, String, TypedArray,
-    Value,
+    Array, ArrayBuffer, Context, Ctx, Error, Function, Object, Runtime, TypedArray, Value,
 };

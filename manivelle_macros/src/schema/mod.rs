@@ -25,8 +25,8 @@ pub(crate) fn expand_schema_impl(container: &Container<'_>) -> TokenStream {
     quote! {
         #[automatically_derived]
         impl #impl_generics ::manivelle::TsSchema for #ident #ty_generics #where_clause {
-            fn schema_name() -> &'static str {
-                #schema_name
+            fn schema_name() -> ::std::option::Option<&'static str> {
+                ::std::option::Option::Some(#schema_name)
             }
 
             fn ts_type() -> ::manivelle::TsType {
@@ -42,7 +42,7 @@ pub(crate) fn expand_schema_impl(container: &Container<'_>) -> TokenStream {
 
 fn ts_type(container: &Container<'_>) -> TokenStream {
     if let Some(wire_type) = container.wire_type() {
-        return quote!(::manivelle::__schema_type_ref::<#wire_type>());
+        return quote!(::manivelle::__private::schema_type_ref::<#wire_type>());
     }
     if let Some(field) = container.transparent_field() {
         return fields::type_ref(field);
@@ -92,5 +92,5 @@ fn described_shapes<'c>(container: &'c Container<'_>) -> Vec<(&'c Shape<'c>, boo
 }
 
 fn push_dependency(ty: &Type) -> TokenStream {
-    quote!(::manivelle::__push_schema_dependency::<#ty>(&mut dependencies);)
+    quote!(::manivelle::__private::push_schema_dependency::<#ty>(&mut dependencies);)
 }

@@ -42,7 +42,9 @@ pub(super) fn invoke<'js>(
             Ok(returned)
         };
     }
-    let args = args.encode_args(ctx).map_err(js_error)?;
+    let args = args
+        .encode_args(ctx)
+        .map_err(|error| js_error(error.into()))?;
     let returned = function
         .call_arg::<JsValue<'_>>(args)
         .catch(ctx)

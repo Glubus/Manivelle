@@ -147,7 +147,7 @@ fn context_stores_descriptor() {
     assert_eq!(descriptor.kind, HostContractKind::Context);
     assert!(matches!(
         descriptor.abi,
-        HostContractAbi::Context { schema } if schema.name == "DemoContext"
+        HostContractAbi::Context { schema } if schema.name.as_deref() == Some("DemoContext")
     ));
 }
 
@@ -348,7 +348,7 @@ fn dts_is_generated_from_contract_schemas() {
         demo_callback(),
         function_descriptor::<DemoFunction>(
             Schema::typed("DemoFunctionInput", TsType::Void),
-            Schema::named("unknown"),
+            Schema::anonymous(TsType::Unknown),
         ),
     ]);
 

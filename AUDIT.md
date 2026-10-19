@@ -240,10 +240,10 @@ Chaque point a été revérifié avant correction. Légende : **FAIT**, **PARTIE
 ### Non-idiomatique / noms (§4, §5)
 | ID | Statut | Détail |
 |---|---|---|
-| I1 | PARTIEL | `Direction` enum fait. `ScriptId` newtype et champs `String` d'`EngineError` : NON FAIT (changement d'API large, bénéfice faible). |
-| I2 | PARTIEL | `Deadline` enum, `bridge.rs` sans sentinelles. Sentinelle `"unknown"` des schémas : NON FAIT (nombreux appelants publics). |
-| I3 | NON FAIT | `rquickjs::Error` ne porte qu'un message ; un chemin structuré change la signature `#[doc(hidden)] pub` `at_path`. |
-| I4 | NON FAIT | `js_host_error` : conversion imposée par `rquickjs::Error` côté hôte, à reprendre avec I3. |
+| I1 | FAIT | `Direction` enum ; `ScriptId` est un vrai newtype (`Arc<str>`, `Borrow<str>`, `Deref<str>`), utilisé par `ScriptNotFound`/`FunctionNotFound`, `Emission` (sans lifetime), `ReloadReport`, `Engine::request`. Les `details: String` restent (texte de diagnostic). |
+| I2 | FAIT | `Deadline` enum, `bridge.rs` sans sentinelles, `Schema.name: Option<String>` (`Schema::anonymous`/`typed`, plus de `"unknown"`). `HostContractAbi::Unknown` gardé : vraie variante. |
+| I3 | FAIT | `CodecError { path: Vec<PathSegment>, cause }` : le chemin est une donnée, rendu en texte seulement à l'affichage ou à la frontière QuickJS. Helpers `at_path`/`prefix_path`/`has_path` supprimés. |
+| I4 | NON FAIT | `rquickjs::Error` ne peut pas porter une `EngineError` typée sans état hors-bande (stash global) : refusé. |
 | I5, I7, I9 | FAIT | |
 | I6 | PARTIEL | `'a` → `'_` : faux positif (`new` utilise `'a`). Le reste fait. |
 | I8 | PARTIEL | `resolve.rs` itératif ; `compiler/project.rs::visit` reste récursif (profondeur bornée par les imports du projet). |
@@ -251,10 +251,10 @@ Chaque point a été revérifié avant correction. Légende : **FAIT**, **PARTIE
 | I11 | FAUX POSITIF/NON FAIT | `check.rs` ne renvoie pas de `String` ; `validate_json*` est public. |
 | N1 | PARTIEL | `descriptor(name)` → `get`. `MapKey`/`TsRecordKey` : documentés (pas de renommage d'API publique). |
 | N2 | FAIT | Trait `HostContractRegistry` supprimé ; API chaînée inhérente (`function`, `callback`, …, `get`). Voir CHANGELOG (breaking). |
-| N3 | NON FAIT | Renommages d'API publique (`HostRequest`…) non décidés. |
-| N4 | PARTIEL | `Engine::dispatch` → `run_audience`. Autres noms de `bridge.rs`/`codec.rs` inchangés. |
+| N3 | PARTIEL | Pas de renommage (`HostRequest` garde son nom) ; docs de `HostCallback`/`HostRequest`/`HostResolver` clarifiées. |
+| N4 | FAIT | `Engine::dispatch`→`run_audience` ; `bridge.rs` : `js_to_json`/`json_to_js`/`js_to_snapshot` ; `codec_error`/`encode_error`/`at_*` remplacés par `CodecError`. |
 | N5 | FAIT | `_ty`, `rust_name`, `context_run_end`→`run_len`. |
-| N6 | NON FAIT | `__derive` doit rester public (les macros génèrent `::manivelle::__derive::…`). |
+| N6 | PARTIEL | Les `__xxx` sont regroupés dans `#[doc(hidden)] pub mod __private` ; `codec::derive` privé ; `js::String`/`js::Result` supprimés. Les hooks `encode_scalar`/`decode_scalar`/`encode_scalars` restent publics `doc(hidden)` : le runner les appelle et un trait public ne peut pas avoir de méthode `pub(crate)` (les sceller coûterait le fast path scalaire). |
 | N7 | FAIT | |
 | N8 | FAUX POSITIF (partiel) | `PendingCall::is_finished/take` sont de l'API publique. |
 
@@ -282,12 +282,12 @@ S1, S2, S3, S4 : FAIT.
 | ID | Statut | Détail |
 |---|---|---|
 | T1 | FAIT | `derive_schema.rs` → `derive_schema_{shapes,flatten,enums,host}.rs` (33 tests, mêmes assertions). |
-| T2 | PARTIEL | `engine`, `engine_projects`, `context_groups` éclatés (82 tests inchangés). `type_contract_derive.rs` (harnais et types communs) et tests inline de `runner/` : NON FAIT. |
+| T2 | FAIT (sauf inline) | `engine`, `engine_projects`, `context_groups` éclatés ; `type_contract_derive/` en `main/harness/types/structs/enums/codecs`. Tests inline de `runner/` : NON FAIT. |
 | T3 | PARTIEL | `support` : `assert_tsc`, `run_tsc*`, `write_file`, `stdout/stderr`, `count`, `write_tsconfig`, `wait_until`…. Les `engine()` avec options ou setup propre restent locaux. |
 | T4 | PARTIEL | `host_registry_api.rs`, `dogfood_usage.rs` : assertions de texte remplacées par des contrôles `tsc`. `schema.rs` non revu. |
 | T5 | FAUX POSITIF | `FileStamp` compare taille + mtime, détection déterministe ; `sleep` retiré par hygiène. |
 | T6 | PARTIEL | `Inc`/`ScoreUpdate` partagés (`benches/support/workload.rs`), macro dans `native_bridge.rs` (8 contrats, pas ~40), mesure mémoire sortie de `runtime.rs`. Les sources LUA/JS/TS divergent : pas de doublon réel. |
 | T7 | FAIT | |
-| T8 | NON FAIT | `export_child` doit rester dans le binaire de test (`CARGO_BIN_EXE_*` indisponible pour un exemple). |
+| T8 | FAIT | `export_child` remplacé par les exemples `init_program` et `check_program`, localisés via `support::example_program` (`target/<profile>/examples/`). `cargo test --test cli_*` seul ne construit pas les exemples : lancer `cargo test`. |
 | C1 | FAIT | `exclude` : `tests`, `benches`, `docs` ajoutés (`cargo package --list` vérifié). Cargo avertit que les cibles `[[test]]`/`[[bench]]` sont ignorées dans le paquet publié : cosmétique. |
 | C2 | FAUX POSITIF | `AGENTS.md` dans `.gitignore` est voulu (outillage local). |

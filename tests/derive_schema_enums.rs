@@ -75,7 +75,7 @@ fn derive_ts_schema_respects_serde_enum_variant_attributes() {
 
 #[test]
 fn derive_ts_schema_for_unit_enum() {
-    assert_eq!(Status::schema_name(), "BillingStatus");
+    assert_eq!(Status::schema_name(), Some("BillingStatus"));
     assert!(matches!(Status::ts_type(), TsType::Enum { .. }));
 }
 

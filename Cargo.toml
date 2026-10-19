@@ -82,6 +82,10 @@ required-features = ["derive"]
 name = "game_loop"
 required-features = ["derive"]
 
+[[example]]
+name = "init_program"
+required-features = ["derive"]
+
 [profile.release]
 opt-level = 3
 lto = "fat"

@@ -27,30 +27,29 @@ mod runner;
 mod sdk_files;
 mod types;
 
-#[doc(hidden)]
-pub use serde as __serde;
-
 pub use analysis::{
     ContractNames, Finding, PackageReport, ScriptUsage, Severity, Usage, analyze_project,
     analyze_source, check_package,
 };
 pub use config::{ContractValidation, EngineOptions, ScriptBuiltins, UnknownFieldValidation};
 pub use contract::{
-    Caller, HostFunctionSignature, HostRequest, HostResolver, JsArgs, JsDecode, JsEncode,
-    ScriptExport, TsArgs,
+    Caller, CodecError, HostFunctionSignature, HostRequest, HostResolver, JsArgs, JsDecode,
+    JsEncode, PathSegment, ScriptExport, TsArgs,
 };
 pub use contract::{
     HostCallback, HostCallbackDescriptor, HostContext, HostContract, HostContractAbi,
     HostContractDescriptor, HostContractKind, HostFunction, HostFunctionDescriptor, HostMetadata,
     MapKey, NativeBytes, Schema, TsEnumVariant, TsField, TsLiteral, TsRecordKey, TsSchema, TsType,
 };
+/// Items the procedural macros generate code against. Not part of the public API.
 #[doc(hidden)]
-pub use contract::{
-    ObjectSchema as __ObjectSchema, at_path as __codec_at_path, codec_error as __codec_error,
-    derive as __derive, expect_array_len as __codec_expect_array_len,
-    expect_object as __codec_expect_object, push_schema_dependency as __push_schema_dependency,
-    schema_type_ref as __schema_type_ref,
-};
+pub mod __private {
+    pub use crate::contract::{
+        ObjectSchema, derive, expect_array_len, expect_object, push_schema_dependency,
+        schema_type_ref,
+    };
+    pub use serde;
+}
 pub use error::{Direction, EngineError};
 #[cfg(feature = "derive")]
 pub use manivelle_macros::{

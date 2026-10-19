@@ -22,9 +22,9 @@ pub(super) fn encoder(field: &Field<'_>) -> TokenStream {
     }
     match &field.attrs.serialize_with {
         Some(serialize) => quote! {
-            |__field, __ctx| ::manivelle::__derive::json_encode_with(__field, __ctx, #serialize)
+            |__field, __ctx| ::manivelle::__private::derive::json_encode_with(__field, __ctx, #serialize)
         },
-        None => quote_spanned!(ty.span()=> ::manivelle::__derive::json_encode::<#ty>),
+        None => quote_spanned!(ty.span()=> ::manivelle::__private::derive::json_encode::<#ty>),
     }
 }
 
@@ -39,9 +39,9 @@ pub(super) fn decoder(field: &Field<'_>) -> TokenStream {
     }
     match &field.attrs.deserialize_with {
         Some(deserialize) => quote! {
-            |__ctx, __field| ::manivelle::__derive::json_decode_with(__ctx, __field, #deserialize)
+            |__ctx, __field| ::manivelle::__private::derive::json_decode_with(__ctx, __field, #deserialize)
         },
-        None => quote_spanned!(ty.span()=> ::manivelle::__derive::json_decode::<#ty>),
+        None => quote_spanned!(ty.span()=> ::manivelle::__private::derive::json_decode::<#ty>),
     }
 }
 
