@@ -76,23 +76,27 @@ fn natives<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
          fatal: bool,
          ignore_bom: bool|
          -> rquickjs::Result<String> {
-            // SAFETY: the bytes are copied into the returned string before any
-            // JavaScript can run again.
-            let Some(bytes) = (unsafe { bytes.as_bytes() }) else {
-                return Err(Exception::throw_type(&ctx, "the buffer is detached"));
+            // The decoded string is owned before any exception is thrown, so the borrow of
+            // the buffer ends before JavaScript can run again. `None` is invalid UTF-8.
+            let decoded = {
+                // SAFETY: the slice is only read inside this block, which runs no
+                // JavaScript and does not outlive the buffer's borrow.
+                let Some(bytes) = (unsafe { bytes.as_bytes() }) else {
+                    return Err(Exception::throw_type(&ctx, "the buffer is detached"));
+                };
+                let bytes = if ignore_bom {
+                    bytes
+                } else {
+                    bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes)
+                };
+                if fatal {
+                    std::str::from_utf8(bytes).map(str::to_owned).ok()
+                } else {
+                    Some(String::from_utf8_lossy(bytes).into_owned())
+                }
             };
-            let bytes = if ignore_bom {
-                bytes
-            } else {
-                bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes)
-            };
-            if fatal {
-                std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| {
-                    Exception::throw_type(&ctx, "The encoded data was not valid UTF-8")
-                })
-            } else {
-                Ok(String::from_utf8_lossy(bytes).into_owned())
-            }
+            decoded
+                .ok_or_else(|| Exception::throw_type(&ctx, "The encoded data was not valid UTF-8"))
         },
     )?;
     for function in [&encode, &decode] {
@@ -105,7 +109,10 @@ fn natives<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
 
 /// rquickjs gives native functions the `Function.prototype` of the first context that made
 /// one, for the whole runtime: gives `function` this context's, as `build_env` does.
-fn use_context_prototype<'js>(ctx: &Ctx<'js>, function: &Function<'js>) -> Result<(), EngineError> {
+pub(super) fn use_context_prototype<'js>(
+    ctx: &Ctx<'js>,
+    function: &Function<'js>,
+) -> Result<(), EngineError> {
     function
         .set_prototype(Some(&Function::prototype(ctx.clone())))
         .map_err(js_error)

@@ -11,6 +11,37 @@ const NO_DEADLINE: u64 = u64::MAX;
 /// delivering a small event.
 const PENDING: u64 = u64::MAX - 1;
 
+/// The deadline as the QuickJS interrupt handler reads it: the atomic stores it as a
+/// nanosecond count after `origin`, with two values past any reachable count for the
+/// states without one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Deadline {
+    /// No operation runs, or it has no time limit.
+    None,
+    /// The budget's clock has not started.
+    Pending,
+    /// The budget ends at this many nanoseconds after `origin`.
+    At(u64),
+}
+
+impl Deadline {
+    fn load(raw: u64) -> Self {
+        match raw {
+            NO_DEADLINE => Self::None,
+            PENDING => Self::Pending,
+            nanos => Self::At(nanos),
+        }
+    }
+
+    fn store(self) -> u64 {
+        match self {
+            Self::None => NO_DEADLINE,
+            Self::Pending => PENDING,
+            Self::At(nanos) => nanos,
+        }
+    }
+}
+
 /// Deadline and interrupt request read by the QuickJS interrupt handler.
 ///
 /// A budget starts when the operation first reaches a QuickJS interrupt check or a host
@@ -67,7 +98,7 @@ impl ExecutionControl {
     /// here on its time counts. Called at every interrupt check and when a host function
     /// is entered.
     pub(crate) fn start_clock(&self) {
-        if self.deadline.load(Ordering::Acquire) != PENDING {
+        if Deadline::load(self.deadline.load(Ordering::Acquire)) != Deadline::Pending {
             return;
         }
         let deadline = self
@@ -83,12 +114,13 @@ impl ExecutionControl {
     /// An interrupt the host requested is not cleared, so it still stops the operation.
     /// Costs one atomic load when the running script has not started the clock.
     pub(crate) fn restart_slice(&self) {
-        match self.deadline.load(Ordering::Acquire) {
-            NO_DEADLINE | PENDING => {}
+        match Deadline::load(self.deadline.load(Ordering::Acquire)) {
+            Deadline::None | Deadline::Pending => {}
             _ if self.interrupt_requested() => {}
             _ => {
                 self.stopped.store(false, Ordering::Release);
-                self.deadline.store(PENDING, Ordering::Release);
+                self.deadline
+                    .store(Deadline::Pending.store(), Ordering::Release);
             }
         }
     }
@@ -113,9 +145,9 @@ impl ExecutionControl {
     /// Whether the running operation has used up its budget. False when no
     /// operation runs, it has no time limit or its clock has not started.
     pub(crate) fn budget_expired(&self) -> bool {
-        match self.deadline.load(Ordering::Acquire) {
-            NO_DEADLINE | PENDING => false,
-            deadline => self.elapsed_nanos() >= deadline,
+        match Deadline::load(self.deadline.load(Ordering::Acquire)) {
+            Deadline::None | Deadline::Pending => false,
+            Deadline::At(deadline) => self.elapsed_nanos() >= deadline,
         }
     }
 
@@ -130,9 +162,12 @@ impl ExecutionControl {
         match nanos {
             Some(nanos) => {
                 self.budget.store(nanos, Ordering::Release);
-                self.deadline.store(PENDING, Ordering::Release);
+                self.deadline
+                    .store(Deadline::Pending.store(), Ordering::Release);
             }
-            None => self.deadline.store(NO_DEADLINE, Ordering::Release),
+            None => self
+                .deadline
+                .store(Deadline::None.store(), Ordering::Release),
         }
         ExecutionGuard(self)
     }
@@ -144,15 +179,32 @@ impl ExecutionControl {
 
 pub(crate) struct ExecutionGuard<'a>(&'a ExecutionControl);
 
+/// Clears the deadline when the operation ends. `stopped` and `interrupt_requested`
+/// persist, so the host can still read why the operation stopped; `enter` clears them
+/// for the next operation.
 impl Drop for ExecutionGuard<'_> {
     fn drop(&mut self) {
-        self.0.deadline.store(NO_DEADLINE, Ordering::Release);
+        self.0
+            .deadline
+            .store(Deadline::None.store(), Ordering::Release);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deadline_states_round_trip_through_the_atomic() {
+        for deadline in [
+            Deadline::None,
+            Deadline::Pending,
+            Deadline::At(0),
+            Deadline::At(42),
+        ] {
+            assert!(Deadline::load(deadline.store()) == deadline);
+        }
+    }
 
     #[test]
     fn a_zero_budget_is_expired_at_the_first_check() {

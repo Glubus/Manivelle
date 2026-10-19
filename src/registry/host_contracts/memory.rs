@@ -1,24 +1,24 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use rquickjs::{Object, Result as JsResult};
-use serde_json::Value;
 
 use super::bindings::{ContractValidator, FunctionBindingStore, NativeContext};
 use super::declarations::render_typescript_declarations;
 use super::import_modules::{HostModuleStyle, render_host_import_modules};
-use super::interface::HostContractRegistry;
 use super::sdk::render_typescript_sdk;
 use crate::config::{ContractValidation, UnknownFieldValidation};
-use crate::contract::validation::{SchemaValidationOptions, validate_schema_with_options};
+use crate::contract::validation::{
+    SchemaValidationOptions, Snapshot, validate_schema_with_options,
+};
 use crate::contract::{
     Caller, HostCallback, HostCallbackDescriptor, HostContext, HostContractAbi,
     HostContractDescriptor, HostContractKind, HostFunction, HostFunctionDescriptor,
     HostFunctionSignature, HostImportBinding, HostMetadata, HostRequest, HostResolver, JsDecode,
     JsEncode, Schema, ScriptExport, TsArgs, TsSchema,
 };
-use crate::error::EngineError;
+use crate::error::{Direction, EngineError};
 use crate::packages::PermissionSet;
 use crate::runner::host_promises::HostPromises;
 use crate::sdk_files::{
@@ -72,7 +72,9 @@ impl InMemoryHostContractRegistry {
         T::Input: TsSchema + JsDecode,
         T::Output: TsSchema + JsEncode,
     {
-        self.register_function::<T>()?;
+        self.insert_descriptor(function_descriptor::<T>(false), |bindings| {
+            bindings.insert_plain::<T>(T::call)
+        })?;
         Ok(self)
     }
 
@@ -90,7 +92,9 @@ impl InMemoryHostContractRegistry {
         C::Input: TsSchema + JsDecode,
         C::Output: TsSchema + JsEncode,
     {
-        self.register_function_with::<C>(handler)?;
+        self.insert_descriptor(function_descriptor::<C>(false), |bindings| {
+            bindings.insert_plain::<C>(handler)
+        })?;
         Ok(self)
     }
 
@@ -110,7 +114,9 @@ impl InMemoryHostContractRegistry {
         C::Input: TsSchema + JsDecode,
         C::Output: TsSchema + JsEncode,
     {
-        self.register_function_with_caller::<C>(handler)?;
+        self.insert_descriptor(function_descriptor::<C>(false), |bindings| {
+            bindings.insert_with_caller::<C>(handler)
+        })?;
         Ok(self)
     }
 
@@ -133,7 +139,9 @@ impl InMemoryHostContractRegistry {
         C::Input: TsSchema + JsDecode,
         C::Output: TsSchema + JsEncode + Send,
     {
-        self.register_async_function_with::<C>(handler)?;
+        self.insert_descriptor(function_descriptor::<C>(true), |bindings| {
+            bindings.insert_async::<C, _>(move |_, input, resolver| handler(input, resolver))
+        })?;
         Ok(self)
     }
 
@@ -153,7 +161,9 @@ impl InMemoryHostContractRegistry {
         C::Input: TsSchema + JsDecode,
         C::Output: TsSchema + JsEncode + Send,
     {
-        self.register_async_function_with_caller::<C>(handler)?;
+        self.insert_descriptor(function_descriptor::<C>(true), |bindings| {
+            bindings.insert_async::<C, _>(handler)
+        })?;
         Ok(self)
     }
 
@@ -164,7 +174,7 @@ impl InMemoryHostContractRegistry {
         T: HostCallback + 'static,
         T::Payload: TsSchema + JsEncode,
     {
-        self.register_callback::<T>()?;
+        self.insert_descriptor(callback_descriptor::<T>(None), |_| Ok(()))?;
         Ok(self)
     }
 
@@ -176,7 +186,9 @@ impl InMemoryHostContractRegistry {
         T::Payload: TsSchema + JsEncode,
         T::Reply: TsSchema + JsDecode,
     {
-        self.register_request::<T>()?;
+        self.insert_descriptor(callback_descriptor::<T>(Some(T::Reply::schema())), |_| {
+            Ok(())
+        })?;
         Ok(self)
     }
 
@@ -185,7 +197,13 @@ impl InMemoryHostContractRegistry {
     where
         T: HostContext,
     {
-        self.register_context::<T>()?;
+        let schema = T::schema();
+        let descriptor = described(
+            T::descriptor(),
+            schema.clone(),
+            HostContractAbi::Context { schema },
+        );
+        self.insert_descriptor(descriptor, |_| Ok(()))?;
         Ok(self)
     }
 
@@ -225,28 +243,31 @@ impl InMemoryHostContractRegistry {
             docs: None,
         };
         // Under a key of its own, so that an export named like a host contract replaces
-        // neither.
-        let mut guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
-        guard.insert(format!("export {}", E::NAME), descriptor);
-        drop(guard);
+        // neither. Declaring the same export again replaces its description.
+        self.lock_descriptors()?
+            .insert(format!("export {}", E::NAME), descriptor);
         Ok(self)
     }
 
     /// Returns one descriptor by stable contract name.
-    pub fn descriptor(&self, name: &str) -> Result<Option<HostContractDescriptor>, EngineError> {
-        self.get(name)
+    pub fn get(&self, name: &str) -> Result<Option<HostContractDescriptor>, EngineError> {
+        let guard = self.lock_descriptors()?;
+        Ok(guard.get(name).cloned())
     }
 
-    /// Returns every descriptor known by the registry.
+    /// Returns every descriptor known by the registry, sorted by name.
     pub fn descriptors(&self) -> Result<Vec<HostContractDescriptor>, EngineError> {
-        self.list()
+        let guard = self.lock_descriptors()?;
+        let mut descriptors = guard.values().cloned().collect::<Vec<_>>();
+        descriptors.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(descriptors)
     }
 
     pub(crate) fn import_module_names(&self) -> Result<BTreeSet<String>, EngineError> {
         Ok(self
-            .descriptors()?
-            .into_iter()
-            .map(|descriptor| descriptor.import.module)
+            .lock_descriptors()?
+            .values()
+            .map(|descriptor| descriptor.import.module.clone())
             .collect())
     }
 
@@ -295,12 +316,12 @@ impl InMemoryHostContractRegistry {
 
     /// Renders TypeScript declarations from registered host contracts.
     pub fn dts(&self) -> Result<String, EngineError> {
-        self.typescript_declarations()
+        Ok(render_typescript_declarations(&self.descriptors()?))
     }
 
     /// Renders an ergonomic TypeScript SDK from registered host contracts.
     pub fn sdk(&self) -> Result<String, EngineError> {
-        self.typescript_sdk()
+        Ok(render_typescript_sdk(&self.descriptors()?))
     }
 
     /// Writes generated declaration and SDK source files into one directory.
@@ -320,8 +341,27 @@ impl InMemoryHostContractRegistry {
         write_host_sdk_files_with_names(directory, &self.descriptors()?, names)
     }
 
-    fn insert_descriptor(&self, descriptor: HostContractDescriptor) -> Result<(), EngineError> {
-        let mut guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
+    /// Locks the descriptors. Each update holds the lock across its check and its insert.
+    fn lock_descriptors(
+        &self,
+    ) -> Result<MutexGuard<'_, HashMap<String, HostContractDescriptor>>, EngineError> {
+        self.by_name.lock().map_err(|_| EngineError::LockPoisoned)
+    }
+
+    /// Registers `descriptor` under its name, and `bind` installs the function it describes.
+    /// Both happen under one lock, so a name already taken fails with nothing changed.
+    fn insert_descriptor(
+        &self,
+        descriptor: HostContractDescriptor,
+        bind: impl FnOnce(&FunctionBindingStore) -> Result<(), EngineError>,
+    ) -> Result<(), EngineError> {
+        let mut guard = self.lock_descriptors()?;
+        if guard.contains_key(&descriptor.name) {
+            return Err(EngineError::DuplicateContract {
+                name: descriptor.name.clone(),
+            });
+        }
+        bind(&self.function_bindings)?;
         guard.insert(descriptor.name.clone(), descriptor);
         Ok(())
     }
@@ -333,14 +373,14 @@ impl InMemoryHostContractRegistry {
         name: &str,
         check: impl FnOnce(&HostContractDescriptor) -> Result<(), EngineError>,
     ) -> Result<(), EngineError> {
-        let guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
+        let guard = self.lock_descriptors()?;
         guard.get(name).map_or(Ok(()), check)
     }
 
     fn validate_function_input(
         &self,
         descriptor: &HostContractDescriptor,
-        input: &Value,
+        input: &Snapshot,
     ) -> Result<(), EngineError> {
         if !self.validation.validates_inputs() {
             return Ok(());
@@ -355,7 +395,7 @@ impl InMemoryHostContractRegistry {
         )
         .map_err(|details| EngineError::ContractValidation {
             contract_name: descriptor.name.clone(),
-            direction: "input",
+            direction: Direction::Input,
             details,
         })
     }
@@ -363,7 +403,7 @@ impl InMemoryHostContractRegistry {
     fn validate_function_output(
         &self,
         descriptor: &HostContractDescriptor,
-        output: &Value,
+        output: &Snapshot,
     ) -> Result<(), EngineError> {
         if !self.validation.validates_outputs() {
             return Ok(());
@@ -378,7 +418,7 @@ impl InMemoryHostContractRegistry {
         )
         .map_err(|details| EngineError::ContractValidation {
             contract_name: descriptor.name.clone(),
-            direction: "output",
+            direction: Direction::Output,
             details,
         })
     }
@@ -406,13 +446,13 @@ impl ContractValidator for RegisteredContract {
         self.registry.validation.validates_outputs()
     }
 
-    fn validate_input(&self, input: &Value) -> Result<(), EngineError> {
+    fn validate_input(&self, input: &Snapshot) -> Result<(), EngineError> {
         self.registry.with_descriptor(&self.name, |descriptor| {
             self.registry.validate_function_input(descriptor, input)
         })
     }
 
-    fn validate_output(&self, output: &Value) -> Result<(), EngineError> {
+    fn validate_output(&self, output: &Snapshot) -> Result<(), EngineError> {
         self.registry.with_descriptor(&self.name, |descriptor| {
             self.registry.validate_function_output(descriptor, output)
         })
@@ -432,21 +472,12 @@ where
         output_schema: C::Output::schema(),
         returns_promise,
     };
-    let mut descriptor = C::descriptor();
-    descriptor.schema = function.input_schema.clone();
-    with_function(descriptor, function)
-}
-
-/// Adds the function ABI and metadata of `function` to `descriptor`.
-fn with_function(
-    mut descriptor: HostContractDescriptor,
-    function: HostFunctionDescriptor,
-) -> HostContractDescriptor {
-    descriptor.abi = HostContractAbi::Function {
+    let abi = HostContractAbi::Function {
         input: function.input_schema.clone(),
         output: function.output_schema.clone(),
-        returns_promise: function.returns_promise,
+        returns_promise,
     };
+    let mut descriptor = described(C::descriptor(), function.input_schema.clone(), abi);
     descriptor.function = Some(function);
     descriptor
 }
@@ -462,142 +493,22 @@ where
         payload_schema: T::Payload::schema(),
         reply_schema: reply,
     };
-    let mut descriptor = T::descriptor();
-    descriptor.schema = callback.payload_schema.clone();
-    with_callback(descriptor, callback)
-}
-
-/// Adds the callback ABI and metadata of `callback` to `descriptor`.
-fn with_callback(
-    mut descriptor: HostContractDescriptor,
-    callback: HostCallbackDescriptor,
-) -> HostContractDescriptor {
-    descriptor.abi = HostContractAbi::Callback {
+    let abi = HostContractAbi::Callback {
         payload: callback.payload_schema.clone(),
         reply: callback.reply_schema.clone(),
     };
+    let mut descriptor = described(T::descriptor(), callback.payload_schema.clone(), abi);
     descriptor.callback = Some(callback);
     descriptor
 }
 
-impl HostContractRegistry for InMemoryHostContractRegistry {
-    fn register_function<T>(&self) -> Result<(), EngineError>
-    where
-        T: HostFunction + 'static,
-        T::Input: TsSchema + JsDecode,
-        T::Output: TsSchema + JsEncode,
-    {
-        self.register_function_with::<T>(T::call)
-    }
-
-    fn register_function_with<C>(
-        &self,
-        handler: impl Fn(C::Input) -> Result<C::Output, EngineError> + Send + Sync + 'static,
-    ) -> Result<(), EngineError>
-    where
-        C: HostFunctionSignature + 'static,
-        C::Input: TsSchema + JsDecode,
-        C::Output: TsSchema + JsEncode,
-    {
-        self.insert_descriptor(function_descriptor::<C>(false))?;
-        self.function_bindings.insert_plain::<C>(handler)
-    }
-
-    fn register_function_with_caller<C>(
-        &self,
-        handler: impl Fn(&Caller<'_>, C::Input) -> Result<C::Output, EngineError>
-        + Send
-        + Sync
-        + 'static,
-    ) -> Result<(), EngineError>
-    where
-        C: HostFunctionSignature + 'static,
-        C::Input: TsSchema + JsDecode,
-        C::Output: TsSchema + JsEncode,
-    {
-        self.insert_descriptor(function_descriptor::<C>(false))?;
-        self.function_bindings.insert_with_caller::<C>(handler)
-    }
-
-    fn register_async_function_with<C>(
-        &self,
-        handler: impl Fn(C::Input, HostResolver<C::Output>) -> Result<(), EngineError>
-        + Send
-        + Sync
-        + 'static,
-    ) -> Result<(), EngineError>
-    where
-        C: HostFunctionSignature + 'static,
-        C::Input: TsSchema + JsDecode,
-        C::Output: TsSchema + JsEncode + Send,
-    {
-        self.insert_descriptor(function_descriptor::<C>(true))?;
-        self.function_bindings
-            .insert_async::<C, _>(move |_, input, resolver| handler(input, resolver))
-    }
-
-    fn register_async_function_with_caller<C>(
-        &self,
-        handler: impl Fn(&Caller<'_>, C::Input, HostResolver<C::Output>) -> Result<(), EngineError>
-        + Send
-        + Sync
-        + 'static,
-    ) -> Result<(), EngineError>
-    where
-        C: HostFunctionSignature + 'static,
-        C::Input: TsSchema + JsDecode,
-        C::Output: TsSchema + JsEncode + Send,
-    {
-        self.insert_descriptor(function_descriptor::<C>(true))?;
-        self.function_bindings.insert_async::<C, _>(handler)
-    }
-
-    fn register_callback<T>(&self) -> Result<(), EngineError>
-    where
-        T: HostCallback + 'static,
-        T::Payload: TsSchema + JsEncode,
-    {
-        self.insert_descriptor(callback_descriptor::<T>(None))
-    }
-
-    fn register_request<T>(&self) -> Result<(), EngineError>
-    where
-        T: HostRequest + 'static,
-        T::Payload: TsSchema + JsEncode,
-        T::Reply: TsSchema + JsDecode,
-    {
-        self.insert_descriptor(callback_descriptor::<T>(Some(T::Reply::schema())))
-    }
-
-    fn register_context<T>(&self) -> Result<(), EngineError>
-    where
-        T: HostContext,
-    {
-        let mut descriptor = T::descriptor();
-        descriptor.schema = T::schema();
-        descriptor.abi = HostContractAbi::Context {
-            schema: descriptor.schema.clone(),
-        };
-        self.insert_descriptor(descriptor)
-    }
-
-    fn get(&self, name: &str) -> Result<Option<HostContractDescriptor>, EngineError> {
-        let guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
-        Ok(guard.get(name).cloned())
-    }
-
-    fn list(&self) -> Result<Vec<HostContractDescriptor>, EngineError> {
-        let guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
-        let mut descriptors = guard.values().cloned().collect::<Vec<_>>();
-        descriptors.sort_by(|left, right| left.name.cmp(&right.name));
-        Ok(descriptors)
-    }
-
-    fn typescript_declarations(&self) -> Result<String, EngineError> {
-        Ok(render_typescript_declarations(&self.list()?))
-    }
-
-    fn typescript_sdk(&self) -> Result<String, EngineError> {
-        Ok(render_typescript_sdk(&self.list()?))
-    }
+/// `descriptor` with the schema and the ABI that every kind of contract has.
+fn described(
+    mut descriptor: HostContractDescriptor,
+    schema: Schema,
+    abi: HostContractAbi,
+) -> HostContractDescriptor {
+    descriptor.schema = schema;
+    descriptor.abi = abi;
+    descriptor
 }

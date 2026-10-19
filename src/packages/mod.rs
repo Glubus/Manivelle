@@ -1,15 +1,20 @@
 //! Packages: scripts packaged with a `manivelle.kdl` manifest that says what they need.
 
+mod discover;
+mod edit;
 mod manifest;
+mod names;
 mod permissions;
 mod resolve;
 
+pub use discover::resolve_packages;
+pub use edit::add_permissions;
 pub use manifest::{MANIFEST_FILE, PackageDependency, PackageManifest};
+pub(crate) use names::{closest, permission_matches};
 pub(crate) use permissions::PermissionSet;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::error::EngineError;
 use crate::runner::Engine;
@@ -39,7 +44,7 @@ pub struct PackageFailure {
     pub reason: String,
 }
 
-/// What [`Engine::load_packages`] did.
+/// What [`Engine::load_packages`](crate::Engine::load_packages) did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PackageLoad {
@@ -114,57 +119,9 @@ impl Engine {
         Ok(report)
     }
 
-    /// The packages [`Engine::load_packages`] loaded, in load order.
+    /// The packages [`Engine::load_packages`](crate::Engine::load_packages) loaded, in load order.
     #[must_use]
     pub fn packages(&self) -> &[PackageInfo] {
         &self.packages
     }
-}
-
-/// Reads the packages found in `roots` (each a package, or a directory of packages) and
-/// checks the whole set as [`Engine::load_packages`] does, without loading anything:
-/// unique names, `engine` requirements, dependencies and their versions, and cycles. The
-/// packages come back dependencies first.
-///
-/// # Errors
-///
-/// Fails when a root has no package, a manifest is not valid, or the set cannot work together.
-pub fn resolve_packages(roots: &[PathBuf]) -> Result<Vec<PackageManifest>, EngineError> {
-    let mut manifests = Vec::new();
-    for root in roots {
-        manifests.extend(discover(root)?);
-    }
-    let engine_version =
-        Version::parse(env!("CARGO_PKG_VERSION")).map_err(|error| EngineError::Manifest {
-            path: "manivelle".to_owned(),
-            details: error.to_string(),
-        })?;
-    resolve::load_order(manifests, &engine_version)
-}
-
-/// The manifests of the package at `root`, or of the packages in its subdirectories.
-fn discover(root: &Path) -> Result<Vec<PackageManifest>, EngineError> {
-    if root.join(MANIFEST_FILE).is_file() {
-        return Ok(vec![PackageManifest::read(root)?]);
-    }
-    let entries = fs::read_dir(root).map_err(|error| EngineError::Manifest {
-        path: root.display().to_string(),
-        details: error.to_string(),
-    })?;
-    let mut directories: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.join(MANIFEST_FILE).is_file())
-        .collect();
-    directories.sort();
-    if directories.is_empty() {
-        return Err(EngineError::Manifest {
-            path: root.display().to_string(),
-            details: format!("no {MANIFEST_FILE} here or in a subdirectory"),
-        });
-    }
-    directories
-        .iter()
-        .map(|path| PackageManifest::read(path))
-        .collect()
 }

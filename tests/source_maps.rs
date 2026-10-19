@@ -1,12 +1,9 @@
 mod support;
 
-use std::fs;
-use std::path::Path;
-
-use manivelle::{Engine, EngineError, EngineOptions};
+use manivelle::{Engine, EngineError};
 use serde_json::json;
 
-use support::TestCacheDir;
+use support::{TestCacheDir, engine, write_file};
 
 /// Type-only declarations and an enum shift every JavaScript line away from its
 /// TypeScript line.
@@ -31,10 +28,6 @@ export function explode(point: Point, mode: Mode = Mode.Angry): number {
 
 export const run = (): number => explode({ x: 1, y: 2 });
 "#;
-
-fn engine() -> Engine {
-    Engine::new(&EngineOptions::default()).expect("create engine")
-}
 
 /// `line:column` of the first `needle` in `source`, 1-based, in UTF-16 units.
 fn position_of(source: &str, needle: &str) -> String {
@@ -223,9 +216,4 @@ fn project_syntax_error_names_the_module_relative_to_the_root() {
         details.starts_with(&format!("lib/half.ts:{}: ", position_of(broken, ";\n}"))),
         "{details}"
     );
-}
-
-fn write_file(path: &Path, content: &str) {
-    fs::create_dir_all(path.parent().expect("parent directory")).expect("create directory");
-    fs::write(path, content).expect("write file");
 }

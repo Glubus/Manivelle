@@ -32,6 +32,7 @@ use rquickjs::atom::PredefinedAtom;
 use rquickjs::function::Args;
 use rquickjs::{Array, Ctx, Error as JsError, Object, Result as JsResult, Value as JsValue, qjs};
 
+pub(crate) use bytes::with_engine_bytes;
 pub use maps::MapKey;
 pub(crate) use number::exact_integer;
 
@@ -42,6 +43,12 @@ const MAX_PREALLOCATED_BYTES: usize = 1 << 20;
 /// Capacity to reserve for `len` items of `T` announced by untrusted input.
 pub(crate) fn cautious_capacity<T>(len: usize) -> usize {
     len.min(MAX_PREALLOCATED_BYTES / size_of::<T>().max(1))
+}
+
+/// Whether `JSON.stringify` drops a property holding `value`: `undefined`, functions and
+/// symbols.
+pub(crate) fn is_dropped_by_json(value: &JsValue<'_>) -> bool {
+    value.is_undefined() || value.is_function() || value.is_symbol()
 }
 
 /// Converts a Rust value into a QuickJS value.

@@ -54,7 +54,7 @@ impl HostCallback for Ping {
 }
 
 fn engine() -> Engine {
-    let engine = Engine::new(&EngineOptions::default()).unwrap();
+    let engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine
         .registry()
         .function_with::<Add>(|n| Ok(n + 1.0))

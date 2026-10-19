@@ -36,12 +36,16 @@ use super::timers::{EarliestDue, NextTimer, TimerClock};
 use super::transpile::Transpiler;
 use super::web::WebBytecode;
 
+mod context;
 mod delivery;
 mod dispatch;
 mod faults;
 mod host_driven;
+mod hot_reload;
 mod invoke;
-mod lifecycle;
+mod load;
+mod mount;
+mod prelude;
 
 /// Single-thread Manivelle engine.
 ///
@@ -78,36 +82,19 @@ mod lifecycle;
 pub struct Engine {
     /// In load order, which is the order events are delivered in.
     scripts: IndexMap<ScriptId, EngineScript, FxBuildHasher>,
-    active_tasks: Cell<usize>,
     registry: Arc<InMemoryHostContractRegistry>,
     transpiler: Transpiler,
     module_store: ModuleStore,
     next_graph_id: u64,
     execution: Arc<ExecutionControl>,
     execution_timeout: Duration,
-    max_script_faults: u32,
-    /// Whether a script already faulted for lack of memory in the running operation: the
-    /// pool is shared, so the scripts that fail after the first are not counted.
-    memory_fault_seen: Cell<bool>,
-    /// The books of the per-script memory quota; `None` when no quota is set.
-    quota: Option<Rc<Quota>>,
+    faults: Faults,
     console: ConsoleSink,
-    timer_clock: TimerClock,
+    scheduling: Scheduling,
     /// Which scripts listen to each event, for `emit` and `request`.
     event_index: EventIndex,
-    /// No later than the earliest due time of any script's timers.
-    earliest_timer: EarliestDue,
-    /// Raised when a resolver queues an answer for any script, lowered by `pump`.
-    host_wake: Arc<AtomicBool>,
     builtins: ScriptBuiltins,
-    /// Bytecode of the context prelude, compiled by the first script that mounts.
-    prelude: OnceCell<Box<[u8]>>,
-    /// The callable class of host functions, registered by the first script that mounts.
-    host_class: OnceCell<HostFnClass>,
-    /// The atoms of the export names the host calls.
-    export_atoms: KeptAtoms,
-    /// Bytecode of the web APIs module, compiled by the first context that uses them.
-    web_bytecode: WebBytecode,
+    shared: Shared,
     /// Contexts shared by scripts, by group name.
     groups: HashMap<Box<str>, ScriptGroup, FxBuildHasher>,
     /// The environment of every script loaded into a group, for its `manivelle:env` module.
@@ -122,6 +109,46 @@ pub struct Engine {
     // Declared last: contexts and persistent values must drop before their runtime.
     rejections: UnhandledRejections,
     runtime: Runtime,
+}
+
+/// The clock, the wake-ups and the count of the deferred tasks: what `advance_timers` and
+/// `pump` consult before they look at any script.
+#[derive(Default)]
+struct Scheduling {
+    /// The engine clock, moved only by `advance_timers`.
+    timer_clock: TimerClock,
+    /// No later than the earliest due time of any script's timers.
+    earliest_timer: EarliestDue,
+    /// Raised when a resolver queues an answer for any script, lowered by `pump`.
+    host_wake: Arc<AtomicBool>,
+    /// The deferred tasks the scripts hold, counted, so that settling polls them only when
+    /// one is waiting.
+    active_tasks: Cell<usize>,
+}
+
+/// The limits on the scripts' faults: how many of them quarantine one, and the memory
+/// quota that keeps the books of every script's allocations.
+struct Faults {
+    max_script_faults: u32,
+    /// Whether a script already faulted for lack of memory in the running operation: the
+    /// pool is shared, so the scripts that fail after the first are not counted.
+    memory_fault_seen: Cell<bool>,
+    /// The books of the per-script memory quota; `None` when no quota is set.
+    quota: Option<Rc<Quota>>,
+}
+
+/// What every script's context shares: the bytecode and the atoms that the first use
+/// compiles or keeps, so that later contexts reuse them.
+#[derive(Default)]
+struct Shared {
+    /// Bytecode of the context prelude, compiled by the first script that mounts.
+    prelude: OnceCell<Box<[u8]>>,
+    /// The callable class of host functions, registered by the first script that mounts.
+    host_class: OnceCell<HostFnClass>,
+    /// The atoms of the export names the host calls.
+    export_atoms: KeptAtoms,
+    /// Bytecode of the web APIs module, compiled by the first context that uses them.
+    web_bytecode: WebBytecode,
 }
 
 struct EngineScript {
@@ -231,7 +258,6 @@ impl Engine {
         let runtime = new_runtime(options, quota.as_ref(), &module_store, &execution, &envs)?;
         Ok(Self {
             scripts: IndexMap::default(),
-            active_tasks: Cell::new(0),
             registry: Arc::new(InMemoryHostContractRegistry::with_validation_options(
                 options.contract_validation,
                 options.unknown_field_validation,
@@ -241,19 +267,16 @@ impl Engine {
             next_graph_id: 0,
             execution,
             execution_timeout: options.execution_timeout,
-            max_script_faults: options.max_script_faults,
-            memory_fault_seen: Cell::new(false),
-            quota,
+            faults: Faults {
+                max_script_faults: options.max_script_faults,
+                memory_fault_seen: Cell::new(false),
+                quota,
+            },
             console: ConsoleSink::default(),
-            timer_clock: TimerClock::default(),
-            earliest_timer: EarliestDue::default(),
+            scheduling: Scheduling::default(),
             event_index: EventIndex::default(),
-            host_wake: Arc::default(),
             builtins: options.builtins,
-            prelude: OnceCell::new(),
-            host_class: OnceCell::new(),
-            export_atoms: KeptAtoms::default(),
-            web_bytecode: WebBytecode::default(),
+            shared: Shared::default(),
             groups: HashMap::default(),
             envs,
             packages: Vec::new(),
@@ -341,7 +364,7 @@ impl Engine {
 
     /// Starts the execution budget for one operation; it ends when the guard drops.
     fn budget(&self) -> ExecutionGuard<'_> {
-        self.memory_fault_seen.set(false);
+        self.faults.memory_fault_seen.set(false);
         self.execution.enter(self.execution_timeout)
     }
 }
@@ -359,11 +382,12 @@ impl EngineScript {
         name: &str,
     ) -> Result<Function<'js>, EngineError> {
         let raw = ctx.as_raw().as_ptr();
-        // SAFETY: `raw` is the live context of `ctx` and the namespace a value of it; the
-        // atom is valid for the call, and the value `JS_GetProperty` returns is owned.
         let value = atoms
-            .with(ctx, name, |atom| unsafe {
-                qjs::JS_GetProperty(raw, self.exports.raw(), atom)
+            .with(ctx, name, |atom| {
+                // SAFETY: `raw` is the live context of `ctx` and the namespace a value of
+                // it; the atom is valid for the call, and the value `JS_GetProperty`
+                // returns is owned.
+                unsafe { qjs::JS_GetProperty(raw, self.exports.raw(), atom) }
             })
             .ok_or(rquickjs::Error::Allocation)
             .map_err(js_error)?;

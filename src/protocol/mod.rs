@@ -83,6 +83,22 @@ impl Engine {
                 ..Setup::default()
             });
         }
+        self.attach_tool()?;
+        let mut setup = Setup {
+            attached: self.protocol.is_some(),
+            ..Setup::default()
+        };
+
+        let roots = package_roots();
+        if !roots.is_empty() {
+            setup.packages = self.load_startup_packages(&roots)?;
+        }
+        Ok(setup)
+    }
+
+    /// Connects to the tool that [`PROTOCOL_ENV`] names, if any, and forwards the
+    /// program's console output to it.
+    fn attach_tool(&mut self) -> Result<(), EngineError> {
         self.protocol = connect_from_env()?;
         if let Some(outbox) = self.protocol.as_ref().map(Link::outbox) {
             self.forward_console(move |level, script, message| {
@@ -94,23 +110,18 @@ impl Engine {
                 });
             });
         }
-        let mut setup = Setup {
-            attached: self.protocol.is_some(),
-            ..Setup::default()
-        };
+        Ok(())
+    }
 
-        let roots = package_roots();
-        if roots.is_empty() {
-            return Ok(setup);
-        }
-        match self.load_packages(&roots) {
+    /// Loads the packages the tool asked for, and tells the tool what loaded.
+    fn load_startup_packages(&mut self, roots: &[PathBuf]) -> Result<PackageLoad, EngineError> {
+        match self.load_packages(roots) {
             Ok(load) => {
                 self.tell(FromProgram::Packages {
                     loaded: load.loaded.iter().map(PackageSummary::from).collect(),
                     failed: load.failed.clone(),
                 });
-                setup.packages = load;
-                Ok(setup)
+                Ok(load)
             }
             Err(error) => {
                 self.tell(FromProgram::Fatal {
@@ -165,31 +176,33 @@ impl Engine {
             Request::ListPackages => Reply::Packages {
                 packages: self.packages().iter().map(PackageSummary::from).collect(),
             },
-            Request::Reload => {
-                let report = self.reload_changed();
-                let reason = |label: &str, error: &EngineError| format!("{label}{error}");
-                let mut failures: Vec<PackageFailure> = report
-                    .failed
-                    .iter()
-                    .map(|(name, error)| PackageFailure {
-                        name: name.to_string(),
-                        reason: reason("", error),
-                    })
-                    .collect();
-                failures.extend(
-                    report
-                        .dispose_failed
-                        .iter()
-                        .map(|(name, error)| PackageFailure {
-                            name: name.to_string(),
-                            reason: reason("dispose: ", error),
-                        }),
-                );
-                Reply::Reloaded {
-                    reloaded: report.reloaded.iter().map(ToString::to_string).collect(),
-                    failed: failures,
-                }
-            }
+            Request::Reload => self.reload_reply(),
+        }
+    }
+
+    /// Reloads the packages whose sources changed, and reports the ones that failed.
+    fn reload_reply(&mut self) -> Reply {
+        let report = self.reload_changed();
+        let mut failures: Vec<PackageFailure> = report
+            .failed
+            .iter()
+            .map(|(name, error)| PackageFailure {
+                name: name.to_string(),
+                reason: error.to_string(),
+            })
+            .collect();
+        failures.extend(
+            report
+                .dispose_failed
+                .iter()
+                .map(|(name, error)| PackageFailure {
+                    name: name.to_string(),
+                    reason: format!("dispose: {error}"),
+                }),
+        );
+        Reply::Reloaded {
+            reloaded: report.reloaded.iter().map(ToString::to_string).collect(),
+            failed: failures,
         }
     }
 

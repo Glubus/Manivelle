@@ -1,10 +1,13 @@
 //! A script that runs out of its time or memory while the host delivers to it does not
 //! take the other scripts with it, and one that keeps doing so is quarantined.
 
+mod support;
+
 use std::time::Duration;
 
 use manivelle::{Engine, EngineError, EngineOptions};
 use serde_json::json;
+use support::count;
 
 const SPIN: &str = r#"
 import { ctx } from "manivelle:env";
@@ -26,10 +29,6 @@ fn engine(max_script_faults: u32) -> Engine {
         ..EngineOptions::default()
     })
     .expect("create engine")
-}
-
-fn count(engine: &Engine, id: &str) -> f64 {
-    engine.call::<f64>(id, "count", ()).expect("count")
 }
 
 fn quarantined(engine: &Engine) -> Vec<&str> {

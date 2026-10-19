@@ -94,11 +94,10 @@ where
 }
 
 /// The QuickJS value `number_value` builds, without the wrapper.
+#[allow(clippy::float_cmp)]
 fn scalar_number(value: f64) -> qjs::JSValue {
     let int = value as i32;
-    // Integral values become ints; `-0.0` stays a float so its sign survives.
-    #[allow(clippy::float_cmp)]
-    if value == f64::from(int) && !(value == 0.0 && value.is_sign_negative()) {
+    if value == f64::from(int) && !is_negative_zero(value) {
         qjs::JS_MKVAL(qjs::JS_TAG_INT, int)
     } else {
         qjs::JS_NewFloat64(value)
@@ -194,11 +193,16 @@ fn decode_number(value: &JsValue<'_>, rust: &'static str) -> JsResult<f64> {
 
 /// Integral values become QuickJS ints; `-0.0` stays a float so its sign survives.
 fn number_value<'js>(ctx: &Ctx<'js>, value: f64) -> JsValue<'js> {
-    if value == 0.0 && value.is_sign_negative() {
+    if is_negative_zero(value) {
         JsValue::new_float(ctx.clone(), value)
     } else {
         JsValue::new_number(ctx.clone(), value)
     }
+}
+
+/// `-0.0` must stay a float: an int would lose its sign.
+fn is_negative_zero(value: f64) -> bool {
+    value == 0.0 && value.is_sign_negative()
 }
 
 /// Widens `value` like `serde_json` text does: the shortest decimal that identifies the

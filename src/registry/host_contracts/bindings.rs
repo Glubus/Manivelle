@@ -4,10 +4,10 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use rquickjs::{Ctx, Exception, Object, Result as JsResult, Value as JsValue};
-use serde_json::Value;
 
+use crate::contract::validation::Snapshot;
 use crate::contract::{
-    Caller, EncodeReply, HostFunctionSignature, HostResolver, JsDecode, JsEncode, ReplyValue,
+    Caller, HostFunctionSignature, HostResolver, JsDecode, JsEncode,
     js_value_to_validation_snapshot,
 };
 use crate::error::EngineError;
@@ -15,8 +15,7 @@ use crate::packages::PermissionSet;
 use crate::runner::execution::ExecutionControl;
 use crate::runner::host_fn::{HostCall, HostFnClass};
 use crate::runner::host_promises::WeakHostPromises;
-
-type NamedBinding = (String, Binding);
+use crate::runner::reply_inbox::{EncodeReply, ReplyValue};
 
 /// The resolver an async handler of contract `C` receives.
 type Resolver<C> = HostResolver<<C as HostFunctionSignature>::Output>;
@@ -26,7 +25,7 @@ pub(super) type Validator = Option<Arc<dyn ContractValidator>>;
 
 /// A registered host function, sync or async.
 #[derive(Clone)]
-enum Binding {
+pub(super) enum Binding {
     Sync(Arc<dyn HostFunctionBinding>),
     Async(Arc<dyn AsyncFunctionBinding>),
 }
@@ -40,7 +39,7 @@ pub struct NativeContext {
 }
 
 /// A registered host function handler.
-trait HostFunctionBinding: Send + Sync {
+pub(super) trait HostFunctionBinding: Send + Sync {
     /// Sets the handler on `target` as the native function `name` of script `script_id`,
     /// checking its values with `validator` when there is one. Entering it starts the
     /// clock of the running operation's budget in `native`.
@@ -56,7 +55,7 @@ trait HostFunctionBinding: Send + Sync {
 
 /// A registered async host function handler: each call returns a Promise that a
 /// [`HostResolver`] settles.
-trait AsyncFunctionBinding: Send + Sync {
+pub(super) trait AsyncFunctionBinding: Send + Sync {
     /// Sets the handler on `target` as the native function `name` of script
     /// `script_id`, whose calls start in `promises`, checking its values with
     /// `validator` when there is one.
@@ -81,10 +80,10 @@ pub(super) trait ContractValidator: Send + Sync {
     fn checks_output(&self) -> bool;
 
     /// Checks a call's input before the handler runs.
-    fn validate_input(&self, input: &Value) -> Result<(), EngineError>;
+    fn validate_input(&self, input: &Snapshot) -> Result<(), EngineError>;
 
     /// Checks a handler's output before the script receives it.
-    fn validate_output(&self, output: &Value) -> Result<(), EngineError>;
+    fn validate_output(&self, output: &Snapshot) -> Result<(), EngineError>;
 }
 
 /// Checks the JavaScript `input` of a call against `validator`, if it checks inputs.
@@ -116,26 +115,12 @@ fn check_output<'js>(
 }
 
 /// Converts the call's input, runs `handler` on it and converts its output back, both
-/// natively through [`JsDecode`] and [`JsEncode`].
-fn call_native<'js, C>(
-    ctx: &Ctx<'js>,
-    input: JsValue<'js>,
-    handler: impl FnOnce(C::Input) -> Result<C::Output, EngineError>,
-) -> JsResult<JsValue<'js>>
-where
-    C: HostFunctionSignature,
-    C::Input: JsDecode,
-    C::Output: JsEncode,
-{
-    let input = C::Input::decode_js(ctx, input)?;
-    handler(input).map_err(js_host_error)?.encode_js(ctx)
-}
-
-/// [`call_native`], checking the input and output against `validator`.
+/// natively through [`JsDecode`] and [`JsEncode`]. The input and the output are checked
+/// against `validator` when it checks them.
 fn call_validated<'js, C>(
     ctx: &Ctx<'js>,
     input: JsValue<'js>,
-    validator: &dyn ContractValidator,
+    validator: Option<&dyn ContractValidator>,
     handler: impl FnOnce(C::Input) -> Result<C::Output, EngineError>,
 ) -> JsResult<JsValue<'js>>
 where
@@ -143,9 +128,10 @@ where
     C::Input: JsDecode,
     C::Output: JsEncode,
 {
-    check_input(ctx, Some(validator), &input)?;
-    let output = call_native::<C>(ctx, input, handler)?;
-    check_output(ctx, Some(validator), &output)?;
+    check_input(ctx, validator, &input)?;
+    let input = C::Input::decode_js(ctx, input)?;
+    let output = handler(input).map_err(js_host_error)?.encode_js(ctx)?;
+    check_output(ctx, validator, &output)?;
     Ok(output)
 }
 
@@ -199,16 +185,10 @@ where
     ) -> JsResult<()> {
         let execution = Arc::clone(&native.execution);
         let class = native.class;
-        let call: HostCall = match validator {
-            None => Box::new(move |ctx, input| {
-                execution.start_clock();
-                call_native::<C>(ctx, input, &self.handler)
-            }),
-            Some(validator) => Box::new(move |ctx, input| {
-                execution.start_clock();
-                call_validated::<C>(ctx, input, &*validator, &self.handler)
-            }),
-        };
+        let call: HostCall = Box::new(move |ctx, input| {
+            execution.start_clock();
+            call_validated::<C>(ctx, input, validator.as_deref(), &self.handler)
+        });
         target.set(name, class.function(target.ctx(), call)?)
     }
 }
@@ -238,20 +218,13 @@ where
         let script_id = Box::<str>::from(script_id);
         let execution = Arc::clone(&native.execution);
         let class = native.class;
-        let call: HostCall = match validator {
-            None => Box::new(move |ctx, input| {
-                execution.start_clock();
-                let caller = Caller::new(&script_id);
-                call_native::<C>(ctx, input, |input| (self.handler)(&caller, input))
-            }),
-            Some(validator) => Box::new(move |ctx, input| {
-                execution.start_clock();
-                let caller = Caller::new(&script_id);
-                call_validated::<C>(ctx, input, &*validator, |input| {
-                    (self.handler)(&caller, input)
-                })
-            }),
-        };
+        let call: HostCall = Box::new(move |ctx, input| {
+            execution.start_clock();
+            let caller = Caller::new(&script_id);
+            call_validated::<C>(ctx, input, validator.as_deref(), |input| {
+                (self.handler)(&caller, input)
+            })
+        });
         target.set(name, class.function(target.ctx(), call)?)
     }
 }
@@ -316,13 +289,23 @@ where
     }
 }
 
+/// The error of registering a second contract under `name`, which the registry refuses so
+/// that a name always means one implementation.
+pub(super) fn duplicate_contract(name: &str) -> EngineError {
+    EngineError::InvalidOptions {
+        details: format!("host contract `{name}` is already registered"),
+    }
+}
+
 fn js_host_error(error: impl ToString) -> rquickjs::Error {
     rquickjs::Error::new_from_js_message("host", "function", error.to_string())
 }
 
 #[derive(Default)]
 pub(super) struct FunctionBindingStore {
-    by_name: Mutex<HashMap<String, Binding>>,
+    /// Shared, so that a script install takes its snapshot in constant time. An insert
+    /// copies the map only while a snapshot is still held.
+    pub(super) by_name: Mutex<Arc<HashMap<String, Binding>>>,
 }
 
 impl FunctionBindingStore {
@@ -393,7 +376,10 @@ impl FunctionBindingStore {
 
     fn insert(&self, name: &str, binding: Binding) -> Result<(), EngineError> {
         let mut guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
-        guard.insert(name.to_owned(), binding);
+        if guard.contains_key(name) {
+            return Err(duplicate_contract(name));
+        }
+        Arc::make_mut(&mut *guard).insert(name.to_owned(), binding);
         Ok(())
     }
 
@@ -411,9 +397,10 @@ impl FunctionBindingStore {
         allowed: Option<&PermissionSet>,
         validator_for: impl Fn(&str) -> Validator,
     ) -> JsResult<()> {
+        let bindings = self.snapshot().map_err(js_host_error)?;
         let mut shared_id = None;
-        for (name, binding) in self.snapshot().map_err(js_host_error)? {
-            if allowed.is_some_and(|set| !set.allows(&name)) {
+        for (name, binding) in bindings.iter() {
+            if allowed.is_some_and(|set| !set.allows(name)) {
                 let message = EngineError::PermissionDenied {
                     package: script_id.to_owned(),
                     permission: name.clone(),
@@ -425,87 +412,24 @@ impl FunctionBindingStore {
                 target.set(name.as_str(), native.class.function(target.ctx(), denied)?)?;
                 continue;
             }
-            let validator = validator_for(&name);
+            let validator = validator_for(name);
             match binding {
                 Binding::Sync(binding) => {
-                    binding.install(target, &name, script_id, native, validator)?;
+                    Arc::clone(binding).install(target, name, script_id, native, validator)?;
                 }
                 Binding::Async(binding) => {
                     let shared_id = shared_id.get_or_insert_with(|| Rc::<str>::from(script_id));
-                    binding.install(target, &name, shared_id, promises, native, validator)?;
+                    Arc::clone(binding)
+                        .install(target, name, shared_id, promises, native, validator)?;
                 }
             }
         }
         Ok(())
     }
 
-    fn snapshot(&self) -> Result<Vec<NamedBinding>, EngineError> {
+    /// The bindings as they are now: a shared copy, which later inserts do not change.
+    fn snapshot(&self) -> Result<Arc<HashMap<String, Binding>>, EngineError> {
         let guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
-        Ok(guard
-            .iter()
-            .map(|(name, binding)| (name.clone(), binding.clone()))
-            .collect())
-    }
-}
-
-#[cfg(test)]
-mod lock_tests {
-    use rquickjs::{Context, Function, Runtime};
-
-    use super::*;
-    use crate::contract::{HostContract, HostContractKind};
-    use crate::runner::host_promises::HostPromises;
-
-    struct Reentrant;
-
-    impl HostContract for Reentrant {
-        const NAME: &'static str = "test.reentrant";
-
-        fn kind() -> HostContractKind {
-            HostContractKind::Function
-        }
-    }
-
-    impl HostFunctionSignature for Reentrant {
-        type Input = ();
-        type Output = ();
-    }
-
-    #[test]
-    fn handler_runs_without_registry_lock() {
-        let store = Arc::new(FunctionBindingStore::default());
-        let weak = Arc::downgrade(&store);
-        store
-            .insert_plain::<Reentrant>(move |()| {
-                let store = weak.upgrade().expect("store alive");
-                let registry = store.by_name.try_lock();
-                assert!(
-                    registry.is_ok(),
-                    "handler must be able to register another binding"
-                );
-                Ok(())
-            })
-            .unwrap();
-        let runtime = Runtime::new().unwrap();
-        let context = Context::full(&runtime).unwrap();
-
-        context.with(|ctx| {
-            let target = Object::new(ctx.clone()).unwrap();
-            store
-                .install_native(
-                    &target,
-                    "script",
-                    &HostPromises::default().downgrade(),
-                    &NativeContext {
-                        execution: Arc::default(),
-                        class: HostFnClass::register(&ctx).unwrap(),
-                    },
-                    None,
-                    |_| None,
-                )
-                .unwrap();
-            let function: Function<'_> = target.get(Reentrant::NAME).unwrap();
-            function.call::<_, ()>(()).unwrap();
-        });
+        Ok(Arc::clone(&guard))
     }
 }

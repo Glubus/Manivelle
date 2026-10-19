@@ -7,7 +7,7 @@ use quote::quote;
 
 use super::field::{container_default_value, decoder, default_fn, default_value, encoder};
 use crate::attrs::DefaultValue;
-use crate::model::{Field, Shape, Style};
+use crate::model::{Container, Field, Shape, Style};
 
 /// Facts about the enclosing type that shape code needs.
 pub(super) struct Scope<'s> {
@@ -18,6 +18,18 @@ pub(super) struct Scope<'s> {
     pub(super) container_default: Option<&'s DefaultValue>,
     /// Internal tag stored next to the fields of this shape.
     pub(super) tag: Option<&'s str>,
+}
+
+impl<'s> Scope<'s> {
+    /// The scope of the shapes of `container`, without its container default or a tag.
+    pub(super) fn of(container: &Container<'_>, rust: &'s str) -> Self {
+        Self {
+            rust,
+            deny_unknown_fields: container.attrs.deny_unknown_fields,
+            container_default: None,
+            tag: None,
+        }
+    }
 }
 
 /// Expression of type `Result<Value>` encoding the shape; `accessors[i]` is a `&T`

@@ -18,7 +18,7 @@ pub(crate) fn expand_schema_impl(container: &Container<'_>) -> TokenStream {
         .attrs
         .schema_name
         .clone()
-        .unwrap_or_else(|| container.rust_name());
+        .unwrap_or_else(|| ident.to_string());
     let ts_type = ts_type(container);
     let dependencies = dependencies(container);
 

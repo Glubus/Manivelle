@@ -13,9 +13,10 @@ pub(crate) fn transpile_error(
     source: &str,
     path: &Path,
 ) -> EngineError {
+    let lines = LineIndex::new(source);
     let details = diagnostics
         .iter()
-        .map(|diagnostic| render(diagnostic, source, path))
+        .map(|diagnostic| render(diagnostic, &lines, path))
         .collect::<Vec<_>>()
         .join("\n");
     EngineError::Transpile { details }
@@ -23,11 +24,11 @@ pub(crate) fn transpile_error(
 
 /// The headline, then each label text at its own position and the help, one per
 /// indented line.
-fn render(diagnostic: &OxcDiagnostic, source: &str, path: &Path) -> String {
-    let mut text = headline(diagnostic, source, path);
+fn render(diagnostic: &OxcDiagnostic, lines: &LineIndex<'_>, path: &Path) -> String {
+    let mut text = headline(diagnostic, lines, path);
     for label in diagnostic.labels.iter() {
         if let Some(label_text) = label.label() {
-            let (line, column) = line_column(source, label.offset());
+            let (line, column) = lines.line_column(label.offset());
             let _ = write!(text, "\n  {line}:{column}: {label_text}");
         }
     }
@@ -38,7 +39,7 @@ fn render(diagnostic: &OxcDiagnostic, source: &str, path: &Path) -> String {
 }
 
 /// `path:line:column: message` at the primary label, else the first one.
-fn headline(diagnostic: &OxcDiagnostic, source: &str, path: &Path) -> String {
+fn headline(diagnostic: &OxcDiagnostic, lines: &LineIndex<'_>, path: &Path) -> String {
     let labels = diagnostic.labels.as_slice();
     let primary = labels
         .iter()
@@ -46,18 +47,41 @@ fn headline(diagnostic: &OxcDiagnostic, source: &str, path: &Path) -> String {
         .or_else(|| labels.first());
     match primary {
         Some(label) => {
-            let (line, column) = line_column(source, label.offset());
+            let (line, column) = lines.line_column(label.offset());
             format!("{}:{line}:{column}: {}", path.display(), diagnostic.message)
         }
         None => format!("{}: {}", path.display(), diagnostic.message),
     }
 }
 
-/// 1-based line and UTF-16 column of a byte offset, as editors count them.
-fn line_column(source: &str, offset: u32) -> (usize, usize) {
-    let before = source.get(..offset as usize).unwrap_or(source);
-    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
-    let line = before.matches('\n').count() + 1;
-    let column = before[line_start..].encode_utf16().count() + 1;
-    (line, column)
+/// The 1-based lines and UTF-16 columns of the byte offsets of one source, as editors
+/// count them. Built once per source, so each lookup is a binary search.
+pub(crate) struct LineIndex<'a> {
+    source: &'a str,
+    /// The byte offset where each line starts; the first is always 0.
+    starts: Vec<usize>,
+}
+
+impl<'a> LineIndex<'a> {
+    pub(crate) fn new(source: &'a str) -> Self {
+        let starts = std::iter::once(0)
+            .chain(source.match_indices('\n').map(|(newline, _)| newline + 1))
+            .collect();
+        Self { source, starts }
+    }
+
+    /// The 1-based line of the byte at `offset`.
+    pub(crate) fn line_of(&self, offset: usize) -> usize {
+        self.starts.partition_point(|&start| start <= offset)
+    }
+
+    /// The 1-based line and UTF-16 column of a byte offset. An offset inside a character
+    /// counts the characters before it on its line.
+    pub(crate) fn line_column(&self, offset: u32) -> (usize, usize) {
+        let offset = (offset as usize).min(self.source.len());
+        let line = self.line_of(offset);
+        let line_start = self.starts[line - 1];
+        let before = self.source.get(line_start..offset).unwrap_or_default();
+        (line, before.encode_utf16().count() + 1)
+    }
 }

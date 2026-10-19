@@ -21,8 +21,8 @@ pub(crate) struct ModuleResolver {
     tsconfig_files: Vec<PathBuf>,
 }
 
-#[derive(Debug)]
 /// Canonical path of a resolved module, and the `package.json` that applied to it.
+#[derive(Debug)]
 pub(crate) struct ResolvedModule {
     pub(crate) path: PathBuf,
     pub(crate) package_json: Option<PathBuf>,
@@ -207,13 +207,13 @@ fn project_root(entry_dir: &Path, tsconfig_path: Option<&Path>) -> Result<PathBu
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
 
     #[test]
     fn resolves_extensionless_relative_module() {
-        let root = temp_fixture_dir("extensionless");
+        let fixture = tempfile::tempdir().expect("create fixture dir");
+        let root = fixture.path();
         let src = root.join("src");
         fs::create_dir_all(&src).expect("create fixture dir");
         fs::write(root.join("main.ts"), "").expect("write main");
@@ -234,7 +234,8 @@ mod tests {
 
     #[test]
     fn resolves_index_module() {
-        let root = temp_fixture_dir("index");
+        let fixture = tempfile::tempdir().expect("create fixture dir");
+        let root = fixture.path();
         let src = root.join("src");
         fs::create_dir_all(&src).expect("create fixture dir");
         fs::write(root.join("main.ts"), "").expect("write main");
@@ -255,8 +256,9 @@ mod tests {
 
     #[test]
     fn rejects_unresolved_package_requests() {
-        let root = temp_fixture_dir("missing-package");
-        fs::create_dir_all(&root).expect("create fixture dir");
+        let fixture = tempfile::tempdir().expect("create fixture dir");
+        let root = fixture.path();
+        fs::create_dir_all(root).expect("create fixture dir");
         fs::write(root.join("main.ts"), "").expect("write main");
         let resolver = ModuleResolver::for_entry(&root.join("main.ts")).expect("create resolver");
         let error = resolver
@@ -268,7 +270,8 @@ mod tests {
 
     #[test]
     fn resolves_package_import_from_local_node_modules() {
-        let root = temp_fixture_dir("package-import");
+        let fixture = tempfile::tempdir().expect("create fixture dir");
+        let root = fixture.path();
         let package = root.join("node_modules").join("demo-pkg");
         fs::create_dir_all(&package).expect("create fixture dir");
         fs::write(root.join("main.ts"), "").expect("write main");
@@ -298,12 +301,14 @@ mod tests {
     fn rejects_package_import_symlinked_outside_project_root() {
         use std::os::unix::fs::symlink;
 
-        let root = temp_fixture_dir("external-package-symlink");
-        let external = temp_fixture_dir("external-package-target");
+        let fixture = tempfile::tempdir().expect("create fixture dir");
+        let root = fixture.path();
+        let external_fixture = tempfile::tempdir().expect("create fixture dir");
+        let external = external_fixture.path();
         let node_modules = root.join("node_modules");
         let package_link = node_modules.join("demo-pkg");
         fs::create_dir_all(&node_modules).expect("create node_modules");
-        fs::create_dir_all(&external).expect("create external package");
+        fs::create_dir_all(external).expect("create external package");
         fs::write(root.join("main.ts"), "").expect("write main");
         fs::write(
             external.join("package.json"),
@@ -311,7 +316,7 @@ mod tests {
         )
         .expect("write package manifest");
         fs::write(external.join("index.ts"), "").expect("write package entry");
-        symlink(&external, &package_link).expect("symlink external package");
+        symlink(external, &package_link).expect("symlink external package");
 
         let resolver = ModuleResolver::for_entry(&root.join("main.ts")).expect("create resolver");
         let error = resolver
@@ -327,7 +332,8 @@ mod tests {
 
     #[test]
     fn resolves_tsconfig_paths_alias() {
-        let root = temp_fixture_dir("tsconfig-alias");
+        let fixture = tempfile::tempdir().expect("create fixture dir");
+        let root = fixture.path();
         let src = root.join("src");
         fs::create_dir_all(&src).expect("create fixture dir");
         fs::write(
@@ -360,7 +366,8 @@ mod tests {
 
     #[test]
     fn resolves_tsconfig_base_url_request() {
-        let root = temp_fixture_dir("tsconfig-base-url");
+        let fixture = tempfile::tempdir().expect("create fixture dir");
+        let root = fixture.path();
         let src = root.join("src");
         fs::create_dir_all(&src).expect("create fixture dir");
         fs::write(
@@ -386,16 +393,5 @@ mod tests {
                 .canonicalize()
                 .expect("canonical fixture path")
         );
-    }
-
-    fn temp_fixture_dir(name: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock before unix epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "manivelle-resolver-{name}-{}-{nanos}",
-            std::process::id()
-        ))
     }
 }

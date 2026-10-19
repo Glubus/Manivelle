@@ -8,8 +8,6 @@ use manivelle::{
 };
 use serde::{Deserialize, Serialize};
 
-use support::TestCacheDir;
-
 const DOGFOOD_SCRIPT: &str = r#"
 let lastFound = "none";
 
@@ -126,8 +124,12 @@ fn engine_runs_the_dogfood_script_through_injected_globals() {
 fn engine_runs_a_script_built_on_the_generated_sdk() {
     let mut engine = dogfood_engine();
     let sdk = engine.registry().sdk().expect("render generated SDK");
-    assert_sdk_exposes_dogfood_surface(&sdk);
     typecheck_sdk_usage_when_tsc_is_available(&sdk);
+    support::assert_tsc(
+        "dogfood-sdk-misuse",
+        &format!("{sdk}\nuser.find(\"nope\");\n"),
+        Some("TS2345"),
+    );
 
     engine
         .load_script("dogfood", &format!("{sdk}\n{DOGFOOD_SDK_SCRIPT}"))
@@ -169,41 +171,8 @@ fn assert_engine_dogfood_round_trip(engine: &Engine) {
     assert_eq!(observed, "user-7:admin,editor");
 }
 
-fn assert_sdk_exposes_dogfood_surface(sdk: &str) {
-    assert!(
-        sdk.contains("type DogfoodFindUserInput = { userId: number; includeRoles: boolean; };")
-    );
-    assert!(sdk.contains(
-        "type DogfoodFindUserOutput = { userId: number; displayName: string; active: boolean; roles: string[]; };"
-    ));
-    assert!(sdk.contains(
-        "type DogfoodUserFoundPayload = { userId: number; displayName: string; roles: string[]; };"
-    ));
-    assert!(sdk.contains("find(input: DogfoodFindUserInput): DogfoodFindUserOutput"));
-    assert!(sdk.contains("onFound(handler: HostEventHandler<\"user.found\">): void"));
-    assert!(sdk.contains("found(handler: HostEventHandler<\"user.found\">): void"));
-    assert!(sdk.contains("export class DogfoodFindUserInputModel"));
-    assert!(sdk.contains("static is(value: unknown): value is DogfoodFindUserInput"));
-    assert!(sdk.contains("static wrap(value: DogfoodFindUserInput): DogfoodFindUserInputModel"));
-    assert!(sdk.contains("DogfoodFindUserInput: {"));
-    assert!(sdk.contains("wrap(value: DogfoodFindUserInput): DogfoodFindUserInputModel"));
-}
-
 fn typecheck_sdk_usage_when_tsc_is_available(sdk: &str) {
-    let temp_dir = TestCacheDir::new("dogfood-sdk-usage");
-    let usage_path = temp_dir.path().join("dogfood-sdk-usage.ts");
-    std::fs::write(&usage_path, dogfood_sdk_usage_source(sdk)).expect("write SDK usage source");
-
-    let Some(output) = run_tsc(&usage_path) else {
-        return;
-    };
-
-    assert!(
-        output.status.success(),
-        "dogfood SDK usage failed tsc\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    support::assert_tsc("dogfood-sdk-usage", &dogfood_sdk_usage_source(sdk), None);
 }
 
 fn dogfood_sdk_usage_source(sdk: &str) -> String {
@@ -234,8 +203,4 @@ user.onFound(event => {{\n\
 manivelleSdk.functions.user.find(input).active.valueOf();\n\
 manivelleSdk.models.DogfoodUserFoundPayload.wrap({{ userId: 7, displayName: \"user-7\", roles: [\"admin\"] }}).toJSON().roles.length.toFixed();\n"
     )
-}
-
-fn run_tsc(path: &std::path::Path) -> Option<std::process::Output> {
-    support::run_tsc(path)
 }

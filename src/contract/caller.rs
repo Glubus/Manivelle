@@ -5,7 +5,7 @@
 /// Handlers registered with
 /// [`InMemoryHostContractRegistry::function_with_caller`](crate::InMemoryHostContractRegistry::function_with_caller)
 /// or
-/// [`InMemoryHostContractRegistry::function_with_caller`](crate::InMemoryHostContractRegistry::function_with_caller)
+/// [`InMemoryHostContractRegistry::async_function_with_caller`](crate::InMemoryHostContractRegistry::async_function_with_caller)
 /// receive it with every call.
 #[derive(Debug, Clone, Copy)]
 pub struct Caller<'a> {

@@ -9,7 +9,9 @@ use std::hash::{BuildHasher, Hash};
 use rquickjs::{Ctx, Filter, Object, Result as JsResult, String as JsString, Value as JsValue};
 
 use super::stack_text::StackText;
-use super::{JsDecode, JsEncode, at_path, codec_error, define_property, expect_object};
+use super::{
+    JsDecode, JsEncode, at_path, codec_error, define_property, expect_object, is_dropped_by_json,
+};
 
 /// Room for the decimal text of any integer key, `-170141183460469231731687303715884105728`.
 const INTEGER_KEY_CAPACITY: usize = 40;
@@ -149,10 +151,6 @@ fn decode_key<K: MapKey>(text: String, rust: &'static str) -> JsResult<K> {
             format_args!("[{text}]"),
         )
     })
-}
-
-fn is_dropped_by_json(value: &JsValue<'_>) -> bool {
-    value.is_undefined() || value.is_function() || value.is_symbol()
 }
 
 impl<K, V, S> JsEncode for HashMap<K, V, S>

@@ -3,16 +3,15 @@
 mod support;
 
 use std::cell::RefCell;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use manivelle::js::{Ctx, Object, Value as JsValue};
 use manivelle::{
-    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostFunction,
+    Engine, EngineError, HostCallback, HostContract, HostContractKind, HostFunction,
     HostFunctionSignature, JsDecode, JsEncode, TsField, TsSchema, TsType,
 };
 
-use support::TestCacheDir;
+use support::{TestCacheDir, engine, stdout, tsc_on_source, write_file};
 
 const SCRIPT: &str = "script";
 const PROJECT: &str = "mod";
@@ -337,7 +336,7 @@ fn reload_changed_hands_saved_state_to_the_edited_project() {
     call::<f64>(&engine, PROJECT, "advance");
     call::<f64>(&engine, PROJECT, "advance");
 
-    write(&step_path(dir.path()), "export const step = 100;\n");
+    write_file(&step_path(dir.path()), "export const step = 100;\n");
     let report = engine.reload_changed();
 
     assert_eq!(report.reloaded, [PROJECT]);
@@ -358,7 +357,7 @@ fn reload_changed_reports_a_throwing_dispose_of_a_reloaded_project() {
     let mut engine = Engine::new(&dir.engine_options()).expect("create engine");
     engine.load_project(PROJECT, &entry).expect("load project");
 
-    write(&step_path(dir.path()), "export const step = 100;\n");
+    write_file(&step_path(dir.path()), "export const step = 100;\n");
     let report = engine.reload_changed();
 
     assert_eq!(report.reloaded, [PROJECT]);
@@ -409,37 +408,25 @@ ctx.hot.save(42);
 "#;
 
 fn assert_typechecks(name: &str, source: &str) {
-    if let Some(diagnostics) = tsc_diagnostics(name, source) {
-        assert!(diagnostics.is_empty(), "tsc on {name}:\n{diagnostics}");
-    }
-}
-
-fn assert_rejects_misuse(name: &str, source: &str) {
-    if let Some(diagnostics) = tsc_diagnostics(name, source) {
+    if let Some(output) = tsc_on_source(name, source) {
         assert!(
-            diagnostics.contains("TS2339") && diagnostics.contains("TS2345"),
-            "tsc on {name}:\n{diagnostics}"
+            output.status.success(),
+            "tsc on {name}:\n{}",
+            stdout(&output)
         );
     }
 }
 
-/// `tsc` output for `source`, empty when it type-checks; `None` without TypeScript.
-fn tsc_diagnostics(name: &str, source: &str) -> Option<String> {
-    let dir = TestCacheDir::new(name);
-    let path = dir.path().join("usage.ts");
-    fs::write(&path, source).expect("write usage");
-    let output = support::run_tsc(&path)?;
-    let diagnostics = String::from_utf8_lossy(&output.stdout).into_owned();
-    assert_eq!(
-        output.status.success(),
-        diagnostics.is_empty(),
-        "{diagnostics}"
-    );
-    Some(diagnostics)
-}
-
-fn engine() -> Engine {
-    Engine::new(&EngineOptions::default()).expect("create engine")
+fn assert_rejects_misuse(name: &str, source: &str) {
+    if let Some(output) = tsc_on_source(name, source) {
+        let diagnostics = stdout(&output);
+        assert!(
+            !output.status.success()
+                && diagnostics.contains("TS2339")
+                && diagnostics.contains("TS2345"),
+            "tsc on {name}:\n{diagnostics}"
+        );
+    }
 }
 
 /// An engine with `probe.record`, starting from an empty record list.
@@ -473,7 +460,7 @@ fn call<R: JsDecode>(engine: &Engine, id: &str, function: &str) -> R {
 /// Writes a project whose `advance` adds `step` to a total kept across reloads.
 fn write_project(root: &Path, step_module: &str) -> PathBuf {
     let entry = root.join("main.ts");
-    write(
+    write_file(
         &entry,
         r#"
 import { step } from "./src/step";
@@ -482,15 +469,10 @@ ctx.hot.save(() => total);
 export function advance(): number { total += step; return total; }
 "#,
     );
-    write(&step_path(root), step_module);
+    write_file(&step_path(root), step_module);
     entry
 }
 
 fn step_path(root: &Path) -> PathBuf {
     root.join("src").join("step.ts")
-}
-
-fn write(path: &Path, contents: &str) {
-    fs::create_dir_all(path.parent().expect("file has a parent")).expect("create directory");
-    fs::write(path, contents).expect("write file");
 }

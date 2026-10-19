@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Changed (breaking)
+
+- `HostContractRegistry` is removed: its methods are inherent on `InMemoryHostContractRegistry`.
+  The `register_*` names are gone (`register_function` → `function`, `register_function_with`
+  → `function_with`, `register_function_with_caller` → `function_with_caller`,
+  `register_async_function_with` → `async_function_with`,
+  `register_async_function_with_caller` → `async_function_with_caller`, `register_callback`
+  → `callback`, `register_request` → `request`, `register_context` → `context`).
+- `InMemoryHostContractRegistry::descriptor(name)` is `get(name)`; `list()` is
+  `descriptors()`; `typescript_declarations()` is `dts()` and `typescript_sdk()` is `sdk()`.
+- `EngineError::ContractValidation::direction` is the new `Direction` enum
+  (`Direction::Input` / `Direction::Output`, displayed as before) instead of `&str`.
+- A host contract name registered twice fails with the new `EngineError::DuplicateContract
+  { name }` instead of `EngineError::InvalidOptions`.
+
 ### Added
 
 - `#[host_fn(name = "user.find")]` (feature `derive`): declares a host function

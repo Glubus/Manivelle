@@ -108,6 +108,7 @@ impl<T: JsDecode, const N: usize> JsDecode for [T; N] {
                 .map_err(|error| failure = Some(error))
                 .ok()
         });
+        // Without a failure every slot holds an item, so the `expect` cannot fire.
         match failure {
             Some(error) => Err(error),
             None => Ok(items.map(|item| item.expect("every item decodes when none failed"))),

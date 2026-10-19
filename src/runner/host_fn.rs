@@ -131,10 +131,23 @@ unsafe extern "C" fn call(
     _flags: std::ffi::c_int,
 ) -> qjs::JSValue {
     // SAFETY: QuickJS calls this for an object of the class, whose opaque pointer is a live
-    // `HostFn` for as long as the object, which the running call keeps alive, is.
-    let host =
-        unsafe { &*qjs::JS_GetOpaque(function, qjs::JS_GetClassID(function)).cast::<HostFn>() };
-    // SAFETY: `ctx` is the live context of the call, and `argv` points to `argc` values.
+    // `HostFn` for as long as the object, which the running call keeps alive, is. A
+    // missing opaque is reported as an internal error rather than dereferenced.
+    let opaque = unsafe { qjs::JS_GetOpaque(function, qjs::JS_GetClassID(function)) };
+    // SAFETY: `opaque` is null or the live `HostFn` of the class object, kept alive by
+    // the running call; a null pointer makes `as_ref` return `None`.
+    let Some(host) = (unsafe { opaque.cast::<HostFn>().as_ref() }) else {
+        // SAFETY: `ctx` is the live context of the call; the message is a constant.
+        return unsafe {
+            qjs::JS_ThrowInternalError(
+                ctx,
+                c"%s".as_ptr(),
+                c"a host function has no state".as_ptr(),
+            )
+        };
+    };
+    // SAFETY: QuickJS passes the live context of the call, never null, and `argv` points to
+    // `argc` values of it.
     match catch_unwind(AssertUnwindSafe(|| unsafe { run(host, ctx, argc, argv) })) {
         Ok(value) => value,
         Err(payload) => {

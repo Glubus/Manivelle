@@ -2,10 +2,13 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::ops::RangeInclusive;
 use syn::{
     Error, FnArg, GenericArgument, Ident, ItemFn, LitStr, PathArguments, ReturnType, Type,
-    parse::Parser, spanned::Spanned,
+    spanned::Spanned,
 };
+
+use crate::args::{parse_args, take_flag, take_value};
 
 /// The three shapes of host function the attributes declare.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -24,6 +27,21 @@ impl Kind {
             Self::Static => "host_fn",
             Self::WithCtx => "host_fn_with_ctx",
             Self::Async => "host_fn_async",
+        }
+    }
+
+    /// The number of inputs the function takes, and how the error names them.
+    fn arity(self) -> (RangeInclusive<usize>, &'static str) {
+        match self {
+            Self::Static => (
+                0..=1,
+                "at most one input (group fields in a struct); use `#[host_fn_with_ctx]` to receive the `Caller`",
+            ),
+            Self::WithCtx => (1..=2, "`ctx: &Caller<'_>` and at most one input"),
+            Self::Async => (
+                2..=3,
+                "`[ctx: &Caller<'_>,] input, resolver: HostResolver<Output>`",
+            ),
         }
     }
 }
@@ -48,7 +66,8 @@ pub(crate) fn expand_host_fn(
     function: &ItemFn,
     kind: Kind,
 ) -> syn::Result<TokenStream> {
-    let parsed = HostFnArgs::parse(args.clone())?;
+    let span = args.span();
+    let parsed = HostFnArgs::parse(args)?;
     if let Some(reply) = &parsed.reply {
         return Err(Error::new(
             reply.span(),
@@ -57,7 +76,7 @@ pub(crate) fn expand_host_fn(
     }
     let name = parsed
         .name
-        .ok_or_else(|| Error::new(args.span(), "missing `name = \"contract.name\"`"))?;
+        .ok_or_else(|| Error::new(span, "missing `name = \"contract.name\"`"))?;
     check_shape(function, kind)?;
 
     let marker = marker_ident(&function.sig.ident);
@@ -183,34 +202,35 @@ fn signature(function: &ItemFn, kind: Kind) -> syn::Result<Signature> {
         .collect();
     let fn_ident = &function.sig.ident;
     let (returned, fallible) = output_type(function)?;
-    let wrap = |call: TokenStream| {
+    let unit: Type = syn::parse_quote!(());
+    // The call of the function, wrapped in `Ok` unless it returns a `Result` itself.
+    let call = |args: TokenStream| {
         if fallible {
-            call
+            quote!(#fn_ident(#args))
         } else {
-            quote!(::core::result::Result::Ok(#call))
+            quote!(::core::result::Result::Ok(#fn_ident(#args)))
         }
     };
-    let unit: Type = syn::parse_quote!(());
 
-    Ok(match kind {
-        Kind::Static => Signature {
+    match kind {
+        Kind::Static => Ok(Signature {
             input: types.first().map_or(unit, |ty| (*ty).clone()),
             output: returned,
-            call: wrap(if types.is_empty() {
-                quote!(#fn_ident())
+            call: call(if types.is_empty() {
+                TokenStream::new()
             } else {
-                quote!(#fn_ident(input))
+                quote!(input)
             }),
             with_ctx: false,
             params: TokenStream::new(),
-        },
-        Kind::WithCtx => Signature {
+        }),
+        Kind::WithCtx => Ok(Signature {
             input: types.get(1).map_or(unit, |ty| (*ty).clone()),
             output: returned,
-            call: wrap(if types.len() == 1 {
-                quote!(#fn_ident(ctx))
+            call: call(if types.len() == 1 {
+                quote!(ctx)
             } else {
-                quote!(#fn_ident(ctx, input))
+                quote!(ctx, input)
             }),
             with_ctx: true,
             params: if types.len() == 1 {
@@ -218,18 +238,26 @@ fn signature(function: &ItemFn, kind: Kind) -> syn::Result<Signature> {
             } else {
                 quote!(|ctx, input|)
             },
-        },
+        }),
         Kind::Async => {
-            let with_ctx = types.len() == 3;
-            let input = types[usize::from(with_ctx)].clone();
-            let resolver = types[types.len() - 1];
-            Signature {
-                input,
+            // `check_shape` has already rejected any other arity.
+            let (with_ctx, input, resolver) = match types.as_slice() {
+                [_, input, resolver] => (true, *input, *resolver),
+                [input, resolver] => (false, *input, *resolver),
+                _ => {
+                    return Err(Error::new(
+                        function.sig.inputs.span(),
+                        format!("`#[{}]` takes {}", kind.attribute(), kind.arity().1),
+                    ));
+                }
+            };
+            Ok(Signature {
+                input: input.clone(),
                 output: resolver_output(resolver)?,
-                call: wrap(if with_ctx {
-                    quote!(#fn_ident(ctx, input, resolver))
+                call: call(if with_ctx {
+                    quote!(ctx, input, resolver)
                 } else {
-                    quote!(#fn_ident(input, resolver))
+                    quote!(input, resolver)
                 }),
                 with_ctx,
                 params: if with_ctx {
@@ -237,9 +265,9 @@ fn signature(function: &ItemFn, kind: Kind) -> syn::Result<Signature> {
                 } else {
                     quote!(|input, resolver|)
                 },
-            }
+            })
         }
-    })
+    }
 }
 
 /// The `T` of the `HostResolver<T>` an async host function receives.
@@ -276,22 +304,16 @@ pub(crate) struct HostFnArgs {
 impl HostFnArgs {
     pub(crate) fn parse(args: TokenStream) -> syn::Result<Self> {
         let mut parsed = Self::default();
-        let parser = syn::meta::parser(|meta| {
-            if meta.path.is_ident("name") && parsed.name.is_none() {
-                parsed.name = Some(meta.value()?.parse::<LitStr>()?);
-            } else if meta.path.is_ident("no_namespace") && !parsed.no_namespace {
-                parsed.no_namespace = true;
-            } else if meta.path.is_ident("reply") && parsed.reply.is_none() {
-                parsed.reply = Some(meta.value()?.parse::<Type>()?);
-            } else {
-                return Err(meta.error(
-                    "expected `name = \"contract.name\"`, and optionally `no_namespace` \
-                     or, for an event, `reply = Type`",
-                ));
-            }
-            Ok(())
-        });
-        parser.parse2(args)?;
+        parse_args(
+            args,
+            "expected `name = \"contract.name\"`, and optionally `no_namespace` \
+             or, for an event, `reply = Type`",
+            |meta| {
+                Ok(take_value(meta, "name", &mut parsed.name)?
+                    || take_flag(meta, "no_namespace", &mut parsed.no_namespace)
+                    || take_value(meta, "reply", &mut parsed.reply)?)
+            },
+        )?;
         Ok(parsed)
     }
 }
@@ -316,17 +338,7 @@ fn check_shape(function: &ItemFn, kind: Kind) -> syn::Result<()> {
             "a host function cannot take `self`",
         ));
     }
-    let (allowed, expected) = match kind {
-        Kind::Static => (
-            0..=1,
-            "at most one input (group fields in a struct); use `#[host_fn_with_ctx]` to receive the `Caller`",
-        ),
-        Kind::WithCtx => (1..=2, "`ctx: &Caller<'_>` and at most one input"),
-        Kind::Async => (
-            2..=3,
-            "`[ctx: &Caller<'_>,] input, resolver: HostResolver<Output>`",
-        ),
-    };
+    let (allowed, expected) = kind.arity();
     if allowed.contains(&sig.inputs.len()) {
         Ok(())
     } else {

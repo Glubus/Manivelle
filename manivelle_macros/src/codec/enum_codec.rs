@@ -1,7 +1,7 @@
 //! Codec bodies for enums in the four serde representations.
 //!
-/// Payload decoding lives in one `__manivelle_decode_<Variant>` helper per variant (on an
-/// inherent impl), so every representation only decides which JS value holds the payload.
+//! Payload decoding lives in one `__manivelle_decode_<Variant>` helper per variant (on an
+//! inherent impl), so every representation only decides which JS value holds the payload.
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -15,7 +15,7 @@ pub(super) fn encode_body(container: &Container<'_>, variants: &[Variant<'_>]) -
     if variants.is_empty() {
         return quote!(match *self {});
     }
-    let rust = container.rust_name();
+    let rust = container.ident.to_string();
     let arms = variants
         .iter()
         .map(|variant| encode_arm(container, &rust, variant));
@@ -57,7 +57,7 @@ fn encode_variant(
     variant: &Variant<'_>,
     accessors: &[TokenStream],
 ) -> TokenStream {
-    let scope = variant_scope(container, rust);
+    let scope = Scope::of(container, rust);
     match container.tagging() {
         Tagging::External => encode_external(&scope, variant, accessors),
         Tagging::Internal { tag } => encode_internal(&scope, rust, tag, variant, accessors),
@@ -139,7 +139,7 @@ fn tagged_object(tag: &str, key: &str, statements: &[TokenStream]) -> TokenStrea
 
 /// Body of `decode_js` for an enum.
 pub(super) fn decode_body(container: &Container<'_>, variants: &[Variant<'_>]) -> TokenStream {
-    let rust = container.rust_name();
+    let rust = container.ident.to_string();
     let decoded: Vec<&Variant<'_>> = variants
         .iter()
         .filter(|variant| !variant.attrs.skip_deserializing)
@@ -311,14 +311,14 @@ pub(super) fn decode_helpers(
     container: &Container<'_>,
     variants: &[Variant<'_>],
 ) -> Vec<TokenStream> {
-    let rust = container.rust_name();
+    let rust = container.ident.to_string();
     let tagging = container.tagging();
     let scope = Scope {
         tag: match tagging {
             Tagging::Internal { tag } => Some(tag),
             _ => None,
         },
-        ..variant_scope(container, &rust)
+        ..Scope::of(container, &rust)
     };
     variants
         .iter()
@@ -347,15 +347,6 @@ fn has_helper(tagging: &Tagging<'_>, style: Style) -> bool {
         Tagging::External | Tagging::Untagged => style != Style::Unit,
         Tagging::Internal { .. } => matches!(style, Style::Newtype | Style::Struct),
         Tagging::Adjacent { .. } => matches!(style, Style::Tuple | Style::Struct),
-    }
-}
-
-fn variant_scope<'s>(container: &Container<'_>, rust: &'s str) -> Scope<'s> {
-    Scope {
-        rust,
-        deny_unknown_fields: container.attrs.deny_unknown_fields,
-        container_default: None,
-        tag: None,
     }
 }
 

@@ -32,6 +32,10 @@ enum Outbound {
     Flush(mpsc::Sender<()>),
 }
 
+/// The tool cannot be reached any more.
+#[derive(Debug)]
+pub(crate) struct Disconnected;
+
 /// A cheap handle that queues messages for the tool without ever waiting, for code that
 /// outlives a borrow of the link, such as the `console` tap.
 #[derive(Clone)]
@@ -40,10 +44,10 @@ pub(crate) struct Outbox(SyncSender<Outbound>);
 impl Outbox {
     /// Queues `message`; `Err` once the tool cannot be reached any more. A full queue drops
     /// the message and is not an error.
-    pub(crate) fn send(&self, message: FromProgram) -> Result<(), ()> {
+    pub(crate) fn send(&self, message: FromProgram) -> Result<(), Disconnected> {
         match self.0.try_send(Outbound::Message(message)) {
             Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
-            Err(TrySendError::Disconnected(_)) => Err(()),
+            Err(TrySendError::Disconnected(_)) => Err(Disconnected),
         }
     }
 }
@@ -60,64 +64,14 @@ pub(crate) struct Link {
 impl Link {
     /// Connects to the tool at `address` and shows it `token`.
     pub(crate) fn connect(address: &str, token: &str) -> io::Result<Self> {
-        let target = address
-            .to_socket_addrs()?
-            .next()
-            .ok_or_else(|| io::Error::other(format!("no address for {address}")))?;
-        let mut stream = TcpStream::connect_timeout(&target, TIMEOUT)?;
-        stream.set_write_timeout(Some(TIMEOUT))?;
-        stream.set_nodelay(true)?;
-        write_line(
-            &mut stream,
-            &FromProgram::Hello {
-                token: token.to_owned(),
-                pid: std::process::id(),
-                manivelle: env!("CARGO_PKG_VERSION").to_owned(),
-            },
-        )?;
-
+        let stream = handshake(address, token)?;
         let reader = BufReader::new(stream.try_clone()?);
         let (queue, commands) = mpsc::channel();
         let waiting = Arc::new(AtomicBool::new(false));
-        let raise = Arc::clone(&waiting);
         let alive = Arc::new(AtomicBool::new(true));
-        let reader_lost = Arc::clone(&alive);
-        thread::Builder::new()
-            .name("manivelle-protocol-read".to_owned())
-            .spawn(move || {
-                for line in reader.lines().map_while(Result::ok) {
-                    let Ok(command) = serde_json::from_str::<Command>(&line) else {
-                        continue;
-                    };
-                    if queue.send(command).is_err() {
-                        break;
-                    }
-                    raise.store(true, Ordering::Release);
-                }
-                reader_lost.store(false, Ordering::Release);
-            })?;
-
+        spawn_reader(reader, queue, Arc::clone(&waiting), Arc::clone(&alive))?;
         let (queue_out, pending) = mpsc::sync_channel::<Outbound>(OUTBOX);
-        let writer_lost = Arc::clone(&alive);
-        thread::Builder::new()
-            .name("manivelle-protocol-write".to_owned())
-            .spawn(move || {
-                // Ends with the first failed write: the senders then see a closed channel.
-                for item in pending {
-                    match item {
-                        Outbound::Message(message) => {
-                            if write_line(&mut stream, &message).is_err() {
-                                break;
-                            }
-                        }
-                        Outbound::Flush(done) => {
-                            let _ = done.send(());
-                        }
-                    }
-                }
-                writer_lost.store(false, Ordering::Release);
-            })?;
-
+        spawn_writer(stream, pending, Arc::clone(&alive))?;
         Ok(Self {
             outbox: Outbox(queue_out),
             commands,
@@ -128,7 +82,7 @@ impl Link {
 
     /// Hands one message to the writing thread; `Err` once the tool cannot be reached
     /// any more. A full outbox drops the message and is not an error.
-    pub(crate) fn send(&self, message: FromProgram) -> Result<(), ()> {
+    pub(crate) fn send(&self, message: FromProgram) -> Result<(), Disconnected> {
         self.outbox.send(message)
     }
 
@@ -172,4 +126,76 @@ fn write_line(stream: &mut TcpStream, message: &FromProgram) -> io::Result<()> {
     line.push(b'\n');
     stream.write_all(&line)?;
     stream.flush()
+}
+
+/// Opens the connection and shows the tool `token`.
+fn handshake(address: &str, token: &str) -> io::Result<TcpStream> {
+    let target = address
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| io::Error::other(format!("no address for {address}")))?;
+    let mut stream = TcpStream::connect_timeout(&target, TIMEOUT)?;
+    stream.set_write_timeout(Some(TIMEOUT))?;
+    stream.set_nodelay(true)?;
+    write_line(
+        &mut stream,
+        &FromProgram::Hello {
+            token: token.to_owned(),
+            pid: std::process::id(),
+            manivelle: env!("CARGO_PKG_VERSION").to_owned(),
+        },
+    )?;
+    Ok(stream)
+}
+
+/// Reads the tool's requests and queues them. Raises `raise` with each one, and lowers
+/// `alive` when the connection ends.
+fn spawn_reader(
+    reader: BufReader<TcpStream>,
+    queue: mpsc::Sender<Command>,
+    raise: Arc<AtomicBool>,
+    alive: Arc<AtomicBool>,
+) -> io::Result<()> {
+    thread::Builder::new()
+        .name("manivelle-protocol-read".to_owned())
+        .spawn(move || {
+            for line in reader.lines().map_while(Result::ok) {
+                let Ok(command) = serde_json::from_str::<Command>(&line) else {
+                    continue;
+                };
+                if queue.send(command).is_err() {
+                    break;
+                }
+                raise.store(true, Ordering::Release);
+            }
+            alive.store(false, Ordering::Release);
+        })?;
+    Ok(())
+}
+
+/// Writes the queued messages in order. Lowers `alive` at the first failed write; the
+/// senders then see a closed channel.
+fn spawn_writer(
+    mut stream: TcpStream,
+    pending: Receiver<Outbound>,
+    alive: Arc<AtomicBool>,
+) -> io::Result<()> {
+    thread::Builder::new()
+        .name("manivelle-protocol-write".to_owned())
+        .spawn(move || {
+            for item in pending {
+                match item {
+                    Outbound::Message(message) => {
+                        if write_line(&mut stream, &message).is_err() {
+                            break;
+                        }
+                    }
+                    Outbound::Flush(done) => {
+                        let _ = done.send(());
+                    }
+                }
+            }
+            alive.store(false, Ordering::Release);
+        })?;
+    Ok(())
 }

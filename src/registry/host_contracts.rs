@@ -4,16 +4,17 @@ mod bindings;
 pub(crate) use bindings::NativeContext;
 mod declarations;
 mod import_modules;
+mod names;
 
 pub(crate) use import_modules::HostModuleStyle;
-mod interface;
+pub(crate) use sdk::GENERATED_SDK_MARKER;
 mod memory;
 mod sdk;
+mod tree;
 
 #[cfg(test)]
 mod tests;
 
-pub use interface::HostContractRegistry;
 pub use memory::InMemoryHostContractRegistry;
 
 use crate::contract::HostContractDescriptor;

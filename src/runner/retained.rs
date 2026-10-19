@@ -71,6 +71,19 @@ impl Retained {
         }
         Ok(returned)
     }
+
+    /// Like [`Self::call`], but the result is released at once, unread.
+    pub(super) fn call_discarding(
+        &self,
+        ctx: &Ctx<'_>,
+        arguments: &mut [qjs::JSValue],
+    ) -> Result<(), EngineError> {
+        let returned = self.call(ctx, arguments)?;
+        // SAFETY: `returned` is the owned value `call` gave back, which nothing else holds,
+        // and it is not used again.
+        unsafe { release_value(ctx, returned) };
+        Ok(())
+    }
 }
 
 /// Wraps an owned value [`Retained::call`] returned, which the wrapper releases.
@@ -131,7 +144,7 @@ impl Default for KeptAtoms {
 
 impl KeptAtoms {
     /// Runs `with` on the atom of `name`, or returns `None` when QuickJS has no memory
-    /// for it. The atom is only valid during the call.
+    /// for it, or cannot take a name that long. The atom is only valid during the call.
     pub(super) fn with<R>(
         &self,
         ctx: &Ctx<'_>,
@@ -142,8 +155,8 @@ impl KeptAtoms {
             return Some(with(atom));
         }
         let raw = ctx.as_raw().as_ptr();
-        // SAFETY: `raw` is a live context and `name` is valid for its length.
-        let atom = unsafe { qjs::JS_NewAtomLen(raw, name.as_ptr().cast(), name.len() as _) };
+        // SAFETY: `raw` is a live context and `name` is valid for `name.len()` bytes.
+        let atom = unsafe { qjs::JS_NewAtomLen(raw, name.as_ptr().cast(), name.len() as u64) };
         if atom == qjs::JS_ATOM_NULL {
             return None;
         }

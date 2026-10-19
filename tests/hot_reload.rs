@@ -1,12 +1,11 @@
 mod support;
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use manivelle::{Engine, EngineError};
 use serde_json::{Value, json};
 
-use support::TestCacheDir;
+use support::{TestCacheDir, write_file as write, write_paths_config, write_tsconfig};
 
 /// Entry that keeps a call counter, so a reload (which starts from fresh module
 /// state) is observable apart from the value it reads.
@@ -261,13 +260,6 @@ fn value_path(root: &Path) -> PathBuf {
     root.join("src").join("value.ts")
 }
 
-fn write_tsconfig(root: &Path, target: &str) {
-    let tsconfig = json!({
-        "compilerOptions": { "baseUrl": ".", "paths": { "@target": [target] } },
-    });
-    write(&root.join("tsconfig.json"), &tsconfig.to_string());
-}
-
 /// A project whose `tsconfig.json` takes `@target` from `configs/base.json`, through
 /// two levels of `extends`; returns the entry path.
 fn write_extending_project(root: &Path) -> PathBuf {
@@ -291,18 +283,7 @@ fn write_extending_project(root: &Path) -> PathBuf {
 }
 
 fn write_base_tsconfig(root: &Path, target: &str) {
-    let tsconfig = json!({
-        "compilerOptions": { "baseUrl": "..", "paths": { "@target": [target] } },
-    });
-    write(
-        &root.join("configs").join("base.json"),
-        &tsconfig.to_string(),
-    );
-}
-
-fn write(path: &Path, contents: &str) {
-    fs::create_dir_all(path.parent().expect("file has a parent")).expect("create directory");
-    fs::write(path, contents).expect("write file");
+    write_paths_config(&root.join("configs").join("base.json"), "..", target);
 }
 
 fn read(engine: &Engine, id: &str) -> Value {

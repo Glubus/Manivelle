@@ -18,7 +18,7 @@ use manivelle::{
     HostFunctionSignature, TsSchema,
 };
 use serde::{Deserialize, Serialize};
-use support::TestCacheDir;
+use support::{TestCacheDir, stderr};
 
 #[derive(Deserialize, TsSchema)]
 #[serde(rename_all = "camelCase")]
@@ -79,10 +79,6 @@ fn init(directory: &Path, filter: &str, extra: &[&str]) -> Output {
         .args(["--", "--exact", filter, "--nocapture"])
         .output()
         .expect("run manivelle")
-}
-
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
 #[test]

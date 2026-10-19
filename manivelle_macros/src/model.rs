@@ -102,11 +102,6 @@ impl<'a> Container<'a> {
         })
     }
 
-    /// Rust type name used in conversion errors.
-    pub(crate) fn rust_name(&self) -> String {
-        self.ident.to_string()
-    }
-
     pub(crate) fn tagging(&self) -> Tagging<'_> {
         match (&self.attrs.tag, &self.attrs.content) {
             _ if self.attrs.untagged => Tagging::Untagged,

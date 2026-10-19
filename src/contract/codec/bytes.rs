@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use rquickjs::{ArrayBuffer, Ctx, Result as JsResult, TypedArray, Value as JsValue};
+use rquickjs::{ArrayBuffer, Ctx, Object, Result as JsResult, TypedArray, Value as JsValue};
 
 use super::collections::decode_collection;
 use super::{JsDecode, JsEncode, codec_error, mismatch};
@@ -27,21 +27,30 @@ impl JsDecode for NativeBytes {
                 .map(NativeBytes::from);
         }
         let object = value.as_object().ok_or_else(|| not_bytes(&value))?;
-        let copied = if let Some(view) = object.as_typed_array::<u8>() {
-            // SAFETY: the bytes are copied before any JavaScript can run again.
-            unsafe { view.as_bytes() }.map(copy_bytes)
-        } else if let Some(buffer) = object.as_array_buffer() {
-            // SAFETY: the bytes are copied before any JavaScript can run again.
-            unsafe { buffer.as_bytes() }.map(copy_bytes)
-        } else {
-            return Err(not_bytes(&value));
-        };
+        let copied = with_engine_bytes(object, copy_bytes).ok_or_else(|| not_bytes(&value))?;
         copied.ok_or_else(|| codec_error("object", RUST, "expected bytes, got a detached buffer"))
     }
 }
 
-/// Copies engine-owned bytes into Rust memory. The slice must not outlive this call:
-/// JavaScript may detach or rewrite the buffer as soon as it runs again.
+/// Runs `read` on the bytes of a `Uint8Array` or `ArrayBuffer`. `None` means `object` is
+/// neither, and `Some(None)` means its buffer is detached. The slice must not outlive
+/// `read`: JavaScript may detach or rewrite the buffer as soon as it runs again.
+pub(crate) fn with_engine_bytes<R>(
+    object: &Object<'_>,
+    read: impl FnOnce(&[u8]) -> R,
+) -> Option<Option<R>> {
+    if let Some(view) = object.as_typed_array::<u8>() {
+        // SAFETY: `read` finishes before any JavaScript can run again.
+        return Some(unsafe { view.as_bytes() }.map(read));
+    }
+    if let Some(buffer) = object.as_array_buffer() {
+        // SAFETY: `read` finishes before any JavaScript can run again.
+        return Some(unsafe { buffer.as_bytes() }.map(read));
+    }
+    None
+}
+
+/// Copies engine-owned bytes into Rust memory.
 fn copy_bytes(bytes: &[u8]) -> NativeBytes {
     NativeBytes::from_shared(Arc::from(bytes))
 }

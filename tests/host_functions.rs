@@ -1,6 +1,8 @@
 //! Host functions registered as closures: state, errors, caller identity, validation and
 //! generated declarations.
 
+mod support;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -8,6 +10,8 @@ use manivelle::{
     ContractValidation, Engine, EngineError, EngineOptions, HostContract, HostContractKind,
     HostFunction, HostFunctionSignature, InMemoryHostContractRegistry,
 };
+
+use support::engine;
 
 /// `counter.bump(name)`: counts calls, returns the running total.
 struct Bump;
@@ -63,10 +67,6 @@ impl HostFunction for Lookup {
     fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(format!("user-{input}"))
     }
-}
-
-fn engine() -> Engine {
-    Engine::new(&EngineOptions::default()).expect("create engine")
 }
 
 fn validating_engine() -> Engine {

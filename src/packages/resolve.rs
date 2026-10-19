@@ -1,5 +1,7 @@
 //! Which packages can load together, and in which order.
 
+use std::collections::HashMap;
+
 use semver::Version;
 
 use super::manifest::PackageManifest;
@@ -17,12 +19,27 @@ pub(super) fn load_order(
     packages: Vec<PackageManifest>,
     engine: &Version,
 ) -> Result<Vec<PackageManifest>, EngineError> {
-    check_each(&packages, engine)?;
+    // The first package of each name; a later one with the same name is an error.
+    let mut index_of: HashMap<&str, usize> = HashMap::with_capacity(packages.len());
+    for (index, manifest) in packages.iter().enumerate() {
+        index_of.entry(manifest.name.as_str()).or_insert(index);
+    }
+    check_each(&packages, &index_of, engine)?;
+    // `check_each` found every dependency.
+    let dependencies: Vec<Vec<usize>> = packages
+        .iter()
+        .map(|manifest| {
+            manifest
+                .depends
+                .iter()
+                .map(|dependency| index_of[dependency.name.as_str()])
+                .collect()
+        })
+        .collect();
     let mut state = vec![Visit::Todo; packages.len()];
     let mut order = Vec::with_capacity(packages.len());
-    let mut path = Vec::new();
-    for index in 0..packages.len() {
-        visit(index, &packages, &mut state, &mut path, &mut order)?;
+    for root in 0..packages.len() {
+        visit(root, &packages, &dependencies, &mut state, &mut order)?;
     }
     let mut slots: Vec<Option<PackageManifest>> = packages.into_iter().map(Some).collect();
     Ok(order
@@ -38,18 +55,20 @@ fn fail(manifest: &PackageManifest, details: String) -> EngineError {
     }
 }
 
-fn check_each(packages: &[PackageManifest], engine: &Version) -> Result<(), EngineError> {
+fn check_each(
+    packages: &[PackageManifest],
+    index_of: &HashMap<&str, usize>,
+    engine: &Version,
+) -> Result<(), EngineError> {
     for (index, manifest) in packages.iter().enumerate() {
-        if let Some(first) = packages[..index]
-            .iter()
-            .find(|other| other.name == manifest.name)
-        {
+        let first = index_of[manifest.name.as_str()];
+        if first != index {
             return Err(fail(
                 manifest,
                 format!(
                     "two packages are named `{}`: {} and {}",
                     manifest.name,
-                    first.root.display(),
+                    packages[first].root.display(),
                     manifest.root.display()
                 ),
             ));
@@ -63,12 +82,13 @@ fn check_each(packages: &[PackageManifest], engine: &Version) -> Result<(), Engi
             ));
         }
         for dependency in &manifest.depends {
-            let Some(found) = packages.iter().find(|other| other.name == dependency.name) else {
+            let Some(&found) = index_of.get(dependency.name.as_str()) else {
                 return Err(fail(
                     manifest,
                     format!("needs package `{}`, which is not there", dependency.name),
                 ));
             };
+            let found = &packages[found];
             if !dependency.requirement.matches(&found.version) {
                 return Err(fail(
                     manifest,
@@ -90,44 +110,54 @@ enum Visit {
     Done,
 }
 
-/// Depth first: a package is placed once all its dependencies are.
+/// Depth first, with an explicit stack: a package is placed once all its dependencies
+/// are. `state` keeps the packages already visited across the calls for each root.
 fn visit(
-    index: usize,
+    root: usize,
     packages: &[PackageManifest],
+    dependencies: &[Vec<usize>],
     state: &mut [Visit],
-    path: &mut Vec<usize>,
     order: &mut Vec<usize>,
 ) -> Result<(), EngineError> {
-    match state[index] {
-        Visit::Done => return Ok(()),
-        Visit::Open => {
-            let start = path.iter().position(|&seen| seen == index).unwrap_or(0);
-            let mut cycle: Vec<&str> = path[start..]
-                .iter()
-                .map(|&i| packages[i].name.as_str())
-                .collect();
-            cycle.push(packages[index].name.as_str());
-            return Err(fail(
-                &packages[index],
-                format!("dependency cycle: {}", cycle.join(" -> ")),
-            ));
-        }
-        Visit::Todo => {}
+    if state[root] != Visit::Todo {
+        return Ok(());
     }
-    state[index] = Visit::Open;
-    path.push(index);
-    for dependency in &packages[index].depends {
-        // `check_each` found every dependency.
-        if let Some(next) = packages
-            .iter()
-            .position(|other| other.name == dependency.name)
-        {
-            visit(next, packages, state, path, order)?;
+    // The packages being visited, each with how many of its dependencies were taken.
+    let mut path: Vec<(usize, usize)> = vec![(root, 0)];
+    state[root] = Visit::Open;
+    while let Some(&(index, taken)) = path.last() {
+        let Some(&next) = dependencies[index].get(taken) else {
+            path.pop();
+            state[index] = Visit::Done;
+            order.push(index);
+            continue;
+        };
+        if let Some(top) = path.last_mut() {
+            top.1 += 1;
+        }
+        match state[next] {
+            Visit::Done => {}
+            Visit::Open => {
+                let start = path
+                    .iter()
+                    .position(|&(seen, _)| seen == next)
+                    .expect("an open package is on the path");
+                let mut cycle: Vec<&str> = path[start..]
+                    .iter()
+                    .map(|&(i, _)| packages[i].name.as_str())
+                    .collect();
+                cycle.push(packages[next].name.as_str());
+                return Err(fail(
+                    &packages[next],
+                    format!("dependency cycle: {}", cycle.join(" -> ")),
+                ));
+            }
+            Visit::Todo => {
+                state[next] = Visit::Open;
+                path.push((next, 0));
+            }
         }
     }
-    path.pop();
-    state[index] = Visit::Done;
-    order.push(index);
     Ok(())
 }
 

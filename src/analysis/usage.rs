@@ -1,5 +1,6 @@
 //! Which host contracts the TypeScript of a package uses, found by reading its code.
 
+use crate::registry::GENERATED_SDK_MARKER;
 use std::collections::HashMap;
 
 use oxc::allocator::Allocator;
@@ -14,9 +15,13 @@ use oxc::semantic::{Scoping, SemanticBuilder};
 use oxc::span::SourceType;
 
 use super::{ContractNames, ScriptUsage, Usage};
+use crate::compiler::LineIndex;
 
 /// The import specifier of the environment module: `ctx`, `console` and the timers.
 const ENV_MODULE: &str = "manivelle:env";
+
+/// The suffixes of the generated SDK modules, which read like the environment.
+const SDK_SUFFIXES: [&str; 3] = [".sdk", ".sdk.ts", ".sdk.js"];
 
 /// Reads one module and adds what it uses to `usage`. `file` names it in the findings;
 /// `is_entry` also collects the names it exports. A source that does not parse is left
@@ -40,7 +45,7 @@ pub(super) fn analyze_module(
     let semantic = SemanticBuilder::new().build(&program).semantic;
 
     let mut reader = Reader {
-        source,
+        lines: LineIndex::new(source),
         file,
         scoping: semantic.scoping(),
         contracts,
@@ -119,7 +124,7 @@ enum Root {
 }
 
 struct Reader<'s> {
-    source: &'s str,
+    lines: LineIndex<'s>,
     file: &'s str,
     scoping: &'s Scoping,
     contracts: &'s ContractNames,
@@ -129,7 +134,7 @@ struct Reader<'s> {
 
 impl Reader<'_> {
     fn usage_at(&self, name: String, offset: u32) -> Usage {
-        let line = 1 + self.source[..offset as usize].matches('\n').count();
+        let line = self.lines.line_of(offset as usize);
         Usage {
             name,
             file: self.file.to_owned(),
@@ -190,9 +195,9 @@ impl Reader<'_> {
 
     fn reads_like_a_global(&self, import: &Import) -> bool {
         import.source == ENV_MODULE
-            || import.source.ends_with(".sdk")
-            || import.source.ends_with(".sdk.ts")
-            || import.source.ends_with(".sdk.js")
+            || SDK_SUFFIXES
+                .iter()
+                .any(|suffix| import.source.ends_with(suffix))
             || self.contracts.host_modules.contains(&import.source)
     }
 
@@ -372,5 +377,5 @@ impl ScriptUsage {
 /// The module paths and sources of the files a project is made of that the analysis
 /// reads: the generated SDK defines the calls it forwards, so it is not the package's.
 pub(super) fn is_generated(source: &str, file: &str) -> bool {
-    file.ends_with(".d.ts") || source.contains("function __hostCall")
+    file.ends_with(".d.ts") || source.starts_with(GENERATED_SDK_MARKER)
 }

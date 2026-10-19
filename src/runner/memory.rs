@@ -17,6 +17,8 @@ pub(crate) fn memory_stats(usage: MemoryUsage) -> MemoryStats {
     }
 }
 
+/// QuickJS reports its counts as non-negative; a negative value would be a bug there, and
+/// it is reported as zero rather than as a huge unsigned count.
 fn non_negative(value: i64) -> u64 {
     u64::try_from(value).unwrap_or_default()
 }

@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use manivelle::{Engine, EngineOptions, HostContract, HostContractKind, HostFunctionSignature};
-use support::TestCacheDir;
+use support::{TestCacheDir, stderr, stdout};
 
 struct Add;
 
@@ -77,14 +77,6 @@ fn check_from_program(dir: &Path) -> Output {
             "--nocapture",
         ],
     )
-}
-
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
-}
-
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
 #[test]

@@ -9,7 +9,7 @@ readme = "README.md"
 license = "MIT"
 keywords = ["typescript", "scripting", "quickjs", "embedded", "gamedev"]
 categories = ["game-development", "development-tools", "api-bindings"]
-exclude = [".github", ".cargo", "package.json", "package-lock.json", "book.toml"]
+exclude = [".github", ".cargo", "benches", "docs", "package.json", "package-lock.json", "book.toml", "tests"]
 
 [package.metadata.docs.rs]
 features = ["derive", "uuid", "chrono", "glam"]
@@ -42,6 +42,7 @@ thiserror = "2.0.17"
 blake3 = "1.8.2"
 indexmap = "2.14.2"
 tempfile = "3.23.0"
+getrandom = "0.4"
 manivelle_macros = { version = "0.1.2", path = "manivelle_macros", optional = true }
 uuid = { version = "1.26.1", optional = true, default-features = false, features = ["serde"] }
 chrono = { version = "0.4.45", optional = true, default-features = false, features = ["std", "serde"] }
@@ -56,7 +57,7 @@ mlua = { version = "0.12.1", features = ["lua54", "vendored", "serialize"] }
 
 [[bin]]
 name = "manivelle"
-path = "src/bin/manivelle.rs"
+path = "src/bin/manivelle/main.rs"
 required-features = ["cli"]
 
 [[bench]]

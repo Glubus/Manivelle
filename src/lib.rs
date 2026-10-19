@@ -31,8 +31,8 @@ mod types;
 pub use serde as __serde;
 
 pub use analysis::{
-    ContractNames, Finding, PackageReport, ScriptUsage, Severity, Usage, add_permissions,
-    analyze_project, analyze_source, check_package,
+    ContractNames, Finding, PackageReport, ScriptUsage, Severity, Usage, analyze_project,
+    analyze_source, check_package,
 };
 pub use config::{ContractValidation, EngineOptions, ScriptBuiltins, UnknownFieldValidation};
 pub use contract::{
@@ -51,19 +51,19 @@ pub use contract::{
     expect_object as __codec_expect_object, push_schema_dependency as __push_schema_dependency,
     schema_type_ref as __schema_type_ref,
 };
-pub use error::EngineError;
+pub use error::{Direction, EngineError};
 #[cfg(feature = "derive")]
 pub use manivelle_macros::{
     TsSchema, host_event, host_fn, host_fn_async, host_fn_with_ctx, host_mod, script_export,
 };
 pub use packages::{
     MANIFEST_FILE, PackageDependency, PackageFailure, PackageInfo, PackageLoad, PackageManifest,
-    resolve_packages,
+    add_permissions, resolve_packages,
 };
 pub use protocol::Setup;
 pub use registry::{
-    HostContractRegistry, InMemoryHostContractRegistry,
-    render_typescript_declarations_for_descriptors, render_typescript_sdk_for_descriptors,
+    InMemoryHostContractRegistry, render_typescript_declarations_for_descriptors,
+    render_typescript_sdk_for_descriptors,
 };
 pub use runner::{ConsoleLevel, Engine, InterruptHandle, PendingCall};
 pub use sdk_files::{

@@ -10,7 +10,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use super::field_atoms::define_field;
 pub use super::js_text::JsText;
-use super::{JsDecode, JsEncode, at_path, codec_error, define_property_named};
+use super::{JsDecode, JsEncode, at_path, codec_error, define_property_named, is_dropped_by_json};
 
 /// Encodes `value` through the serde_json reference path (`#[manivelle(codec = "json")]`).
 pub fn json_encode<'js, T: Serialize + ?Sized>(
@@ -60,15 +60,11 @@ pub fn field_value<'js>(
 ) -> JsResult<Option<JsValue<'js>>> {
     for name in names {
         let value: JsValue<'js> = object.get(*name)?;
-        if !is_absent(&value) {
+        if !is_dropped_by_json(&value) {
             return Ok(Some(value));
         }
     }
     Ok(None)
-}
-
-fn is_absent(value: &JsValue<'_>) -> bool {
-    value.is_undefined() || value.is_function() || value.is_symbol()
 }
 
 /// Decodes a field without a default through `decode`. A missing field behaves like

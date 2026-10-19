@@ -37,4 +37,22 @@ mod tests {
             module_cache_key(source, "tsx")
         );
     }
+
+    #[test]
+    fn a_changed_source_gets_another_key() {
+        assert_ne!(
+            module_cache_key("export const a = 1;", "ts"),
+            module_cache_key("export const a = 2;", "ts")
+        );
+    }
+
+    #[test]
+    fn the_same_source_and_type_always_get_the_same_key() {
+        let source = "export const a = 1;";
+
+        assert_eq!(
+            module_cache_key(source, "ts"),
+            module_cache_key(source, "ts")
+        );
+    }
 }

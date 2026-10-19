@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use manivelle::{
     ContractValidation, Engine, EngineError, EngineOptions, HostContract, HostContractKind,
-    HostContractRegistry, HostFunction, HostFunctionSignature, JsEncode, NativeBytes, TsSchema,
+    HostFunction, HostFunctionSignature, JsEncode, NativeBytes, TsSchema,
 };
 use rquickjs::{
     ArrayBuffer, Context, Ctx, Function, Object, Result as JsResult, Runtime, TypedArray,
@@ -344,28 +344,28 @@ impl IntegratedBridgeBench {
 
         let registry = engine.registry();
         registry
-            .register_function::<HostSmallCopyJson>()
+            .function::<HostSmallCopyJson>()
             .expect("register small json copy");
         registry
-            .register_function::<HostLargeCopyJson>()
+            .function::<HostLargeCopyJson>()
             .expect("register large json copy");
         registry
-            .register_function::<HostSmallCopyTyped>()
+            .function::<HostSmallCopyTyped>()
             .expect("register small typed copy");
         registry
-            .register_function::<HostLargeCopyTyped>()
+            .function::<HostLargeCopyTyped>()
             .expect("register large typed copy");
         registry
-            .register_function::<HostGetField>()
+            .function::<HostGetField>()
             .expect("register getter");
         registry
-            .register_function::<HostReadNativeU32>()
+            .function::<HostReadNativeU32>()
             .expect("register native memory read");
         registry
-            .register_function::<HostBytesJsonArray>()
+            .function::<HostBytesJsonArray>()
             .expect("register json array bytes");
         registry
-            .register_function::<HostBytesNative>()
+            .function::<HostBytesNative>()
             .expect("register native bytes");
 
         engine
@@ -459,30 +459,32 @@ struct ByteInput {
     byte_count: usize,
 }
 
-struct HostSmallCopyJson;
-struct HostLargeCopyJson;
-struct HostSmallCopyTyped;
-struct HostLargeCopyTyped;
-struct HostGetField;
-struct HostReadNativeU32;
-struct HostBytesJsonArray;
-struct HostBytesNative;
+/// Declares one bench host function: a unit struct with its contract, signature and body.
+macro_rules! bench_host_function {
+    ($ty:ident, $name:literal, $input:ty, $output:ty, |$arg:ident| $body:block) => {
+        struct $ty;
 
-impl HostContract for HostSmallCopyJson {
-    const NAME: &'static str = "bench.small.copyJson";
+        impl HostContract for $ty {
+            const NAME: &'static str = $name;
 
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
-    }
+            fn kind() -> HostContractKind {
+                HostContractKind::Function
+            }
+        }
+
+        impl HostFunctionSignature for $ty {
+            type Input = $input;
+            type Output = $output;
+        }
+
+        impl HostFunction for $ty {
+            fn call($arg: Self::Input) -> Result<Self::Output, EngineError> $body
+        }
+    };
 }
 
-impl HostFunctionSignature for HostSmallCopyJson {
-    type Input = Value;
-    type Output = Value;
-}
-
-impl HostFunction for HostSmallCopyJson {
-    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
+bench_host_function! {
+    HostSmallCopyJson, "bench.small.copyJson", Value, Value, |_input| {
         let small = fixtures().small;
         Ok(json!({
             "id": small.id,
@@ -492,40 +494,14 @@ impl HostFunction for HostSmallCopyJson {
     }
 }
 
-impl HostContract for HostLargeCopyJson {
-    const NAME: &'static str = "bench.large.copyJson";
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
-    }
-}
-
-impl HostFunctionSignature for HostLargeCopyJson {
-    type Input = Value;
-    type Output = Value;
-}
-
-impl HostFunction for HostLargeCopyJson {
-    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
+bench_host_function! {
+    HostLargeCopyJson, "bench.large.copyJson", Value, Value, |_input| {
         Ok(json!({ "fields": fixtures().large_fields.as_ref() }))
     }
 }
 
-impl HostContract for HostSmallCopyTyped {
-    const NAME: &'static str = "bench.small.copyTyped";
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
-    }
-}
-
-impl HostFunctionSignature for HostSmallCopyTyped {
-    type Input = EmptyInput;
-    type Output = SmallPayload;
-}
-
-impl HostFunction for HostSmallCopyTyped {
-    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
+bench_host_function! {
+    HostSmallCopyTyped, "bench.small.copyTyped", EmptyInput, SmallPayload, |_input| {
         let small = fixtures().small;
         Ok(SmallPayload {
             id: small.id,
@@ -535,42 +511,16 @@ impl HostFunction for HostSmallCopyTyped {
     }
 }
 
-impl HostContract for HostLargeCopyTyped {
-    const NAME: &'static str = "bench.large.copyTyped";
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
-    }
-}
-
-impl HostFunctionSignature for HostLargeCopyTyped {
-    type Input = EmptyInput;
-    type Output = LargePayload;
-}
-
-impl HostFunction for HostLargeCopyTyped {
-    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
+bench_host_function! {
+    HostLargeCopyTyped, "bench.large.copyTyped", EmptyInput, LargePayload, |_input| {
         Ok(LargePayload {
             fields: fixtures().large_fields.to_vec(),
         })
     }
 }
 
-impl HostContract for HostGetField {
-    const NAME: &'static str = "bench.field.get";
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
-    }
-}
-
-impl HostFunctionSignature for HostGetField {
-    type Input = Value;
-    type Output = u32;
-}
-
-impl HostFunction for HostGetField {
-    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
+bench_host_function! {
+    HostGetField, "bench.field.get", Value, u32, |input| {
         let input: FieldReadInput =
             serde_json::from_value(input).map_err(|error| EngineError::Execution {
                 details: error.to_string(),
@@ -579,21 +529,8 @@ impl HostFunction for HostGetField {
     }
 }
 
-impl HostContract for HostReadNativeU32 {
-    const NAME: &'static str = "bench.native.readU32";
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
-    }
-}
-
-impl HostFunctionSignature for HostReadNativeU32 {
-    type Input = Value;
-    type Output = u32;
-}
-
-impl HostFunction for HostReadNativeU32 {
-    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
+bench_host_function! {
+    HostReadNativeU32, "bench.native.readU32", Value, u32, |input| {
         let input: FieldReadInput =
             serde_json::from_value(input).map_err(|error| EngineError::Execution {
                 details: error.to_string(),
@@ -602,41 +539,15 @@ impl HostFunction for HostReadNativeU32 {
     }
 }
 
-impl HostContract for HostBytesJsonArray {
-    const NAME: &'static str = "bench.bytes.jsonArray";
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
-    }
-}
-
-impl HostFunctionSignature for HostBytesJsonArray {
-    type Input = Value;
-    type Output = Value;
-}
-
-impl HostFunction for HostBytesJsonArray {
-    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
+bench_host_function! {
+    HostBytesJsonArray, "bench.bytes.jsonArray", Value, Value, |input| {
         let input = parse_byte_input(input)?;
         Ok(json!(fixtures().bytes(input.byte_count).as_ref()))
     }
 }
 
-impl HostContract for HostBytesNative {
-    const NAME: &'static str = "bench.bytes.native";
-
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
-    }
-}
-
-impl HostFunctionSignature for HostBytesNative {
-    type Input = Value;
-    type Output = NativeBytes;
-}
-
-impl HostFunction for HostBytesNative {
-    fn call(input: Self::Input) -> Result<Self::Output, EngineError> {
+bench_host_function! {
+    HostBytesNative, "bench.bytes.native", Value, NativeBytes, |input| {
         let input = parse_byte_input(input)?;
         Ok(NativeBytes::from_shared(fixtures().bytes(input.byte_count)))
     }

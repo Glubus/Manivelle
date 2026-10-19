@@ -306,7 +306,7 @@ fn the_generated_sdk_file_is_not_read_as_the_packages_code() {
             ),
             (
                 "manivelle/manivelle.sdk.ts",
-                "function __hostCall(name: string, input?: unknown) { return null; }\nexport const math = { add(n: number) { return __hostCall(\"math.add\", n); }, sub() { return __hostCall(\"world.modify\"); } };\n",
+                "// manivelle: generated\nfunction __hostCall(name: string, input?: unknown) { return null; }\nexport const math = { add(n: number) { return __hostCall(\"math.add\", n); }, sub() { return __hostCall(\"world.modify\"); } };\n",
             ),
         ],
     );

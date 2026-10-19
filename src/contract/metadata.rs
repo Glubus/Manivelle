@@ -53,7 +53,7 @@ impl Schema {
     pub fn validate_json(&self, value: &serde_json::Value) -> Result<(), String> {
         super::validation::validate_schema_with_options(
             self,
-            value,
+            &super::validation::Snapshot::from(value),
             super::validation::SchemaValidationOptions {
                 reject_unknown_fields: false,
             },
@@ -69,7 +69,7 @@ impl Schema {
     pub fn validate_json_strict(&self, value: &serde_json::Value) -> Result<(), String> {
         super::validation::validate_schema_with_options(
             self,
-            value,
+            &super::validation::Snapshot::from(value),
             super::validation::SchemaValidationOptions {
                 reject_unknown_fields: true,
             },
@@ -211,7 +211,8 @@ impl TsEnumVariant {
     }
 }
 
-/// TypeScript record key category.
+/// TypeScript record key category. The Rust side is [`MapKey`](crate::MapKey): every map
+/// key type maps to one of these categories when the schema is emitted.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TsRecordKey {
     /// String keys.

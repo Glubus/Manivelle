@@ -2,13 +2,10 @@
 
 mod support;
 
-use std::fs;
-
-use manivelle::{
-    Engine, EngineError, EngineOptions, HostCallback, HostContract, HostContractKind, HostRequest,
-};
+use manivelle::{Engine, EngineError, HostCallback, HostContract, HostContractKind, HostRequest};
 use serde_json::json;
-use support::TestCacheDir;
+
+use support::{assert_tsc, engine};
 
 /// `menu.label`: asks every script for a label for the item it is given.
 struct Label;
@@ -27,10 +24,6 @@ impl HostCallback for Label {
 
 impl HostRequest for Label {
     type Reply = String;
-}
-
-fn engine() -> Engine {
-    Engine::new(&EngineOptions::default()).expect("create engine")
 }
 
 fn engine_with(scripts: &[(&str, &str)]) -> Engine {
@@ -251,23 +244,4 @@ fn generated_sdk_types_request_replies_and_off() {
         &format!("{sdk}\nctx.on(\"menu.label\", () => 42);\n"),
         Some("TS2322"),
     );
-}
-
-/// Type-checks `source` when TypeScript is installed: it must pass, or fail with
-/// `expected_error`.
-fn assert_tsc(name: &str, source: &str, expected_error: Option<&str>) {
-    let dir = TestCacheDir::new(name);
-    let path = dir.path().join("usage.ts");
-    fs::write(&path, source).expect("write usage");
-    let Some(output) = support::run_tsc(&path) else {
-        return;
-    };
-    let diagnostics = String::from_utf8_lossy(&output.stdout);
-    match expected_error {
-        None => assert!(output.status.success(), "tsc on {name}:\n{diagnostics}"),
-        Some(code) => assert!(
-            !output.status.success() && diagnostics.contains(code),
-            "tsc on {name}:\n{diagnostics}"
-        ),
-    }
 }

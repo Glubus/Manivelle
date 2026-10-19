@@ -49,24 +49,24 @@ impl UnhandledRejections {
             .retain(|rejection| !rejection.is(ctx, promise));
     }
 
-    /// Returns the first rejection still unhandled and clears them all.
-    #[inline]
+    /// Clears every rejection still unhandled and reports them all, one line each, or
+    /// returns `None` when there are none.
     pub(crate) fn take(&self) -> Option<EngineError> {
-        if self.0.borrow().is_empty() {
+        let pending = std::mem::take(&mut *self.0.borrow_mut());
+        if pending.is_empty() {
             return None;
         }
-        let pending = std::mem::take(&mut *self.0.borrow_mut());
-        pending
-            .into_iter()
-            .next()
-            .map(|rejection| EngineError::Execution {
-                details: format!("unhandled promise rejection: {}", rejection.details),
-            })
+        let details = pending
+            .iter()
+            .map(|rejection| format!("unhandled promise rejection: {}", rejection.details))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(EngineError::Execution { details })
     }
 }
 
+/// Releases the saved Promises while their runtime is still alive.
 impl Drop for UnhandledRejections {
-    /// Releases the saved Promises while their runtime is still alive.
     fn drop(&mut self) {
         self.0.borrow_mut().clear();
     }
@@ -78,5 +78,32 @@ impl Rejection {
             .clone()
             .restore(ctx)
             .is_ok_and(|saved| saved == *promise)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rquickjs::{Context, Runtime};
+
+    use super::UnhandledRejections;
+    use crate::error::EngineError;
+
+    #[test]
+    fn take_reports_every_unhandled_rejection() {
+        let runtime = Runtime::new().expect("runtime");
+        let tracker = UnhandledRejections::install(&runtime);
+        let context = Context::full(&runtime).expect("context");
+        context
+            .with(|ctx| ctx.eval::<(), _>("Promise.reject('first'); Promise.reject('second');"))
+            .expect("reject");
+
+        let Some(EngineError::Execution { details }) = tracker.take() else {
+            panic!("two rejections are reported");
+        };
+        assert!(
+            details.contains("first") && details.contains("second"),
+            "{details}"
+        );
+        assert!(tracker.take().is_none(), "take clears the rejections");
     }
 }

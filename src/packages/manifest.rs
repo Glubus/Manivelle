@@ -34,6 +34,7 @@ use std::path::{Component, Path, PathBuf};
 use kdl::{KdlDocument, KdlError};
 use semver::{Version, VersionReq};
 
+use crate::compiler::LineIndex;
 use crate::error::EngineError;
 
 /// The file name of a package manifest.
@@ -123,7 +124,7 @@ impl PackageManifest {
                 "expected `package \"name\" { ... }`",
             ));
         }
-        let name = node.one_arg()?;
+        let name = node.one_arg()?.to_owned();
         check_name(&name, node.line)?;
         let mut fields = Fields::default();
         for child in &node.children {
@@ -172,9 +173,9 @@ impl Fields {
         }
         self.seen.push(node.name.clone());
         match node.name.as_str() {
-            "version" => self.version = Some(parse_version(&node.one_arg()?, node.line)?),
-            "author" => self.author = Some(node.one_arg()?),
-            "entry" => self.entry = Some(contained_path(&node.one_arg()?, node.line)?),
+            "version" => self.version = Some(parse_version(node.one_arg()?, node.line)?),
+            "author" => self.author = Some(node.one_arg()?.to_owned()),
+            "entry" => self.entry = Some(contained_path(node.one_arg()?, node.line)?),
             "target" => self.target = Some(PathBuf::from(node.one_arg()?)),
             "engine" => self.engine_requires = Some(engine_requirement(node)?),
             "depends" => self.depends = dependencies(node)?,
@@ -204,7 +205,7 @@ fn engine_requirement(node: &Node) -> Result<VersionReq, Failure> {
     if requires.name != "requires" {
         return Err(Failure::at(requires.line, "expected `requires \"...\"`"));
     }
-    parse_requirement(&requires.one_arg()?, requires.line)
+    parse_requirement(requires.one_arg()?, requires.line)
 }
 
 fn dependencies(node: &Node) -> Result<Vec<PackageDependency>, Failure> {
@@ -245,11 +246,7 @@ fn permissions(node: &Node) -> Result<Vec<String>, Failure> {
     for child in &node.children {
         child.no_args()?;
         child.no_children()?;
-        let valid = !child.name.is_empty()
-            && child
-                .name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '*' | '-'));
+        let valid = well_formed(&child.name, &['_', '.', '*', '-']);
         if !valid {
             return Err(Failure::at(
                 child.line,
@@ -263,12 +260,17 @@ fn permissions(node: &Node) -> Result<Vec<String>, Failure> {
     Ok(found)
 }
 
-fn check_name(name: &str, line: usize) -> Result<(), Failure> {
-    let valid = !name.is_empty()
+/// Whether `name` is not empty and has only ASCII letters and digits, and the `extra`
+/// characters.
+fn well_formed(name: &str, extra: &[char]) -> bool {
+    !name.is_empty()
         && name
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
-    if valid {
+            .all(|c| c.is_ascii_alphanumeric() || extra.contains(&c))
+}
+
+fn check_name(name: &str, line: usize) -> Result<(), Failure> {
+    if well_formed(name, &['_', '.', '-']) {
         Ok(())
     } else {
         Err(Failure::at(
@@ -340,9 +342,9 @@ struct Node {
 }
 
 impl Node {
-    fn one_arg(&self) -> Result<String, Failure> {
+    fn one_arg(&self) -> Result<&str, Failure> {
         match self.args.as_slice() {
-            [arg] => Ok(arg.clone()),
+            [arg] => Ok(arg),
             _ => Err(Failure::at(
                 self.line,
                 format!("`{}` takes one value", self.name),
@@ -375,16 +377,17 @@ impl Node {
 
 /// The nodes of `source`, read as KDL 2.
 fn parse_tree(source: &str) -> Result<Vec<Node>, Failure> {
-    let document = KdlDocument::parse(source).map_err(|error| syntax_failure(source, &error))?;
-    nodes_of(source, &document)
+    let lines = LineIndex::new(source);
+    let document = KdlDocument::parse(source).map_err(|error| syntax_failure(&lines, &error))?;
+    nodes_of(&lines, &document)
 }
 
-fn nodes_of(source: &str, document: &KdlDocument) -> Result<Vec<Node>, Failure> {
+fn nodes_of(lines: &LineIndex<'_>, document: &KdlDocument) -> Result<Vec<Node>, Failure> {
     document
         .nodes()
         .iter()
         .map(|node| {
-            let line = line_of(source, node.span().offset());
+            let line = lines.line_of(node.span().offset());
             let name = node.name().value().to_owned();
             let mut args = Vec::new();
             for entry in node.entries() {
@@ -403,7 +406,7 @@ fn nodes_of(source: &str, document: &KdlDocument) -> Result<Vec<Node>, Failure> 
                 args.push(text.to_owned());
             }
             let children = match node.children() {
-                Some(block) => nodes_of(source, block)?,
+                Some(block) => nodes_of(lines, block)?,
                 None => Vec::new(),
             };
             Ok(Node {
@@ -416,7 +419,7 @@ fn nodes_of(source: &str, document: &KdlDocument) -> Result<Vec<Node>, Failure> 
         .collect()
 }
 
-fn syntax_failure(source: &str, error: &KdlError) -> Failure {
+fn syntax_failure(lines: &LineIndex<'_>, error: &KdlError) -> Failure {
     let Some(first) = error.diagnostics.first() else {
         return Failure::at(1, error.to_string());
     };
@@ -427,12 +430,7 @@ fn syntax_failure(source: &str, error: &KdlError) -> Failure {
     if let Some(help) = &first.help {
         message.push_str(&format!(" ({help})"));
     }
-    Failure::at(line_of(source, first.span.offset()), message)
-}
-
-/// The 1-based line of the character at `offset`.
-fn line_of(source: &str, offset: usize) -> usize {
-    1 + source.chars().take(offset).filter(|&c| c == '\n').count()
+    Failure::at(lines.line_of(first.span.offset()), message)
 }
 
 #[cfg(test)]
@@ -528,7 +526,17 @@ package "better-combat" {
     }
 
     #[test]
-    fn rejects_entries_that_leave_the_mod_directory() {
+    fn error_lines_count_bytes_before_them_not_characters() {
+        // Each `é` is two bytes: the unknown node on line 2 is still on line 2.
+        let error = parse("package \"m\" { // ééééé\n  b\n}").unwrap_err();
+        assert!(
+            error.contains("line 2") && error.contains("unknown `b`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_entries_that_leave_the_package_directory() {
         for entry in ["../x.ts", "/etc/x.ts", "a/../../x.ts"] {
             let source = format!("package \"m\" {{\n version \"1.0.0\"\n entry \"{entry}\"\n}}");
             assert!(
@@ -583,9 +591,6 @@ package "better-combat" {
             assert!(error.contains("line "), "{broken:?}: {error}");
         }
         let error = parse("package \"m\" {\n version \"1.0.0\"\n author \"x\n}").unwrap_err();
-        assert!(
-            error.contains("line 3") || error.contains("line 4"),
-            "{error}"
-        );
+        assert!(error.contains("line 3"), "{error}");
     }
 }

@@ -7,7 +7,7 @@ use std::time::Duration;
 use rquickjs::{Ctx, Function, qjs};
 
 use super::errors::js_error;
-use super::retained::{Retained, release_value};
+use super::retained::Retained;
 use crate::error::EngineError;
 
 /// Engine time in milliseconds, advanced only by
@@ -109,9 +109,5 @@ pub(super) fn timer_hooks<'js>(
 pub(super) fn run_due_timers(ctx: &Ctx<'_>, run: &Retained, now: f64) -> Result<(), EngineError> {
     // A number owns no reference, so there is nothing to release for the argument.
     let mut arguments = [qjs::JS_NewFloat64(now)];
-    let returned = run.call(ctx, &mut arguments)?;
-    // SAFETY: `returned` is the owned value `call` gave back, which nothing else holds, and
-    // it is not used again; the function returns `undefined`.
-    unsafe { release_value(ctx, returned) };
-    Ok(())
+    run.call_discarding(ctx, &mut arguments)
 }

@@ -10,60 +10,35 @@ use serde_json::{Map, Number, Value};
 use super::JsEncode;
 use super::codec::{
     array_length, at_index, at_path, cautious_capacity, define_property, exact_integer,
+    with_engine_bytes,
 };
-
-/// Stand-ins for the non-finite numbers in a validation snapshot, where `serde_json`
-/// numbers must be finite. No JavaScript number snapshots to an unsigned integer above
-/// the safe range (such numbers stay floats), so a stand-in never collides with a value.
-const NAN_STAND_IN: u64 = u64::MAX;
-const INFINITY_STAND_IN: u64 = u64::MAX - 1;
-const NEG_INFINITY_STAND_IN: u64 = u64::MAX - 2;
-
-/// What a conversion produces.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Purpose {
-    /// A `serde_json::Value`, as `JSON.stringify` followed by `serde_json` reads it.
-    Json,
-    /// A snapshot for contract validation, shaped like what the native codecs read.
-    Validation,
-}
-
-/// Converts one QuickJS value into a JSON value.
-///
-/// Integral numbers within the JavaScript safe range become integer JSON numbers, as
-/// `JSON.stringify` followed by `serde_json` would produce. Non-finite numbers fail.
-pub(crate) fn js_value_to_json<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Value> {
-    to_json(ctx, value, Purpose::Json, 0)
-}
-
-/// Converts one QuickJS value into the snapshot contract validation checks.
-///
-/// Unlike [`js_value_to_json`], it follows what the native codecs accept rather than what
-/// `JSON.stringify` writes: a `Uint8Array` or `ArrayBuffer` becomes the array of its
-/// bytes, as `NativeBytes` reads it, and `NaN` or `±Infinity` becomes a stand-in number
-/// that [`snapshot_number`] maps back.
-pub(crate) fn js_value_to_validation_snapshot<'js>(
-    ctx: &Ctx<'js>,
-    value: JsValue<'js>,
-) -> JsResult<Value> {
-    to_json(ctx, value, Purpose::Validation, 0)
-}
-
-/// The JavaScript number a snapshot number stands for, non-finite stand-ins included.
-pub(crate) fn snapshot_number(number: &Number) -> Option<f64> {
-    match number.as_u64() {
-        Some(NAN_STAND_IN) => Some(f64::NAN),
-        Some(INFINITY_STAND_IN) => Some(f64::INFINITY),
-        Some(NEG_INFINITY_STAND_IN) => Some(f64::NEG_INFINITY),
-        _ => number.as_f64(),
-    }
-}
+use super::validation::Snapshot;
 
 /// How deeply arrays and objects may nest in a value that crosses into Rust as JSON: the
 /// limit `serde_json` puts on parsing. A script controls its values, and this walk
 /// recurses on the Rust stack, which QuickJS's stack limit does not cover: a cyclic array
 /// or a 100 000 level nesting would otherwise overflow the host's stack and abort it.
 const MAX_JSON_DEPTH: usize = 128;
+
+/// Converts one QuickJS value into a JSON value.
+///
+/// Integral numbers within the JavaScript safe range become integer JSON numbers, as
+/// `JSON.stringify` followed by `serde_json` would produce. Non-finite numbers fail.
+pub(crate) fn js_value_to_json<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> JsResult<Value> {
+    json_value(ctx, value, 0)
+}
+
+/// Converts one QuickJS value into the snapshot contract validation checks.
+///
+/// Unlike [`js_value_to_json`], it follows what the native codecs accept rather than what
+/// `JSON.stringify` writes: a `Uint8Array` or `ArrayBuffer` becomes its bytes, as
+/// `NativeBytes` reads them, and `NaN` or `±Infinity` stay numbers.
+pub(crate) fn js_value_to_validation_snapshot<'js>(
+    ctx: &Ctx<'js>,
+    value: JsValue<'js>,
+) -> JsResult<Snapshot> {
+    snapshot_value(ctx, value, 0)
+}
 
 fn too_deep(value: &JsValue<'_>) -> JsError {
     JsError::new_from_js_message(
@@ -73,12 +48,11 @@ fn too_deep(value: &JsValue<'_>) -> JsError {
     )
 }
 
-fn to_json<'js>(
-    ctx: &Ctx<'js>,
-    value: JsValue<'js>,
-    purpose: Purpose,
-    depth: usize,
-) -> JsResult<Value> {
+fn unsupported(value: &JsValue<'_>) -> JsError {
+    JsError::new_from_js_message(value.type_name(), "json", "unsupported host bridge value")
+}
+
+fn json_value<'js>(ctx: &Ctx<'js>, value: JsValue<'js>, depth: usize) -> JsResult<Value> {
     if value.is_null() || value.is_undefined() {
         return Ok(Value::Null);
     }
@@ -89,7 +63,7 @@ fn to_json<'js>(
         return Ok(Value::Number(Number::from(value)));
     }
     if let Some(value) = value.as_float() {
-        return float_to_json(value, purpose);
+        return float_to_json(value);
     }
     if value.is_string() {
         return String::from_js(ctx, value).map(Value::String);
@@ -98,105 +72,106 @@ fn to_json<'js>(
         if depth >= MAX_JSON_DEPTH {
             return Err(too_deep(&value));
         }
-        return array_to_json(ctx, &Array::from_js(ctx, value)?, purpose, depth + 1);
+        return json_array(ctx, &Array::from_js(ctx, value)?, depth + 1);
     }
     if value.is_object() {
         if depth >= MAX_JSON_DEPTH {
             return Err(too_deep(&value));
         }
-        let object = Object::from_js(ctx, value)?;
-        if purpose == Purpose::Validation
-            && let Some(bytes) = bytes_snapshot(&object)
-        {
-            return Ok(bytes);
-        }
-        return object_to_json(ctx, &object, purpose, depth + 1);
+        return json_object(ctx, &Object::from_js(ctx, value)?, depth + 1);
     }
-    Err(JsError::new_from_js_message(
-        value.type_name(),
-        "json",
-        "unsupported host bridge value",
-    ))
+    Err(unsupported(&value))
 }
 
-fn array_to_json<'js>(
-    ctx: &Ctx<'js>,
-    array: &Array<'js>,
-    purpose: Purpose,
-    depth: usize,
-) -> JsResult<Value> {
+fn json_array<'js>(ctx: &Ctx<'js>, array: &Array<'js>, depth: usize) -> JsResult<Value> {
     let len = array_length(array, "json")?;
     let mut items = Vec::with_capacity(cautious_capacity::<Value>(len));
     for index in 0..len {
-        let item = to_json(ctx, array.get(index)?, purpose, depth)
-            .map_err(|error| at_index(error, index))?;
+        let item =
+            json_value(ctx, array.get(index)?, depth).map_err(|error| at_index(error, index))?;
         items.push(item);
     }
     Ok(Value::Array(items))
 }
 
-fn object_to_json<'js>(
-    ctx: &Ctx<'js>,
-    object: &Object<'js>,
-    purpose: Purpose,
-    depth: usize,
-) -> JsResult<Value> {
+fn json_object<'js>(ctx: &Ctx<'js>, object: &Object<'js>, depth: usize) -> JsResult<Value> {
     let mut map = Map::new();
     for property in object.own_props::<JsString<'js>, JsValue<'js>>(Filter::default()) {
         let (key, value) = property?;
         let key = key.to_string()?;
-        let value = to_json(ctx, value, purpose, depth)
+        let value = json_value(ctx, value, depth)
             .map_err(|error| at_path(error, format_args!("[{key}]")))?;
         map.insert(key, value);
     }
     Ok(Value::Object(map))
 }
 
-/// The bytes of a `Uint8Array` or `ArrayBuffer` as an array of numbers, `None` for any
-/// other object. A detached buffer snapshots as no bytes; decoding reports it.
-fn bytes_snapshot(object: &Object<'_>) -> Option<Value> {
-    let bytes = if let Some(view) = object.as_typed_array::<u8>() {
-        // SAFETY: the bytes are copied before any JavaScript can run again.
-        unsafe { view.as_bytes() }
-    } else if let Some(buffer) = object.as_array_buffer() {
-        // SAFETY: the bytes are copied before any JavaScript can run again.
-        unsafe { buffer.as_bytes() }
-    } else {
-        return None;
-    };
-    let items = bytes
-        .unwrap_or_default()
-        .iter()
-        .map(|byte| Value::Number(Number::from(*byte)))
-        .collect();
-    Some(Value::Array(items))
-}
-
-fn float_to_json(value: f64, purpose: Purpose) -> JsResult<Value> {
+fn float_to_json(value: f64) -> JsResult<Value> {
     if let Some(integer) = exact_integer(value) {
         return Ok(Value::Number(Number::from(integer)));
     }
-    if let Some(number) = Number::from_f64(value) {
-        return Ok(Value::Number(number));
-    }
-    match purpose {
-        Purpose::Json => Err(JsError::new_from_js_message(
-            "number",
-            "json",
-            "non-finite number",
-        )),
-        Purpose::Validation => Ok(Value::Number(Number::from(non_finite_stand_in(value)))),
-    }
+    Number::from_f64(value)
+        .map(Value::Number)
+        .ok_or_else(|| JsError::new_from_js_message("number", "json", "non-finite number"))
 }
 
-fn non_finite_stand_in(value: f64) -> u64 {
-    if value.is_nan() {
-        NAN_STAND_IN
-    } else if value.is_sign_positive() {
-        INFINITY_STAND_IN
-    } else {
-        NEG_INFINITY_STAND_IN
+fn snapshot_value<'js>(ctx: &Ctx<'js>, value: JsValue<'js>, depth: usize) -> JsResult<Snapshot> {
+    if value.is_null() || value.is_undefined() {
+        return Ok(Snapshot::Null);
     }
+    if let Some(value) = value.as_bool() {
+        return Ok(Snapshot::Bool(value));
+    }
+    if let Some(value) = value.as_int() {
+        return Ok(Snapshot::Number(f64::from(value)));
+    }
+    if let Some(value) = value.as_float() {
+        return Ok(Snapshot::Number(value));
+    }
+    if value.is_string() {
+        return String::from_js(ctx, value).map(Snapshot::String);
+    }
+    if value.is_array() {
+        if depth >= MAX_JSON_DEPTH {
+            return Err(too_deep(&value));
+        }
+        return snapshot_array(ctx, &Array::from_js(ctx, value)?, depth + 1);
+    }
+    if value.is_object() {
+        if depth >= MAX_JSON_DEPTH {
+            return Err(too_deep(&value));
+        }
+        let object = Object::from_js(ctx, value)?;
+        // A detached buffer has no bytes, as decoding reports it.
+        if let Some(bytes) = with_engine_bytes(&object, |bytes| Box::<[u8]>::from(bytes)) {
+            return Ok(Snapshot::Bytes(bytes.unwrap_or_default()));
+        }
+        return snapshot_object(ctx, &object, depth + 1);
+    }
+    Err(unsupported(&value))
+}
+
+fn snapshot_array<'js>(ctx: &Ctx<'js>, array: &Array<'js>, depth: usize) -> JsResult<Snapshot> {
+    let len = array_length(array, "json")?;
+    let mut items = Vec::with_capacity(cautious_capacity::<Snapshot>(len));
+    for index in 0..len {
+        let item = snapshot_value(ctx, array.get(index)?, depth)
+            .map_err(|error| at_index(error, index))?;
+        items.push(item);
+    }
+    Ok(Snapshot::Array(items))
+}
+
+fn snapshot_object<'js>(ctx: &Ctx<'js>, object: &Object<'js>, depth: usize) -> JsResult<Snapshot> {
+    let mut entries = Vec::new();
+    for property in object.own_props::<JsString<'js>, JsValue<'js>>(Filter::default()) {
+        let (key, value) = property?;
+        let key = key.to_string()?;
+        let value = snapshot_value(ctx, value, depth)
+            .map_err(|error| at_path(error, format_args!("[{key}]")))?;
+        entries.push((key, value));
+    }
+    Ok(Snapshot::Object(entries))
 }
 
 /// Converts one JSON value into a QuickJS value. Object keys become own data
