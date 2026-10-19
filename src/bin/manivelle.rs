@@ -8,6 +8,8 @@
 //! - `manivelle sdk <descriptors.json> <dir>` writes the declarations and SDK from a
 //!   descriptors file.
 
+#[path = "manivelle/check.rs"]
+mod check;
 #[path = "manivelle/run.rs"]
 mod run;
 
@@ -20,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
 use manivelle::{
-    DESCRIPTORS_FILE, EXPORT_SDK_ENV, HostContractDescriptor, SdkFileNames,
+    DESCRIPTORS_FILE, EXPORT_SDK_ENV, HostContractDescriptor, MANIFEST_FILE, SdkFileNames,
     write_host_sdk_files_with_names,
 };
 
@@ -63,6 +65,14 @@ enum Command {
     /// (plus any `--packages`) to load: the target must call `Engine::setup_protocol`.
     /// `--no-packages` starts it vanilla. Running a program means trusting it.
     Run(run::RunArgs),
+    /// Check packages without loading them into a program
+    ///
+    /// Reads every `manivelle.kdl` (DIRECTORY and any `--packages`) and checks the set:
+    /// unique names, engine and dependency versions, cycles, entry files. With `--from
+    /// <program>` or `--descriptors <file>` it also checks each permission against the
+    /// program's host functions and events, and suggests the closest name for a typo.
+    /// `--from` starts the program once, which means trusting it.
+    Check(check::CheckArgs),
     /// Write the declarations and SDK module for a descriptors file
     Sdk(SdkArgs),
 }
@@ -157,6 +167,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
     match cli.command {
         Command::Init(args) => init(args),
         Command::Run(args) => run::run_target(args),
+        Command::Check(args) => check::check(args),
         Command::Sdk(args) => sdk(args),
     }
 }
@@ -188,7 +199,7 @@ fn init(args: InitArgs) -> Result<(), Failure> {
         names.sdk,
         generated.display()
     );
-    scaffold_project(&args.directory, &names)
+    scaffold_project(&args.directory, &names, &program, &descriptors)
 }
 
 /// Starts the program with the export request in its environment, and waits for it until
@@ -274,8 +285,14 @@ fn copy_declarations(
     Ok(())
 }
 
-/// Creates the `tsconfig.json` and `src/main.ts` a new project needs, when missing.
-fn scaffold_project(directory: &Path, names: &SdkFileNames) -> Result<(), Failure> {
+/// Creates the `tsconfig.json`, `src/main.ts` and `manivelle.kdl` a new project needs, when
+/// missing.
+fn scaffold_project(
+    directory: &Path,
+    names: &SdkFileNames,
+    program: &Path,
+    descriptors: &[HostContractDescriptor],
+) -> Result<(), Failure> {
     let tsconfig = serde_json::to_string_pretty(&serde_json::json!({
         "compilerOptions": {
             "target": "ES2022",
@@ -289,7 +306,66 @@ fn scaffold_project(directory: &Path, names: &SdkFileNames) -> Result<(), Failur
         "include": ["src", format!("{GENERATED_DIR}/{}", names.types)]
     }))?;
     create_if_missing(&directory.join("tsconfig.json"), &format!("{tsconfig}\n"))?;
-    create_if_missing(&directory.join("src").join("main.ts"), MAIN_TS)
+    create_if_missing(&directory.join("src").join("main.ts"), MAIN_TS)?;
+    create_if_missing(
+        &directory.join(MANIFEST_FILE),
+        &package_manifest(directory, program, descriptors)?,
+    )
+}
+
+/// A `manivelle.kdl` for the project: named after its directory, with the program as its
+/// target and the program's host functions and events listed, commented out, under
+/// `permissions`.
+fn package_manifest(
+    directory: &Path,
+    program: &Path,
+    descriptors: &[HostContractDescriptor],
+) -> Result<String, Failure> {
+    fs::create_dir_all(directory)?;
+    let directory = fs::canonicalize(directory)?;
+    let name: String = directory
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let name = if name.trim_matches('-').is_empty() {
+        "my-package".to_owned()
+    } else {
+        name
+    };
+    let target = relative_path(&directory, program)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let mut permissions = String::new();
+    for contract in check::callable_names(descriptors) {
+        permissions.push_str(&format!("        // {contract}\n"));
+    }
+    Ok(format!(
+        "package {name:?} {{\n    version \"0.1.0\"\n    entry \"src/main.ts\"\n    target {target:?}\n\n    // The host functions and events this package may use; uncomment what it needs.\n    // `manivelle check --from <program>` flags a name the program does not have.\n    permissions {{\n{permissions}    }}\n}}\n"
+    ))
+}
+
+/// `to` as a path from the directory `from`; both are absolute.
+fn relative_path(from: &Path, to: &Path) -> PathBuf {
+    let from: Vec<_> = from.components().collect();
+    let to: Vec<_> = to.components().collect();
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let mut relative = PathBuf::new();
+    for _ in common..from.len() {
+        relative.push("..");
+    }
+    for part in &to[common..] {
+        relative.push(part);
+    }
+    relative
 }
 
 /// Writes `content` to `path`, replacing what is there. The file is written beside it and

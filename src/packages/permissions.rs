@@ -39,6 +39,11 @@ impl PermissionSet {
                 .iter()
                 .any(|prefix| contract.starts_with(prefix))
     }
+
+    /// Whether the package may use at least one of `contracts`.
+    pub(crate) fn allows_any<'a>(&self, mut contracts: impl Iterator<Item = &'a str>) -> bool {
+        contracts.any(|contract| self.allows(contract))
+    }
 }
 
 #[cfg(test)]

@@ -46,9 +46,8 @@ fn run_child() {
         report += &format!("v={value}\n");
     }
     if std::env::var_os("RUN_TEST_LOG").is_some() {
+        // No pause before the process ends: dropping the engine flushes the line.
         engine.call::<()>("hello", "say", ()).expect("call say");
-        // The line leaves on a thread of its own: give it time before the process ends.
-        sleep(Duration::from_millis(300));
     }
     fs::write(out.join("report"), report).expect("write report");
 }

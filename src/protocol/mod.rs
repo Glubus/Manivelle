@@ -87,7 +87,7 @@ impl Engine {
         if let Some(outbox) = self.protocol.as_ref().map(Link::outbox) {
             self.forward_console(move |level, script, message| {
                 // A full outbox drops the line; the target never waits for the tool.
-                let _ = outbox.try_send(FromProgram::Console {
+                let _ = outbox.send(FromProgram::Console {
                     level: level.to_string(),
                     script: script.to_owned(),
                     message: message.to_owned(),

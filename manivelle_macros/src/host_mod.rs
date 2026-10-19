@@ -1,13 +1,14 @@
-//! Expansion of `#[host_mod]`: prefixes the `#[host_fn]` names of one module.
+//! Expansion of `#[host_mod]`: prefixes the `#[host_fn]` and `#[host_event]` names of one
+//! module.
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Attribute, Error, Item, ItemFn, ItemMod, LitStr, Meta, parse::Parser, spanned::Spanned};
+use syn::{Attribute, Error, Item, ItemMod, LitStr, Meta, parse::Parser, spanned::Spanned};
 
 use crate::host_fn::HostFnArgs;
 
-/// Rewrites every direct `#[host_fn]` of the inline module to carry its full contract
-/// name, `namespace.name`, which `#[host_fn]` then expands as usual.
+/// Rewrites every direct `#[host_fn]` and `#[host_event]` of the inline module to carry
+/// its full contract name, `namespace.name`, which the attribute then expands as usual.
 pub(crate) fn expand_host_mod(args: TokenStream, mut module: ItemMod) -> syn::Result<TokenStream> {
     let namespace = parse_namespace(args)?.unwrap_or_else(|| module.ident.to_string());
     let Some((_, items)) = module.content.as_mut() else {
@@ -18,8 +19,16 @@ pub(crate) fn expand_host_mod(args: TokenStream, mut module: ItemMod) -> syn::Re
     };
 
     for item in items {
-        if let Item::Fn(function) = item {
-            prefix_host_fn(function, &namespace)?;
+        match item {
+            Item::Fn(function) => {
+                let fn_name = function.sig.ident.to_string();
+                let fn_name = fn_name.trim_start_matches("r#");
+                prefix_attributes(&mut function.attrs, Some(fn_name), &namespace)?;
+            }
+            // An event has no function to take a default name from.
+            Item::Struct(item) => prefix_attributes(&mut item.attrs, None, &namespace)?,
+            Item::Enum(item) => prefix_attributes(&mut item.attrs, None, &namespace)?,
+            _ => {}
         }
     }
     Ok(quote!(#module))
@@ -40,11 +49,15 @@ fn parse_namespace(args: TokenStream) -> syn::Result<Option<String>> {
     Ok(namespace)
 }
 
-fn prefix_host_fn(function: &mut ItemFn, namespace: &str) -> syn::Result<()> {
-    let fn_name = function.sig.ident.to_string();
-    let fn_name = fn_name.trim_start_matches("r#");
-    for attr in &mut function.attrs {
-        if !is_host_fn(attr) {
+/// Gives each contract attribute in `attrs` its full name. `default_name` is the name a
+/// bare `#[host_fn]` takes, the function's; an event must give its own.
+fn prefix_attributes(
+    attrs: &mut [Attribute],
+    default_name: Option<&str>,
+    namespace: &str,
+) -> syn::Result<()> {
+    for attr in attrs {
+        if !is_contract_attribute(attr) {
             continue;
         }
         let args = match &attr.meta {
@@ -54,27 +67,37 @@ fn prefix_host_fn(function: &mut ItemFn, namespace: &str) -> syn::Result<()> {
                 return Err(Error::new(attr.span(), "expected `#[host_fn(...)]`"));
             }
         };
-        let full = match (args.no_namespace, args.name) {
-            (true, Some(name)) => name.value(),
-            (true, None) => {
+        let full = match (args.no_namespace, args.name, default_name) {
+            (true, Some(name), _) => name.value(),
+            (true, None, _) => {
                 return Err(Error::new(
                     attr.span(),
                     "`no_namespace` needs `name = \"full.name\"`: it is the full contract name",
                 ));
             }
-            (false, Some(name)) => format!("{namespace}.{}", name.value()),
-            (false, None) => format!("{namespace}.{fn_name}"),
+            (false, Some(name), _) => format!("{namespace}.{}", name.value()),
+            (false, None, Some(default)) => format!("{namespace}.{default}"),
+            (false, None, None) => {
+                return Err(Error::new(
+                    attr.span(),
+                    "an event takes its name from `name = \"...\"`",
+                ));
+            }
         };
         let path = attr.path();
-        *attr = syn::parse_quote!(#[#path(name = #full)]);
+        *attr = match args.reply {
+            Some(reply) => syn::parse_quote!(#[#path(name = #full, reply = #reply)]),
+            None => syn::parse_quote!(#[#path(name = #full)]),
+        };
     }
     Ok(())
 }
 
-fn is_host_fn(attr: &Attribute) -> bool {
+fn is_contract_attribute(attr: &Attribute) -> bool {
     attr.path().segments.last().is_some_and(|segment| {
         segment.ident == "host_fn"
             || segment.ident == "host_fn_with_ctx"
             || segment.ident == "host_fn_async"
+            || segment.ident == "host_event"
     })
 }

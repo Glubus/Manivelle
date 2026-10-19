@@ -149,6 +149,8 @@ export const run: ScriptExports["run"] = (arg0) => forecast(arg0);
 
 `tsc` then rejects an export with the wrong parameters or result; a script may also be
 `async`. An export is only described: scripts cannot call it, and it is not a host contract.
+`#[script_export(name = "run", args = (Tick,), output = Forecast)]` on a unit struct writes
+the `ScriptExport` impl for you.
 
 ## Give Mod Authors The Declarations: `manivelle init`
 

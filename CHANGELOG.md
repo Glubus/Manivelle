@@ -27,6 +27,27 @@
 - `manivelle run` shows the `console` output of the scripts (warnings and errors on
   stderr). While attached, the program's own default stderr output of `console` is
   silenced so a line shows once; a sink set with `set_console` still receives every line.
+  The lines are flushed when the engine is dropped, so a program that ends right after a
+  `console.log` still shows it (`std::process::exit` skips the drop).
+- `manivelle check [DIR] [--packages DIR] [--from PROGRAM | --descriptors FILE] [--fix]`:
+  validates packages without loading them (manifest, entry file, unique names, engine and
+  dependency versions, cycles) and, with the program's contracts, **reads their TypeScript**:
+  it flags a host function or event the code uses and the permissions do not list, a
+  misspelled function or event (with the closest name), a permission that names no contract,
+  a permission the code never uses, a `script_export` function the entry does not export, and
+  computed access it cannot read, each with its file and line. `--fix` adds the permissions
+  the code uses and the manifest lacks. The reading is static and best effort.
+- The library part of it: `resolve_packages`, `analyze_project` (what a project uses, found
+  with `oxc`'s parser and scope analysis, so a local named like a host namespace is not
+  mistaken for it), `check_package`, `ContractNames` and `add_permissions`, usable from a
+  `build.rs` or a test.
+- `manivelle init` also writes a `manivelle.kdl` named after the project, with the program as
+  its `target` and its host functions and events listed, commented out, under `permissions`.
+- `#[host_event(name = "user.found")]` (feature `derive`): declares an event from its payload
+  type, with `reply = Type` for a request; `#[host_mod]` prefixes event names too. The `///`
+  comments of an event become JSDoc in the declarations and the SDK.
+- `#[script_export(name = "run", args = (Tick,), output = Forecast)]` (feature `derive`):
+  writes the `ScriptExport` impl of a struct.
 - Packages: a `manivelle.kdl` manifest, in KDL 2 (`PackageManifest`), with the package's
   name, version, author, `engine` requirement, `depends`, `permissions`, `entry` and
   `target`, and `Engine::load_packages(&[dirs])`, which checks the whole set (unique names,

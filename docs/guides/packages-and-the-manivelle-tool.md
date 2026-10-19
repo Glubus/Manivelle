@@ -4,6 +4,12 @@ A package is a script project with a `manivelle.kdl` manifest that says what it 
 needs and which program it runs in. The `manivelle` tool reads it to start that
 program, the **target**, with the package, or without any package.
 
+**The tool is optional.** Packages are loaded by the library: a program that calls
+`engine.load_packages(&[dir])` loads them, checks them and enforces their permissions
+without the `manivelle` command, and that is how a shipped game loads the mods of its
+players. The tool is for the people who write packages: `init` sets a project up, `run`
+starts the target with it, `check` validates it.
+
 ## The Manifest
 
 ```kdl
@@ -129,8 +135,56 @@ calls `poll_protocol` still starts with its packages, but does not answer later 
 While attached, `console.log` and the other `console` calls of the scripts are sent to
 the tool, which prints them (warnings and errors on stderr). The program's own stderr
 output of them is silenced meanwhile, so a line shows once; a sink the program chose with
-`set_console` still receives every line. The lines leave on a thread of their own, so a
-program that exits in the same instant may lose the last ones.
+`set_console` still receives every line. The lines leave on a thread of their own and
+are flushed when the engine is dropped; a program that ends with `std::process::exit`
+without dropping it may lose the last ones.
+
+## `manivelle init` And `manivelle check`
+
+`manivelle init my-package --from ./game` asks the program for its API and sets the
+project up: the declarations in `manivelle/`, a `tsconfig.json`, `src/main.ts` and a
+`manivelle.kdl` named after the directory, with the program as its `target` and every host
+function and event of the program listed, commented out, under `permissions`. Uncomment
+what the package needs.
+
+`manivelle check` validates packages without loading them into a program, and **reads
+their TypeScript** against the program's contracts:
+
+```text
+manivelle check                          # the package in .: manifest, entry file, dependencies
+manivelle check --packages ../mods       # also the packages in ../mods, as a set
+manivelle check --from ./game            # also: the code against the program's contracts
+manivelle check --descriptors api.json   # the same, from a descriptors file (no program started)
+manivelle check --from ./game --fix      # also: add the permissions the code uses and lacks
+```
+
+With the program's contracts it reports, for the files of the package (the project the
+entry imports, not the generated SDK file):
+
+| Finding | Level |
+| --- | --- |
+| a permission that names no contract (`world.modfy`, with `did you mean "world.modify"?`) | error |
+| the code uses a host function or listens to an event the permissions do not list | error |
+| `math.ad(...)`: a chain under a host namespace that is no host function (with the closest name) | error |
+| `ctx.on("user.fond")`: an event the program does not have | error |
+| a permission the code never uses | warning |
+| the program calls a `script_export` function on scripts that the entry does not export | warning |
+| `math[name](...)` or `ctx.on(name, ...)`: the code hides which contract it reaches | warning |
+
+Each finding names the file and line. `--fix` adds the permissions the code uses and the
+manifest of DIRECTORY lacks, after the ones already there (never removing one, and keeping
+comments), then checks again. `--from` starts the program once, which means trusting it.
+
+The reading is **static and best effort**. It follows `math.add(...)`, `ctx.on("event", ...)`,
+the same through the generated SDK (`import { math } from "./manivelle.sdk"`) and the
+`manivelle:env` module, and it tells a host namespace from a local variable of the same
+name. It cannot see a name built at runtime, which is why it warns about computed access.
+A clean report is not a proof; the permissions the engine enforces at runtime are what
+keeps a package in bounds.
+
+The same checks are a library call, for a `build.rs` or a test of your own, without the
+tool: `check_package(&manifest, &registry.descriptors()?)` returns the findings, and
+`analyze_project` the raw usage.
 
 ## Limits
 

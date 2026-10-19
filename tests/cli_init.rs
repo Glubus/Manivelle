@@ -98,6 +98,33 @@ fn init_writes_the_declarations_of_the_program_and_a_project_around_them() {
     assert!(project.join("manivelle/manivelle.sdk.ts").is_file());
     assert!(project.join("tsconfig.json").is_file());
     assert!(project.join("src/main.ts").is_file());
+
+    // A package manifest named after the directory, with the program as its target and
+    // its contracts listed, commented out, as the permissions to pick from.
+    let manifest = fs::read_to_string(project.join("manivelle.kdl")).expect("manifest");
+    assert!(manifest.contains("package \"my-mod\""), "{manifest}");
+    assert!(manifest.contains("// math.add"), "{manifest}");
+    let program = std::env::current_exe().expect("test executable");
+    let target = manifest
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("target "))
+        .expect("a target line");
+    assert!(
+        target.contains(
+            program
+                .file_name()
+                .and_then(|n| n.to_str())
+                .expect("file name")
+        ),
+        "{target}"
+    );
+    // And it is a manifest the tool accepts.
+    let checked = Command::new(env!("CARGO_BIN_EXE_manivelle"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .expect("run manivelle check");
+    assert!(checked.status.success(), "{}", stderr(&checked));
 }
 
 #[test]

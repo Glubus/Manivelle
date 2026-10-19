@@ -13,6 +13,7 @@
 #![warn(clippy::clone_on_ref_ptr)]
 #![warn(missing_docs)]
 
+mod analysis;
 mod cache;
 mod compiler;
 mod config;
@@ -29,6 +30,10 @@ mod types;
 #[doc(hidden)]
 pub use serde as __serde;
 
+pub use analysis::{
+    ContractNames, Finding, PackageReport, ScriptUsage, Severity, Usage, add_permissions,
+    analyze_project, analyze_source, check_package,
+};
 pub use config::{ContractValidation, EngineOptions, ScriptBuiltins, UnknownFieldValidation};
 pub use contract::{
     Caller, HostFunctionSignature, HostRequest, HostResolver, JsArgs, JsDecode, JsEncode,
@@ -48,9 +53,12 @@ pub use contract::{
 };
 pub use error::EngineError;
 #[cfg(feature = "derive")]
-pub use manivelle_macros::{TsSchema, host_fn, host_fn_async, host_fn_with_ctx, host_mod};
+pub use manivelle_macros::{
+    TsSchema, host_event, host_fn, host_fn_async, host_fn_with_ctx, host_mod, script_export,
+};
 pub use packages::{
     MANIFEST_FILE, PackageDependency, PackageFailure, PackageInfo, PackageLoad, PackageManifest,
+    resolve_packages,
 };
 pub use protocol::Setup;
 pub use registry::{

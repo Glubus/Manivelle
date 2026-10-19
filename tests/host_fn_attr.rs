@@ -1,8 +1,9 @@
 #![cfg(feature = "derive")]
 
 use manivelle::{
-    Caller, Engine, EngineError, EngineOptions, HostContract, HostFunction, HostResolver, TsSchema,
-    host_fn, host_fn_async, host_fn_with_ctx, host_mod,
+    Caller, Engine, EngineError, EngineOptions, HostContract, HostFunction, HostResolver,
+    ScriptExport, TsSchema, host_event, host_fn, host_fn_async, host_fn_with_ctx, host_mod,
+    script_export,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -213,4 +214,107 @@ fn async_functions_settle_through_their_resolver() {
     let owner = engine.call_deferred::<String>("game", "owner", ()).unwrap();
     engine.pump().unwrap();
     assert_eq!(owner.take().unwrap().unwrap(), "game");
+}
+
+/// A user was found.
+///
+/// Sent once per search hit.
+#[host_event(name = "user.found")]
+#[derive(Serialize, TsSchema)]
+#[serde(rename_all = "camelCase")]
+struct UserFound {
+    user_id: u64,
+}
+
+#[derive(Serialize, TsSchema)]
+#[host_event(name = "game.ask", reply = u32)]
+struct Ask {
+    n: u32,
+}
+
+#[host_mod(namespace = "world")]
+mod world {
+    use manivelle::{TsSchema, host_event};
+    use serde::Serialize;
+
+    #[derive(Serialize, TsSchema)]
+    #[host_event(name = "spawned")]
+    pub struct Spawned {
+        pub id: u32,
+    }
+}
+
+#[test]
+fn events_are_declared_from_their_payload_type() {
+    assert_eq!(UserFound::NAME, "user.found");
+    assert_eq!(
+        UserFound::DOCS,
+        "A user was found.\n\nSent once per search hit."
+    );
+    assert_eq!(
+        world::Spawned::NAME,
+        "world.spawned",
+        "host_mod prefixes events too"
+    );
+
+    let mut engine = Engine::new(&EngineOptions::default()).unwrap();
+    engine
+        .registry()
+        .callback::<UserFound>()
+        .unwrap()
+        .request::<Ask>()
+        .unwrap();
+    engine
+        .load_script(
+            "s",
+            r#"
+            let seen = 0;
+            ctx.on("user.found", (event: { userId: number }) => { seen = event.userId; });
+            ctx.on("game.ask", (event: { n: number }) => event.n + 1);
+            export const last = (): number => seen;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(
+        engine
+            .emit(UserFound::NAME, &UserFound { user_id: 7 })
+            .unwrap(),
+        1
+    );
+    assert_eq!(engine.call::<f64>("s", "last", ()).unwrap(), 7.0);
+    let replies: Vec<(&str, u32)> = engine.request(Ask::NAME, &Ask { n: 41 }).unwrap();
+    assert_eq!(replies, [("s", 42)]);
+
+    let declarations = engine.registry().dts().unwrap();
+    assert!(
+        declarations.contains(
+            "  /**\n   * A user was found.\n   *\n   * Sent once per search hit.\n   */\n  \"user.found\": UserFound;"
+        ),
+        "{declarations}"
+    );
+    let sdk = engine.registry().sdk().unwrap();
+    assert!(sdk.contains("* A user was found."), "{sdk}");
+}
+
+#[script_export(name = "double", args = (f64,), output = f64)]
+struct Double;
+
+#[script_export(name = "reset")]
+struct Reset;
+
+#[test]
+fn script_exports_are_declared_with_an_attribute() {
+    assert_eq!((Double::NAME, Reset::NAME), ("double", "reset"));
+
+    let mut engine = Engine::new(&EngineOptions::default()).unwrap();
+    engine
+        .load_script(
+            "s",
+            "export const double = (n: number): number => n * 2;\nexport function reset(): void {}",
+        )
+        .unwrap();
+
+    assert_eq!(engine.call_typed::<Double>("s", (21.0,)).unwrap(), 42.0);
+    engine.call_typed::<Reset>("s", ()).unwrap();
 }

@@ -6,11 +6,13 @@ mod codec;
 mod directions;
 mod expand;
 mod generics;
+mod host_event;
 mod host_fn;
 mod host_mod;
 mod model;
 mod rename;
 mod schema;
+mod script_export;
 
 use proc_macro::TokenStream;
 use syn::{Error, parse_macro_input};
@@ -150,8 +152,54 @@ fn expand_host_function(args: TokenStream, item: TokenStream, kind: host_fn::Kin
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
+/// Declares a host event from the struct or enum that is its payload.
+///
+/// ```ignore
+/// /// A user was found.
+/// #[derive(Serialize, TsSchema)]
+/// #[host_event(name = "user.found")]
+/// struct UserFound { user_id: u64, display_name: String }
+///
+/// registry.callback::<UserFound>()?;
+/// engine.emit(UserFound::NAME, &UserFound { user_id: 7, display_name: "Ada".into() })?;
+/// ```
+///
+/// Keeps the type and implements `HostContract` (the given `name`, and its `///` comments
+/// as the TypeScript documentation) and `HostCallback` with itself as the `Payload`. With
+/// `reply = Type` it is a request: it also implements `HostRequest`, whose handlers
+/// answer with that type. The type must be able to cross to the script (derive
+/// `TsSchema`, and `Serialize` for the JSON codec) and cannot be generic.
+#[proc_macro_attribute]
+pub fn host_event(args: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as syn::Item);
+    host_event::expand_host_event(args.into(), &item)
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
 
-/// Prefixes the contract names of the `#[host_fn]` functions of an inline module.
+/// Declares a function a script exports, to call it with `Engine::call_typed`.
+///
+/// ```ignore
+/// #[script_export(name = "run", args = (Tick,), output = Forecast)]
+/// struct Run;
+///
+/// let forecast = engine.call_typed::<Run>("weather-rules", (tick,))?;
+/// registry.script_export::<Run>()?; // optional: lets `tsc` check the script too
+/// ```
+///
+/// Keeps the struct and implements `ScriptExport` for it: `name` is the exported function,
+/// `args` the tuple of its argument types (`()` when omitted) and `output` what it
+/// returns (`()` when omitted).
+#[proc_macro_attribute]
+pub fn script_export(args: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as syn::Item);
+    script_export::expand_script_export(args.into(), &item)
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+/// Prefixes the contract names of the `#[host_fn]` functions and `#[host_event]` types of
+/// an inline module.
 ///
 /// ```ignore
 /// #[host_mod(namespace = "math")] // or `#[host_mod]`: the module's name

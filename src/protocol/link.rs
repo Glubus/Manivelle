@@ -22,8 +22,34 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 /// the messages beyond it, which are mostly `console` lines.
 const OUTBOX: usize = 4096;
 
+/// How long dropping the link waits for the queued messages to be written.
+const FLUSH: Duration = Duration::from_secs(2);
+
+/// What the writing thread is handed.
+enum Outbound {
+    Message(FromProgram),
+    /// Answered once every message before it is written.
+    Flush(mpsc::Sender<()>),
+}
+
+/// A cheap handle that queues messages for the tool without ever waiting, for code that
+/// outlives a borrow of the link, such as the `console` tap.
+#[derive(Clone)]
+pub(crate) struct Outbox(SyncSender<Outbound>);
+
+impl Outbox {
+    /// Queues `message`; `Err` once the tool cannot be reached any more. A full queue drops
+    /// the message and is not an error.
+    pub(crate) fn send(&self, message: FromProgram) -> Result<(), ()> {
+        match self.0.try_send(Outbound::Message(message)) {
+            Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
+            Err(TrySendError::Disconnected(_)) => Err(()),
+        }
+    }
+}
+
 pub(crate) struct Link {
-    outbox: SyncSender<FromProgram>,
+    outbox: Outbox,
     commands: Receiver<Command>,
     /// Raised by the reading thread when a command is queued.
     waiting: Arc<AtomicBool>,
@@ -71,22 +97,29 @@ impl Link {
                 reader_lost.store(false, Ordering::Release);
             })?;
 
-        let (outbox, pending) = mpsc::sync_channel::<FromProgram>(OUTBOX);
+        let (queue_out, pending) = mpsc::sync_channel::<Outbound>(OUTBOX);
         let writer_lost = Arc::clone(&alive);
         thread::Builder::new()
             .name("manivelle-protocol-write".to_owned())
             .spawn(move || {
                 // Ends with the first failed write: the senders then see a closed channel.
-                for message in pending {
-                    if write_line(&mut stream, &message).is_err() {
-                        break;
+                for item in pending {
+                    match item {
+                        Outbound::Message(message) => {
+                            if write_line(&mut stream, &message).is_err() {
+                                break;
+                            }
+                        }
+                        Outbound::Flush(done) => {
+                            let _ = done.send(());
+                        }
                     }
                 }
                 writer_lost.store(false, Ordering::Release);
             })?;
 
         Ok(Self {
-            outbox,
+            outbox: Outbox(queue_out),
             commands,
             waiting,
             alive,
@@ -96,10 +129,7 @@ impl Link {
     /// Hands one message to the writing thread; `Err` once the tool cannot be reached
     /// any more. A full outbox drops the message and is not an error.
     pub(crate) fn send(&self, message: FromProgram) -> Result<(), ()> {
-        match self.outbox.try_send(message) {
-            Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
-            Err(TrySendError::Disconnected(_)) => Err(()),
-        }
+        self.outbox.send(message)
     }
 
     /// Whether the tool is still connected.
@@ -107,18 +137,33 @@ impl Link {
         self.alive.load(Ordering::Acquire)
     }
 
-    /// A handle that sends like [`send`](Self::send), for code that outlives a borrow of
-    /// the link, such as the `console` tap.
-    pub(crate) fn outbox(&self) -> SyncSender<FromProgram> {
+    /// A handle that queues messages like [`send`](Self::send).
+    pub(crate) fn outbox(&self) -> Outbox {
         self.outbox.clone()
     }
 
     /// The commands received since the last call; a single atomic read when none came.
     pub(crate) fn take_commands(&self) -> Vec<Command> {
-        if !self.waiting.swap(false, Ordering::AcqRel) {
+        // A plain read while idle: the read-modify-write below is what costs.
+        if !self.waiting.load(Ordering::Acquire) || !self.waiting.swap(false, Ordering::AcqRel) {
             return Vec::new();
         }
         self.commands.try_iter().collect()
+    }
+}
+
+impl Drop for Link {
+    /// Gives the writing thread a moment to write what is queued, so that the last
+    /// `console` lines of a program that ends right after them reach the tool. A program
+    /// that ends without dropping its engine (`std::process::exit`) still loses them.
+    fn drop(&mut self) {
+        if !self.is_alive() {
+            return;
+        }
+        let (done, flushed) = mpsc::channel();
+        if self.outbox.0.try_send(Outbound::Flush(done)).is_ok() {
+            let _ = flushed.recv_timeout(FLUSH);
+        }
     }
 }
 

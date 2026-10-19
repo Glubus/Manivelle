@@ -29,7 +29,7 @@ pub(crate) fn render_typescript_declarations(descriptors: &[HostContractDescript
 #[derive(Default)]
 struct DeclarationBuffer {
     sections: Vec<String>,
-    host_events: Vec<String>,
+    host_events: Vec<(String, String)>,
     host_replies: Vec<String>,
     script_exports: Vec<String>,
     emitted_schemas: BTreeSet<String>,
@@ -52,7 +52,12 @@ impl DeclarationBuffer {
                 );
             }
             HostContractAbi::Callback { payload, reply } => {
-                self.push_callback(&descriptor.name, payload, reply.as_ref());
+                self.push_callback(
+                    &descriptor.name,
+                    payload,
+                    reply.as_ref(),
+                    descriptor.docs.as_deref(),
+                );
             }
             HostContractAbi::Context { schema } => self.push_context(&descriptor.name, schema),
             HostContractAbi::Export { args, output } => {
@@ -96,10 +101,21 @@ impl DeclarationBuffer {
         ));
     }
 
-    fn push_callback(&mut self, name: &str, payload: &Schema, reply: Option<&Schema>) {
+    fn push_callback(
+        &mut self,
+        name: &str,
+        payload: &Schema,
+        reply: Option<&Schema>,
+        docs: Option<&str>,
+    ) {
         self.push_schema(payload);
-        self.host_events
-            .push(format!("  {name:?}: {};", schema_type_name(payload)));
+        let docs = docs
+            .map(|docs| render_doc_comment(docs, "  "))
+            .unwrap_or_default();
+        self.host_events.push((
+            name.to_owned(),
+            format!("{docs}  {name:?}: {};", schema_type_name(payload)),
+        ));
         if let Some(reply) = reply {
             self.push_schema(reply);
             self.host_replies
@@ -137,10 +153,14 @@ impl DeclarationBuffer {
             return;
         }
 
-        self.host_events.sort();
+        self.host_events.sort_by(|a, b| a.0.cmp(&b.0));
         self.host_replies.sort();
-        self.sections
-            .push(render_event_map("HostEvents", &self.host_events));
+        let events: Vec<String> = self
+            .host_events
+            .iter()
+            .map(|(_, entry)| entry.clone())
+            .collect();
+        self.sections.push(render_event_map("HostEvents", &events));
         self.sections
             .push(render_event_map("HostReplies", &self.host_replies));
     }

@@ -48,7 +48,14 @@ pub(crate) fn expand_host_fn(
     function: &ItemFn,
     kind: Kind,
 ) -> syn::Result<TokenStream> {
-    let name = HostFnArgs::parse(args.clone())?
+    let parsed = HostFnArgs::parse(args.clone())?;
+    if let Some(reply) = &parsed.reply {
+        return Err(Error::new(
+            reply.span(),
+            "`reply` belongs to `#[host_event]`, not to a host function",
+        ));
+    }
+    let name = parsed
         .name
         .ok_or_else(|| Error::new(args.span(), "missing `name = \"contract.name\"`"))?;
     check_shape(function, kind)?;
@@ -62,7 +69,7 @@ pub(crate) fn expand_host_fn(
         name.value(),
         kind.attribute()
     );
-    let docs = doc_text(function);
+    let docs = doc_text(&function.attrs);
     let docs_const = (!docs.is_empty()).then(|| quote!(const DOCS: &'static str = #docs;));
     let implementation = match kind {
         Kind::Static => static_impl(&marker, &signature),
@@ -95,9 +102,8 @@ pub(crate) fn expand_host_fn(
 
 /// The `///` comments of the function as Markdown: one line per comment line, without the
 /// space every `///` leaves in front of its text.
-fn doc_text(function: &ItemFn) -> String {
-    let lines: Vec<String> = function
-        .attrs
+pub(crate) fn doc_text(attrs: &[syn::Attribute]) -> String {
+    let lines: Vec<String> = attrs
         .iter()
         .filter(|attr| attr.path().is_ident("doc"))
         .filter_map(|attr| match &attr.meta {
@@ -263,6 +269,8 @@ pub(crate) struct HostFnArgs {
     pub(crate) name: Option<LitStr>,
     /// Opts out of the enclosing `#[host_mod]` prefix; `name` is then the full name.
     pub(crate) no_namespace: bool,
+    /// The `reply` type of a `#[host_event]` that is a request.
+    pub(crate) reply: Option<Type>,
 }
 
 impl HostFnArgs {
@@ -273,10 +281,13 @@ impl HostFnArgs {
                 parsed.name = Some(meta.value()?.parse::<LitStr>()?);
             } else if meta.path.is_ident("no_namespace") && !parsed.no_namespace {
                 parsed.no_namespace = true;
+            } else if meta.path.is_ident("reply") && parsed.reply.is_none() {
+                parsed.reply = Some(meta.value()?.parse::<Type>()?);
             } else {
-                return Err(
-                    meta.error("expected `name = \"contract.name\"` and optionally `no_namespace`")
-                );
+                return Err(meta.error(
+                    "expected `name = \"contract.name\"`, and optionally `no_namespace` \
+                     or, for an event, `reply = Type`",
+                ));
             }
             Ok(())
         });

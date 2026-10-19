@@ -302,6 +302,31 @@ impl HostCallback for UserFound {
 }
 ```
 
+### Shortcut: `#[host_event]`
+
+With the `derive` feature, the attribute on the payload type replaces the marker and its two
+impls. The type is its own payload, and its `///` comments become the JSDoc of the event:
+
+```rust
+use manivelle::{TsSchema, host_event};
+
+/// A user was found.
+#[host_event(name = "user.found")]
+#[derive(Deserialize, Serialize, TsSchema)]
+#[serde(rename_all = "camelCase")]
+struct UserFound {
+    user_id: u64,
+    display_name: String,
+}
+
+engine.registry().callback::<UserFound>()?;
+engine.emit(UserFound::NAME, &UserFound { user_id: 7, display_name: "Ada".into() })?;
+```
+
+`reply = Type` makes it a request (`#[host_event(name = "menu.label", reply = String)]`),
+and `#[host_mod]` prefixes the name of an event like that of a function. The type cannot
+be generic.
+
 ## Declare A Request
 
 A request is a callback whose handlers answer: `Engine::request` returns what each

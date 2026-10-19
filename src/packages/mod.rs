@@ -72,16 +72,7 @@ impl Engine {
     /// Fails when a root has no package, a manifest is not valid, or the set of packages cannot
     /// be loaded together; nothing is loaded then.
     pub fn load_packages(&mut self, roots: &[PathBuf]) -> Result<PackageLoad, EngineError> {
-        let mut manifests = Vec::new();
-        for root in roots {
-            manifests.extend(discover(root)?);
-        }
-        let engine_version =
-            Version::parse(env!("CARGO_PKG_VERSION")).map_err(|error| EngineError::Manifest {
-                path: "manivelle".to_owned(),
-                details: error.to_string(),
-            })?;
-        let ordered = resolve::load_order(manifests, &engine_version)?;
+        let ordered = resolve_packages(roots)?;
 
         let mut report = PackageLoad::default();
         for manifest in ordered {
@@ -128,6 +119,27 @@ impl Engine {
     pub fn packages(&self) -> &[PackageInfo] {
         &self.packages
     }
+}
+
+/// Reads the packages found in `roots` (each a package, or a directory of packages) and
+/// checks the whole set as [`Engine::load_packages`] does, without loading anything:
+/// unique names, `engine` requirements, dependencies and their versions, and cycles. The
+/// packages come back dependencies first.
+///
+/// # Errors
+///
+/// Fails when a root has no package, a manifest is not valid, or the set cannot work together.
+pub fn resolve_packages(roots: &[PathBuf]) -> Result<Vec<PackageManifest>, EngineError> {
+    let mut manifests = Vec::new();
+    for root in roots {
+        manifests.extend(discover(root)?);
+    }
+    let engine_version =
+        Version::parse(env!("CARGO_PKG_VERSION")).map_err(|error| EngineError::Manifest {
+            path: "manivelle".to_owned(),
+            details: error.to_string(),
+        })?;
+    resolve::load_order(manifests, &engine_version)
 }
 
 /// The manifests of the package at `root`, or of the packages in its subdirectories.

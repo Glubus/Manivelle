@@ -36,6 +36,7 @@ struct SdkBuilder {
     contexts: ObjectTree<SdkContext>,
     host_functions: BTreeMap<String, SdkFunctionType>,
     host_events: BTreeMap<String, String>,
+    host_event_docs: BTreeMap<String, String>,
     host_replies: BTreeMap<String, String>,
     has_host_functions: bool,
     script_exports: Vec<String>,
@@ -58,7 +59,12 @@ impl SdkBuilder {
                 );
             }
             HostContractAbi::Callback { payload, reply } => {
-                self.push_callback(&descriptor.name, payload, reply.as_ref());
+                self.push_callback(
+                    &descriptor.name,
+                    payload,
+                    reply.as_ref(),
+                    descriptor.docs.as_deref(),
+                );
             }
             HostContractAbi::Context { schema } => self.push_context(&descriptor.name, schema),
             HostContractAbi::Export { args, output } => {
@@ -99,10 +105,20 @@ impl SdkBuilder {
         );
     }
 
-    fn push_callback(&mut self, name: &str, payload: &Schema, reply: Option<&Schema>) {
+    fn push_callback(
+        &mut self,
+        name: &str,
+        payload: &Schema,
+        reply: Option<&Schema>,
+        docs: Option<&str>,
+    ) {
         self.schemas.push(payload);
         self.host_events
             .insert(name.to_owned(), schema_type_name(payload));
+        if let Some(docs) = docs {
+            self.host_event_docs
+                .insert(name.to_owned(), docs.to_owned());
+        }
         if let Some(reply) = reply {
             self.schemas.push(reply);
             self.host_replies
@@ -112,6 +128,7 @@ impl SdkBuilder {
             name,
             SdkEvent {
                 event_name: name.to_owned(),
+                docs: docs.map(str::to_owned),
             },
         );
     }
@@ -178,15 +195,27 @@ impl SdkBuilder {
             return None;
         }
 
-        let entries = |map: &BTreeMap<String, String>| {
-            map.iter()
-                .map(|(event_name, ty)| format!("  {event_name:?}: {ty};"))
-                .collect::<Vec<_>>()
-        };
+        let events: Vec<String> = self
+            .host_events
+            .iter()
+            .map(|(event_name, ty)| {
+                let docs = self
+                    .host_event_docs
+                    .get(event_name)
+                    .map(|docs| render_doc_comment(docs, "  "))
+                    .unwrap_or_default();
+                format!("{docs}  {event_name:?}: {ty};")
+            })
+            .collect();
+        let replies: Vec<String> = self
+            .host_replies
+            .iter()
+            .map(|(event_name, ty)| format!("  {event_name:?}: {ty};"))
+            .collect();
         Some(format!(
             "{}\n\n{}",
-            render_event_map("HostEvents", &entries(&self.host_events)),
-            render_event_map("HostReplies", &entries(&self.host_replies)),
+            render_event_map("HostEvents", &events),
+            render_event_map("HostReplies", &replies),
         ))
     }
 
@@ -279,6 +308,7 @@ struct SdkFunctionType {
 
 struct SdkEvent {
     event_name: String,
+    docs: Option<String>,
 }
 
 #[derive(Clone)]
@@ -923,8 +953,13 @@ fn function_input_argument(function: &SdkFunction) -> String {
 }
 
 fn render_event_binding(name: &str, event: &SdkEvent, depth: usize) -> String {
+    let docs = event
+        .docs
+        .as_deref()
+        .map(|docs| render_doc_comment(docs, &indent(depth)))
+        .unwrap_or_default();
     format!(
-        "{}{}(handler: HostEventHandler<{:?}>): void {{\n{}return __ctx.on({:?}, handler);\n{}}},",
+        "{docs}{}{}(handler: HostEventHandler<{:?}>): void {{\n{}return __ctx.on({:?}, handler);\n{}}},",
         indent(depth),
         property_name(name),
         event.event_name,
