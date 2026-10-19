@@ -4,13 +4,14 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use rquickjs::{Array, Ctx, Function, Value as JsValue};
+use rquickjs::{Array, Ctx, Exception, Function, Value as JsValue};
 use rustc_hash::FxBuildHasher;
 
 use super::errors::js_error;
 use super::execution::ExecutionControl;
 use super::retained::{Retained, release_value, take_value};
 use crate::error::EngineError;
+use crate::packages::PermissionSet;
 
 /// Handler lists of one context, by event name, as the prelude hands them over: only
 /// events with at least one handler are listed. Each list is kept as a snapshot of
@@ -71,13 +72,27 @@ impl ListenedEvents {
             .map(|listened| Rc::clone(&listened.handlers))
     }
 
-    /// The hook the prelude hands handler lists to.
-    pub(super) fn hook<'js>(&self, ctx: &Ctx<'js>) -> Result<Function<'js>, EngineError> {
+    /// The hook the prelude hands handler lists to. A script of a package whose
+    /// permissions do not list `event` cannot add a handler for it: the call throws.
+    pub(super) fn hook<'js>(
+        &self,
+        ctx: &Ctx<'js>,
+        script_id: &str,
+        allowed: Option<Rc<PermissionSet>>,
+    ) -> Result<Function<'js>, EngineError> {
         let events = Rc::downgrade(&self.list);
         let stale = Rc::clone(&self.stale);
+        let script_id = Box::<str>::from(script_id);
         Function::new(
             ctx.clone(),
-            move |event: String, handlers: Option<Array<'_>>| {
+            move |ctx: Ctx<'_>, event: String, handlers: Option<Array<'_>>| {
+                if handlers.is_some() && allowed.as_ref().is_some_and(|set| !set.allows(&event)) {
+                    let denied = EngineError::PermissionDenied {
+                        package: script_id.to_string(),
+                        permission: event,
+                    };
+                    return Err(Exception::throw_message(&ctx, &denied.to_string()));
+                }
                 let handlers = handlers.map(|list| snapshot(&list)).transpose()?;
                 record(&events, &stale, event, handlers);
                 rquickjs::Result::Ok(())

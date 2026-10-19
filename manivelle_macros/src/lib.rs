@@ -90,14 +90,63 @@ pub fn derive_ts_schema(input: TokenStream) -> TokenStream {
 /// Keeps the function and generates a marker type named after it in `PascalCase`
 /// (`FindUser`) with the same visibility. The marker implements `HostContract` (the
 /// given `name`), `HostFunctionSignature` (`Input` is the parameter type, `()` without
-/// parameter; `Output` is the `T` of `Result<T, EngineError>`) and `HostFunction`, so it
-/// registers with `registry.function::<FindUser>()`.
+/// parameter; `Output` is the `T` of `Result<T, EngineError>`, or the plain return type
+/// of a function that cannot fail) and `HostFunction`, so it registers with
+/// `registry.function::<FindUser>()`.
 ///
-/// The function must not be `async` or generic, and takes at most one parameter.
+/// The function must not be `async` or generic, and takes at most one parameter. To
+/// receive the calling script, see [`macro@host_fn_with_ctx`]; for a function settled
+/// later, [`macro@host_fn_async`].
 #[proc_macro_attribute]
 pub fn host_fn(args: TokenStream, item: TokenStream) -> TokenStream {
+    expand_host_function(args, item, host_fn::Kind::Static)
+}
+
+/// Declares a host function that receives the calling script, `manivelle::Caller`.
+///
+/// ```ignore
+/// #[host_fn_with_ctx(name = "user.find")]
+/// fn find_user(ctx: &Caller<'_>, input: FindUserInput) -> Result<FindUserOutput, EngineError> {
+///     Ok(FindUserOutput { display_name: format!("{} asks {}", ctx.script_id(), input.user_id) })
+/// }
+///
+/// FindUser::register(engine.registry())?;
+/// ```
+///
+/// Like [`macro@host_fn`], it generates the marker (`FindUser`) with `HostContract` and
+/// `HostFunctionSignature`. A static `HostFunction` cannot know its caller, so the
+/// marker gets a `register(&registry)` function instead, which registers the function
+/// with `function_with_caller`. The input is optional (`fn(ctx)`).
+#[proc_macro_attribute]
+pub fn host_fn_with_ctx(args: TokenStream, item: TokenStream) -> TokenStream {
+    expand_host_function(args, item, host_fn::Kind::WithCtx)
+}
+
+/// Declares a host function that settles a `Promise` later, through a
+/// `manivelle::HostResolver`.
+///
+/// ```ignore
+/// #[host_fn_async(name = "score.lookup")]
+/// fn lookup_score(input: PlayerId, resolver: HostResolver<u32>) -> Result<(), EngineError> {
+///     pending().push((input, resolver));
+///     Ok(())
+/// }
+///
+/// LookupScore::register(engine.registry())?;
+/// ```
+///
+/// The parameters are `[ctx: &Caller<'_>,] input, resolver: HostResolver<Output>`; the
+/// `Output` is the resolver's type parameter. The marker gets a `register(&registry)`
+/// function that uses `async_function_with` (or `async_function_with_caller` with a
+/// `ctx`). The function returns `Result<(), EngineError>` or nothing.
+#[proc_macro_attribute]
+pub fn host_fn_async(args: TokenStream, item: TokenStream) -> TokenStream {
+    expand_host_function(args, item, host_fn::Kind::Async)
+}
+
+fn expand_host_function(args: TokenStream, item: TokenStream, kind: host_fn::Kind) -> TokenStream {
     let function = parse_macro_input!(item as syn::ItemFn);
-    host_fn::expand_host_fn(args.into(), &function)
+    host_fn::expand_host_fn(args.into(), &function, kind)
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

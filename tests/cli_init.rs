@@ -4,7 +4,7 @@
 //! scripting API and sets up a script project.
 //!
 //! The program is this very test executable, started with a filter that selects
-//! `export_child`, which registers a contract and calls `export_sdk_if_requested`.
+//! `export_child`, which registers a contract and calls `Engine::setup_protocol`.
 
 mod support;
 
@@ -62,10 +62,10 @@ fn export_child() {
     if std::env::var_os("MANIVELLE_TEST_HANG").is_some() {
         std::thread::sleep(Duration::from_secs(30));
     }
-    let engine = Engine::new(&EngineOptions::default()).expect("create engine");
+    let mut engine = Engine::new(&EngineOptions::default()).expect("create engine");
     engine.registry().function::<Add>().expect("register");
-    // Writes the SDK and returns true when the tool asked for it; the test ends either way.
-    manivelle::export_sdk_if_requested(engine.registry()).expect("export");
+    // Writes the SDK when the tool asked for it; the test ends either way.
+    engine.setup_protocol().expect("set up the protocol");
 }
 
 fn init(directory: &Path, filter: &str, extra: &[&str]) -> Output {
@@ -184,7 +184,7 @@ fn a_program_that_did_not_opt_in_is_reported_and_leaves_no_files() {
 
     assert!(!output.status.success());
     assert!(
-        stderr(&output).contains("export_sdk_if_requested"),
+        stderr(&output).contains("Engine::setup_protocol"),
         "{}",
         stderr(&output)
     );

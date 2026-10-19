@@ -19,6 +19,8 @@ mod config;
 mod contract;
 mod error;
 pub mod js;
+mod packages;
+pub mod protocol;
 mod registry;
 mod runner;
 mod sdk_files;
@@ -30,6 +32,7 @@ pub use serde as __serde;
 pub use config::{ContractValidation, EngineOptions, ScriptBuiltins, UnknownFieldValidation};
 pub use contract::{
     Caller, HostFunctionSignature, HostRequest, HostResolver, JsArgs, JsDecode, JsEncode,
+    ScriptExport, TsArgs,
 };
 pub use contract::{
     HostCallback, HostCallbackDescriptor, HostContext, HostContract, HostContractAbi,
@@ -45,7 +48,11 @@ pub use contract::{
 };
 pub use error::EngineError;
 #[cfg(feature = "derive")]
-pub use manivelle_macros::{TsSchema, host_fn, host_mod};
+pub use manivelle_macros::{TsSchema, host_fn, host_fn_async, host_fn_with_ctx, host_mod};
+pub use packages::{
+    MANIFEST_FILE, PackageDependency, PackageFailure, PackageInfo, PackageLoad, PackageManifest,
+};
+pub use protocol::Setup;
 pub use registry::{
     HostContractRegistry, InMemoryHostContractRegistry,
     render_typescript_declarations_for_descriptors, render_typescript_sdk_for_descriptors,

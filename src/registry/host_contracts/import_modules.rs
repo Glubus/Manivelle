@@ -62,7 +62,9 @@ fn binding_for_descriptor(descriptor: &HostContractDescriptor) -> Option<HostMod
         HostContractAbi::Callback { .. } => Some(HostModuleBinding::Callback {
             event_name: descriptor.name.clone(),
         }),
-        HostContractAbi::Context { .. } | HostContractAbi::Unknown => None,
+        HostContractAbi::Context { .. }
+        | HostContractAbi::Export { .. }
+        | HostContractAbi::Unknown => None,
     }
 }
 

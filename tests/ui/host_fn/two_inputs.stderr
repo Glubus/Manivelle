@@ -1,4 +1,4 @@
-error: a host function takes at most one input; group fields in a struct
+error: `#[host_fn]` takes at most one input (group fields in a struct); use `#[host_fn_with_ctx]` to receive the `Caller`
  --> tests/ui/host_fn/two_inputs.rs:4:8
   |
 4 | fn add(left: f64, right: f64) -> Result<f64, EngineError> {

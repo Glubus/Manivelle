@@ -71,6 +71,20 @@ let output: serde_json::Value = engine.call("weather-rules", "run", ())?;
 engine.emit("user.found", &UserFoundPayload { user_id: 7, display_name: "Ada".into() })?;
 ```
 
+To call a script export without a string, declare it once with `ScriptExport` and use
+`Engine::call_typed`, so the compiler checks its name, arguments and result:
+
+```rust
+struct Run;
+impl ScriptExport for Run {
+    const NAME: &'static str = "run";
+    type Args = ();
+    type Output = serde_json::Value;
+}
+
+let output = engine.call_typed::<Run>("weather-rules", ())?;
+```
+
 With the `derive` feature, `#[host_fn]` writes the marker and its three impls from a
 plain function, and the optional `#[host_mod]` prefixes the names of a module's functions:
 
@@ -84,6 +98,11 @@ engine.registry().function::<FindUser>()?;
 ```
 
 See [Register Host Functions And Callbacks](docs/guides/register-host-functions.md).
+
+A package is a script project with a `manivelle.kdl` manifest (name, version, dependencies,
+permissions, entry and the `target` program). `manivelle run` starts the target with its
+packages, or without them (`--no-packages`); see
+[Packages And The manivelle Tool](docs/guides/packages-and-the-manivelle-tool.md).
 
 Scripts call host functions and handle host events:
 

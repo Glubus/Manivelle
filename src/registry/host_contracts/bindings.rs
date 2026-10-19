@@ -11,6 +11,7 @@ use crate::contract::{
     js_value_to_validation_snapshot,
 };
 use crate::error::EngineError;
+use crate::packages::PermissionSet;
 use crate::runner::execution::ExecutionControl;
 use crate::runner::host_fn::{HostCall, HostFnClass};
 use crate::runner::host_promises::WeakHostPromises;
@@ -407,10 +408,23 @@ impl FunctionBindingStore {
         script_id: &str,
         promises: &WeakHostPromises,
         native: &NativeContext,
+        allowed: Option<&PermissionSet>,
         validator_for: impl Fn(&str) -> Validator,
     ) -> JsResult<()> {
         let mut shared_id = None;
         for (name, binding) in self.snapshot().map_err(js_host_error)? {
+            if allowed.is_some_and(|set| !set.allows(&name)) {
+                let message = EngineError::PermissionDenied {
+                    package: script_id.to_owned(),
+                    permission: name.clone(),
+                }
+                .to_string();
+                // The function stays, so the script's types hold; calling it throws.
+                let denied: HostCall =
+                    Box::new(move |ctx, _input| Err(Exception::throw_message(ctx, &message)));
+                target.set(name.as_str(), native.class.function(target.ctx(), denied)?)?;
+                continue;
+            }
             let validator = validator_for(&name);
             match binding {
                 Binding::Sync(binding) => {
@@ -486,6 +500,7 @@ mod lock_tests {
                         execution: Arc::default(),
                         class: HostFnClass::register(&ctx).unwrap(),
                     },
+                    None,
                     |_| None,
                 )
                 .unwrap();

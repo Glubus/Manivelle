@@ -14,10 +14,12 @@ use crate::config::{ContractValidation, UnknownFieldValidation};
 use crate::contract::validation::{SchemaValidationOptions, validate_schema_with_options};
 use crate::contract::{
     Caller, HostCallback, HostCallbackDescriptor, HostContext, HostContractAbi,
-    HostContractDescriptor, HostFunction, HostFunctionDescriptor, HostFunctionSignature,
-    HostRequest, HostResolver, JsDecode, JsEncode, Schema, TsSchema,
+    HostContractDescriptor, HostContractKind, HostFunction, HostFunctionDescriptor,
+    HostFunctionSignature, HostImportBinding, HostMetadata, HostRequest, HostResolver, JsDecode,
+    JsEncode, Schema, ScriptExport, TsArgs, TsSchema,
 };
 use crate::error::EngineError;
+use crate::packages::PermissionSet;
 use crate::runner::host_promises::HostPromises;
 use crate::sdk_files::{
     GeneratedSdkFiles, SdkFileNames, write_host_sdk_files, write_host_sdk_files_with_names,
@@ -187,6 +189,49 @@ impl InMemoryHostContractRegistry {
         Ok(self)
     }
 
+    /// Registers a function the scripts export, so that the generated TypeScript holds
+    /// its signature in `ScriptExports` and a script can annotate its export with it for
+    /// `tsc` to check. The schemas come from `TsSchema` of the argument types and of the
+    /// output type. Returns the registry for chaining.
+    ///
+    /// This only describes the export: it is not a host contract, scripts cannot call
+    /// it, and it does not change how [`Engine::call_typed`](crate::Engine::call_typed)
+    /// calls it.
+    pub fn script_export<E>(&self) -> Result<&Self, EngineError>
+    where
+        E: ScriptExport,
+        E::Args: TsArgs,
+        E::Output: TsSchema,
+    {
+        let output = E::Output::schema();
+        let descriptor = HostContractDescriptor {
+            name: E::NAME.to_owned(),
+            kind: HostContractKind::Export,
+            schema: output.clone(),
+            metadata: HostMetadata {
+                name: E::NAME.to_owned(),
+                tags: Vec::new(),
+            },
+            import: HostImportBinding {
+                module: String::new(),
+                export_path: Vec::new(),
+            },
+            callback: None,
+            function: None,
+            abi: HostContractAbi::Export {
+                args: E::Args::ts_schemas(),
+                output,
+            },
+            docs: None,
+        };
+        // Under a key of its own, so that an export named like a host contract replaces
+        // neither.
+        let mut guard = self.by_name.lock().map_err(|_| EngineError::LockPoisoned)?;
+        guard.insert(format!("export {}", E::NAME), descriptor);
+        drop(guard);
+        Ok(self)
+    }
+
     /// Returns one descriptor by stable contract name.
     pub fn descriptor(&self, name: &str) -> Result<Option<HostContractDescriptor>, EngineError> {
         self.get(name)
@@ -223,12 +268,17 @@ impl InMemoryHostContractRegistry {
         script_id: &str,
         promises: &HostPromises,
         native: &NativeContext,
+        allowed: Option<&PermissionSet>,
     ) -> JsResult<()> {
         let promises = promises.downgrade();
-        self.function_bindings
-            .install_native(target, script_id, &promises, native, |name| {
-                self.validates_any().then(|| self.contract_validator(name))
-            })
+        self.function_bindings.install_native(
+            target,
+            script_id,
+            &promises,
+            native,
+            allowed,
+            |name| self.validates_any().then(|| self.contract_validator(name)),
+        )
     }
 
     fn validates_any(&self) -> bool {

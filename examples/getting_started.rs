@@ -49,7 +49,7 @@ fn main() -> Result<(), EngineError> {
 
     engine.registry().function::<Add>()?;
     // `manivelle init --from <this program>` asks for the declarations here.
-    if manivelle::export_sdk_if_requested(engine.registry())? {
+    if engine.setup_protocol()?.exported {
         return Ok(());
     }
     engine.registry().write_sdk_files_with_names(

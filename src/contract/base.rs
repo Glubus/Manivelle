@@ -16,6 +16,10 @@ pub trait HostContract {
     /// Export path inside [`Self::IMPORT_MODULE`].
     const EXPORT_PATH: &'static [&'static str] = &[];
 
+    /// Documentation shown on the generated TypeScript declarations and SDK, as
+    /// Markdown. `#[host_fn]` fills it with the `///` comments of the function.
+    const DOCS: &'static str = "";
+
     /// Returns additional host metadata.
     fn metadata() -> HostMetadata {
         HostMetadata {
@@ -46,6 +50,7 @@ pub trait HostContract {
             callback: None,
             function: None,
             abi: HostContractAbi::Unknown,
+            docs: (!Self::DOCS.is_empty()).then(|| Self::DOCS.to_owned()),
         }
     }
 }

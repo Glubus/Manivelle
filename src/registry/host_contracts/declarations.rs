@@ -31,6 +31,7 @@ struct DeclarationBuffer {
     sections: Vec<String>,
     host_events: Vec<String>,
     host_replies: Vec<String>,
+    script_exports: Vec<String>,
     emitted_schemas: BTreeSet<String>,
 }
 
@@ -42,12 +43,21 @@ impl DeclarationBuffer {
                 output,
                 returns_promise,
             } => {
-                self.push_function(&descriptor.name, input, output, *returns_promise);
+                self.push_function(
+                    &descriptor.name,
+                    input,
+                    output,
+                    *returns_promise,
+                    descriptor.docs.as_deref(),
+                );
             }
             HostContractAbi::Callback { payload, reply } => {
                 self.push_callback(&descriptor.name, payload, reply.as_ref());
             }
             HostContractAbi::Context { schema } => self.push_context(&descriptor.name, schema),
+            HostContractAbi::Export { args, output } => {
+                self.push_export(&descriptor.name, args, output);
+            }
             HostContractAbi::Unknown => {}
         }
     }
@@ -74,6 +84,7 @@ impl DeclarationBuffer {
         input: &Schema,
         output: &Schema,
         returns_promise: bool,
+        docs: Option<&str>,
     ) {
         self.push_schema(input);
         self.push_schema(output);
@@ -81,6 +92,7 @@ impl DeclarationBuffer {
             name,
             input,
             &function_output_type(output, returns_promise),
+            docs,
         ));
     }
 
@@ -103,8 +115,17 @@ impl DeclarationBuffer {
         ));
     }
 
+    fn push_export(&mut self, name: &str, args: &[Schema], output: &Schema) {
+        for schema in args.iter().chain(std::iter::once(output)) {
+            self.push_schema(schema);
+        }
+        self.script_exports
+            .push(render_script_export(name, args, output));
+    }
+
     fn finish(mut self) -> String {
         self.push_host_events();
+        self.push_script_exports();
         self.push_ctx();
         let mut output = self.sections.join("\n\n");
         output.push('\n');
@@ -122,6 +143,15 @@ impl DeclarationBuffer {
             .push(render_event_map("HostEvents", &self.host_events));
         self.sections
             .push(render_event_map("HostReplies", &self.host_replies));
+    }
+
+    fn push_script_exports(&mut self) {
+        if self.script_exports.is_empty() {
+            return;
+        }
+        self.script_exports.sort();
+        self.sections
+            .push(render_script_exports_type(&self.script_exports, false));
     }
 
     /// The `ctx` global: `ctx.hot` always, `ctx.on` and `ctx.off` once there are events
@@ -150,7 +180,35 @@ pub(super) fn render_event_map(name: &str, entries: &[String]) -> String {
     format!("type {name} = {{\n{}\n}};", entries.join("\n"))
 }
 
-fn render_function_declaration(name: &str, input: &Schema, output_type: &str) -> String {
+/// `  "name": (arg0: A, arg1: B) => Output | Promise<Output>;`, one entry of
+/// `ScriptExports`: an export may be `async`.
+pub(super) fn render_script_export(name: &str, args: &[Schema], output: &Schema) -> String {
+    let parameters = args
+        .iter()
+        .enumerate()
+        .map(|(index, arg)| format!("arg{index}: {}", schema_type_name(arg)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let output = schema_type_name(output);
+    format!("  {name:?}: ({parameters}) => {output} | Promise<{output}>;")
+}
+
+/// The `ScriptExports` type from the entries [`render_script_export`] made; `export` makes
+/// it a module export, as in the SDK.
+pub(super) fn render_script_exports_type(entries: &[String], export: bool) -> String {
+    let keyword = if export { "export " } else { "" };
+    format!(
+        "/**\n * The functions the host calls on a script. Annotate an export with its entry for\n * TypeScript to check it: `export const run: ScriptExports[\"run\"] = (arg0) => ...`.\n */\n{keyword}type ScriptExports = {{\n{}\n}};",
+        entries.join("\n")
+    )
+}
+
+fn render_function_declaration(
+    name: &str,
+    input: &Schema,
+    output_type: &str,
+    docs: Option<&str>,
+) -> String {
     let name_parts = split_contract_name(name);
     let signature = format!(
         "function {}(input: {}): {output_type};",
@@ -159,10 +217,13 @@ fn render_function_declaration(name: &str, input: &Schema, output_type: &str) ->
     );
 
     if name_parts.namespaces.is_empty() {
-        return format!("declare {signature}");
+        let docs = docs
+            .map(|docs| render_doc_comment(docs, ""))
+            .unwrap_or_default();
+        return format!("{docs}declare {signature}");
     }
 
-    render_nested_namespace(&name_parts.namespaces, &signature)
+    render_nested_namespace(&name_parts.namespaces, &signature, docs)
 }
 
 struct ContractNameParts<'a> {
@@ -179,7 +240,7 @@ fn split_contract_name(name: &str) -> ContractNameParts<'_> {
     }
 }
 
-fn render_nested_namespace(namespaces: &[&str], signature: &str) -> String {
+fn render_nested_namespace(namespaces: &[&str], signature: &str, docs: Option<&str>) -> String {
     let mut output = String::new();
 
     for (depth, namespace) in namespaces.iter().enumerate() {
@@ -192,6 +253,9 @@ fn render_nested_namespace(namespaces: &[&str], signature: &str) -> String {
         output.push_str(" {\n");
     }
 
+    if let Some(docs) = docs {
+        output.push_str(&render_doc_comment(docs, &indent(namespaces.len())));
+    }
     output.push_str(&indent(namespaces.len()));
     output.push_str("export ");
     output.push_str(signature);
@@ -210,6 +274,32 @@ fn render_nested_namespace(namespaces: &[&str], signature: &str) -> String {
 
 fn indent(depth: usize) -> String {
     "  ".repeat(depth)
+}
+
+/// `docs` as a JSDoc block at `indent`, ending with a newline; nothing for empty docs. A
+/// `*/` inside the text cannot end the comment.
+pub(super) fn render_doc_comment(docs: &str, indent: &str) -> String {
+    let lines: Vec<String> = docs
+        .trim()
+        .lines()
+        .map(|line| line.trim_end().replace("*/", "*\\/"))
+        .collect();
+    match lines.as_slice() {
+        [] => String::new(),
+        [line] => format!("{indent}/** {line} */\n"),
+        lines => {
+            let mut block = format!("{indent}/**\n");
+            for line in lines {
+                if line.is_empty() {
+                    block.push_str(&format!("{indent} *\n"));
+                } else {
+                    block.push_str(&format!("{indent} * {line}\n"));
+                }
+            }
+            block.push_str(&format!("{indent} */\n"));
+            block
+        }
+    }
 }
 
 pub(super) fn schema_type_name(schema: &Schema) -> String {

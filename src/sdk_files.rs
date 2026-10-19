@@ -121,10 +121,19 @@ pub fn export_sdk_if_requested(
     let Some(directory) = std::env::var_os(EXPORT_SDK_ENV).filter(|value| !value.is_empty()) else {
         return Ok(false);
     };
-    let directory = PathBuf::from(directory);
+    export_sdk(registry, Path::new(&directory))?;
+    Ok(true)
+}
+
+/// Writes the declarations, the SDK module and [`DESCRIPTORS_FILE`] of `registry` into
+/// `directory`.
+pub(crate) fn export_sdk(
+    registry: &InMemoryHostContractRegistry,
+    directory: &Path,
+) -> Result<(), EngineError> {
     let descriptors = registry.descriptors()?;
-    write_host_sdk_files(&directory, &descriptors)?;
+    write_host_sdk_files(directory, &descriptors)?;
     let json = serde_json::to_vec_pretty(&descriptors).map_err(io::Error::other)?;
     fs::write(directory.join(DESCRIPTORS_FILE), json)?;
-    Ok(true)
+    Ok(())
 }

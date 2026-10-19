@@ -7,11 +7,48 @@
 - `#[host_fn(name = "user.find")]` (feature `derive`): declares a host function
   from a plain `fn(input) -> Result<Output, EngineError>`. It generates the marker type
   (`FindUser`) with its `HostContract`, `HostFunctionSignature` and `HostFunction`
-  impls, ready for `registry.function::<FindUser>()`.
+  impls, ready for `registry.function::<FindUser>()`. A function that cannot fail may
+  return its output directly (or nothing) instead of a `Result`.
 - `#[host_mod]` (feature `derive`), optional: on an inline module it prefixes the
   `#[host_fn]` names of its functions with the namespace (`#[host_mod(namespace = "math")]`,
   or the module's name when bare). Inside it, `#[host_fn]` takes the function's name when
   `name` is omitted, and `no_namespace` keeps `name` as the full contract name.
+- `#[host_fn_with_ctx]` (function receiving the `Caller`) and `#[host_fn_async]` (function
+  settling a `HostResolver` later), which generate the marker and a
+  `register(&registry)` function.
+- `ScriptExport` and `Engine::call_typed::<E>(script_id, args)`: the name, arguments and
+  result of a script export declared once in Rust, so the call has no string to misspell.
+- `HostContract::DOCS` and the `///` comments of a `#[host_fn]` function: they are written
+  to `HostContractDescriptor::docs` and rendered as JSDoc in the generated declarations
+  and SDK.
+- `InMemoryHostContractRegistry::script_export::<E>()` (with `TsArgs` for the argument
+  list): registers a `ScriptExport` so that the declarations and the SDK hold a
+  `ScriptExports` type a script annotates its exports with, for `tsc` to check them.
+- `manivelle run` shows the `console` output of the scripts (warnings and errors on
+  stderr). While attached, the program's own default stderr output of `console` is
+  silenced so a line shows once; a sink set with `set_console` still receives every line.
+- Packages: a `manivelle.kdl` manifest, in KDL 2 (`PackageManifest`), with the package's
+  name, version, author, `engine` requirement, `depends`, `permissions`, `entry` and
+  `target`, and `Engine::load_packages(&[dirs])`, which checks the whole set (unique names,
+  engine and dependency versions, cycles) before loading anything, then loads each package
+  as its own project, dependencies first. A package that fails does not stop the others,
+  only its dependents. A script loaded with `load_script` or `load_project` needs no
+  package and is not restricted.
+- Package `permissions` are enforced: a package's script can call only the host functions,
+  and listen only to the events, whose contract names it lists (`world.modify`, `world.*`,
+  or `*`); a package that lists none reaches no host contract. A refused function is still
+  there, and calling it throws `permission denied: package ...` (`EngineError::PermissionDenied`);
+  `ctx.on` of a refused event throws the same.
+- `Engine::setup_protocol` and `Engine::poll_protocol`: one call at startup that does
+  what the `manivelle` tool asked (write the SDK for `init`, connect, load the packages),
+  and one per frame that runs the tool's requests (export the SDK, list contracts and
+  packages, reload) on the engine's own thread. The connection starts one thread that only
+  reads and queues requests; it never touches the engine. Authenticated by a random token,
+  bound to `127.0.0.1`, defined in `manivelle::protocol`. `export_sdk_if_requested` is
+  kept and `setup_protocol` calls it.
+- `manivelle run [DIR] [--no-packages] [--packages DIR] [--watch] [--target PATH]`: starts
+  the target named by the manifest with its packages, or vanilla with `--no-packages`, and
+  prints what loaded; `--watch` reloads changed package files while it runs.
 
 ## 0.1.2
 

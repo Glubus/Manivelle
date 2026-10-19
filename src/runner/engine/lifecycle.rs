@@ -3,6 +3,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use rquickjs::module::{Declared, Evaluated};
@@ -14,6 +15,7 @@ use rquickjs::{
 use crate::compiler::{ProjectFailure, WatchedFiles};
 use crate::config::ScriptBuiltins;
 use crate::error::EngineError;
+use crate::packages::PermissionSet;
 use crate::registry::{HostModuleStyle, NativeContext};
 use crate::types::{ReloadReport, ScriptId};
 
@@ -84,7 +86,10 @@ impl Engine {
         id: impl Into<ScriptId>,
         source: &str,
     ) -> Result<(), EngineError> {
-        self.mount_inline(None, id.into(), source)?
+        let id = id.into();
+        let loaded = self.mount_inline(None, id.clone(), source)?;
+        self.permissions.remove(&id);
+        loaded
     }
 
     /// [`Engine::load_script`] into context group `group`: the scripts loaded under one
@@ -110,7 +115,10 @@ impl Engine {
         id: impl Into<ScriptId>,
         source: &str,
     ) -> Result<(), EngineError> {
-        self.mount_inline(Some(group), id.into(), source)?
+        let id = id.into();
+        let loaded = self.mount_inline(Some(group), id.clone(), source)?;
+        self.permissions.remove(&id);
+        loaded
     }
 
     fn mount_inline(
@@ -145,7 +153,10 @@ impl Engine {
         id: impl Into<ScriptId>,
         entry_path: impl AsRef<Path>,
     ) -> Result<(), EngineError> {
-        self.mount_project(None, id.into(), entry_path.as_ref())?
+        let id = id.into();
+        let loaded = self.mount_project(None, id.clone(), entry_path.as_ref())?;
+        self.permissions.remove(&id);
+        loaded
     }
 
     /// [`Engine::load_project`] into context group `group`; see
@@ -156,7 +167,31 @@ impl Engine {
         id: impl Into<ScriptId>,
         entry_path: impl AsRef<Path>,
     ) -> Result<(), EngineError> {
-        self.mount_project(Some(group), id.into(), entry_path.as_ref())?
+        let id = id.into();
+        let loaded = self.mount_project(Some(group), id.clone(), entry_path.as_ref())?;
+        self.permissions.remove(&id);
+        loaded
+    }
+
+    /// [`Engine::load_project`] for a package: its script reaches only the host
+    /// contracts `permissions` allows. A failed load keeps the previous version and its
+    /// permissions.
+    pub(crate) fn load_project_restricted(
+        &mut self,
+        id: impl Into<ScriptId>,
+        entry_path: impl AsRef<Path>,
+        permissions: PermissionSet,
+    ) -> Result<(), EngineError> {
+        let id = id.into();
+        let previous = self.permissions.insert(id.clone(), Rc::new(permissions));
+        let loaded = self.mount_project(None, id.clone(), entry_path.as_ref());
+        if loaded.is_err() {
+            match previous {
+                Some(previous) => self.permissions.insert(id, previous),
+                None => self.permissions.remove(&id),
+            };
+        }
+        loaded?
     }
 
     /// [`Engine::load_project`], keeping a failed load apart from a failed `dispose` of
@@ -271,6 +306,7 @@ impl Engine {
             .scripts
             .shift_remove(id)
             .ok_or_else(|| script_not_found(id))?;
+        self.permissions.remove(id);
         self.event_index.mark_stale();
         self.retire(script)?.map_err(|error| {
             hot_hook_error(
@@ -605,7 +641,14 @@ impl Engine {
         let hooks = Object::new(ctx.clone()).map_err(js_error)?;
         let set = |name: &str, value: JsValue<'js>| hooks.set(name, value).map_err(js_error);
         set("native", self.host_functions(ctx, mounting)?.into_value())?;
-        set("handlers", signals.events.hook(ctx)?.into_value())?;
+        let allowed = self.permissions.get(mounting.script_id).cloned();
+        set(
+            "handlers",
+            signals
+                .events
+                .hook(ctx, mounting.script_id, allowed)?
+                .into_value(),
+        )?;
         set(
             "console",
             self.console
@@ -631,12 +674,14 @@ impl Engine {
             execution: Arc::clone(&self.execution),
             class: self.host_fn_class(ctx)?,
         };
+        let allowed = self.permissions.get(mounting.script_id).map(|set| &**set);
         self.registry
             .install_native_functions(
                 &functions,
                 mounting.script_id,
                 mounting.host_promises,
                 &native_context,
+                allowed,
             )
             .map_err(js_error)?;
         use_context_function_prototype(ctx, &functions)?;

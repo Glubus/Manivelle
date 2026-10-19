@@ -10,7 +10,8 @@ use crate::contract::{
 
 use super::declarations::{
     EVENT_CONTEXT_TYPE, HOT_CONTEXT_TYPE, function_output_type, is_unknown_schema,
-    render_event_map, render_ts_type, schema_type_name,
+    render_doc_comment, render_event_map, render_script_export, render_script_exports_type,
+    render_ts_type, schema_type_name,
 };
 use ident::{identifier, indent, property_name};
 use tree::{ObjectNode, ObjectTree};
@@ -37,6 +38,7 @@ struct SdkBuilder {
     host_events: BTreeMap<String, String>,
     host_replies: BTreeMap<String, String>,
     has_host_functions: bool,
+    script_exports: Vec<String>,
 }
 
 impl SdkBuilder {
@@ -47,12 +49,21 @@ impl SdkBuilder {
                 output,
                 returns_promise,
             } => {
-                self.push_function(&descriptor.name, input, output, *returns_promise);
+                self.push_function(
+                    &descriptor.name,
+                    input,
+                    output,
+                    *returns_promise,
+                    descriptor.docs.as_deref(),
+                );
             }
             HostContractAbi::Callback { payload, reply } => {
                 self.push_callback(&descriptor.name, payload, reply.as_ref());
             }
             HostContractAbi::Context { schema } => self.push_context(&descriptor.name, schema),
+            HostContractAbi::Export { args, output } => {
+                self.push_export(&descriptor.name, args, output);
+            }
             HostContractAbi::Unknown => {}
         }
     }
@@ -63,6 +74,7 @@ impl SdkBuilder {
         input: &Schema,
         output: &Schema,
         returns_promise: bool,
+        docs: Option<&str>,
     ) {
         self.schemas.push(input);
         self.schemas.push(output);
@@ -82,6 +94,7 @@ impl SdkBuilder {
                 input_type: schema_type_name(input),
                 output_type,
                 takes_input: !matches!(input.ts_type, TsType::Void),
+                docs: docs.map(str::to_owned),
             },
         );
     }
@@ -114,12 +127,21 @@ impl SdkBuilder {
         );
     }
 
+    fn push_export(&mut self, name: &str, args: &[Schema], output: &Schema) {
+        for schema in args.iter().chain(std::iter::once(output)) {
+            self.schemas.push(schema);
+        }
+        self.script_exports
+            .push(render_script_export(name, args, output));
+    }
+
     fn finish(self) -> String {
         let host_helpers = self.host_helpers();
         let host_function_api = self.host_function_api();
         let host_event_types = self.host_event_types();
         let event_helpers = self.event_helpers();
         let ctx_export = self.ctx_export();
+        let script_exports = self.script_exports_type();
         let (schema_sections, models) = self.schemas.finish();
         let mut sections = schema_sections;
         push_if_some(&mut sections, render_model_runtime_helpers(&models));
@@ -128,6 +150,7 @@ impl SdkBuilder {
         push_if_some(&mut sections, host_helpers);
         push_if_some(&mut sections, host_function_api);
         push_if_some(&mut sections, host_event_types);
+        push_if_some(&mut sections, script_exports);
         push_if_some(&mut sections, event_helpers);
         sections.push(ctx_export);
         sections.extend(render_context_exports(&self.contexts));
@@ -165,6 +188,15 @@ impl SdkBuilder {
             render_event_map("HostEvents", &entries(&self.host_events)),
             render_event_map("HostReplies", &entries(&self.host_replies)),
         ))
+    }
+
+    fn script_exports_type(&self) -> Option<String> {
+        if self.script_exports.is_empty() {
+            return None;
+        }
+        let mut entries = self.script_exports.clone();
+        entries.sort();
+        Some(render_script_exports_type(&entries, true))
     }
 
     fn host_function_api(&self) -> Option<String> {
@@ -237,6 +269,7 @@ struct SdkFunction {
     input_type: String,
     output_type: String,
     takes_input: bool,
+    docs: Option<String>,
 }
 
 struct SdkFunctionType {
@@ -856,8 +889,13 @@ fn render_function_binding(name: &str, function: &SdkFunction, depth: usize) -> 
         function_input_argument(function)
     );
 
+    let docs = function
+        .docs
+        .as_deref()
+        .map(|docs| render_doc_comment(docs, &indent(depth)))
+        .unwrap_or_default();
     format!(
-        "{}{}({}): {} {{\n{}{}\n{}}},",
+        "{docs}{}{}({}): {} {{\n{}{}\n{}}},",
         indent(depth),
         property_name(name),
         parameter,

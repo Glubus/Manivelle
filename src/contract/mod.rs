@@ -12,6 +12,7 @@ mod host_resolver;
 mod metadata;
 mod native_bytes;
 mod schema;
+mod script_export;
 pub(crate) mod validation;
 
 pub use base::HostContract;
@@ -33,3 +34,4 @@ pub use metadata::{
 };
 pub use native_bytes::NativeBytes;
 pub use schema::{ObjectSchema, TsSchema, push_schema_dependency, schema_type_ref};
+pub use script_export::{ScriptExport, TsArgs};

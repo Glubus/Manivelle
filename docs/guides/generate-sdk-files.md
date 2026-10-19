@@ -124,27 +124,55 @@ user.onFound(event => {
 });
 ```
 
+## Type The Exports A Script Must Provide
+
+`Engine::call_typed::<E>` checks, in Rust, the name, arguments and result of an export.
+To have TypeScript check the script too, register the same declaration:
+
+```rust
+struct Run;
+impl ScriptExport for Run {
+    const NAME: &'static str = "run";
+    type Args = (Tick,);   // each argument implements TsSchema
+    type Output = Forecast;
+}
+
+engine.registry().script_export::<Run>()?;
+```
+
+The generated declarations then hold a `ScriptExports` type (`export type` in the SDK
+module), and a script annotates its export with it:
+
+```ts
+export const run: ScriptExports["run"] = (arg0) => forecast(arg0);
+```
+
+`tsc` then rejects an export with the wrong parameters or result; a script may also be
+`async`. An export is only described: scripts cannot call it, and it is not a host contract.
+
 ## Give Mod Authors The Declarations: `manivelle init`
 
 Mod authors need your declarations on their machine, in a project that type-checks.
 You do not have to ship a tool for that: your program can hand its scripting API to the
 `manivelle` command line tool. Install it with `cargo install manivelle --features cli`.
 
-Opt in by calling `export_sdk_if_requested` once, right after registering the contracts
+Opt in by calling `Engine::setup_protocol` once, right after registering the contracts
 and before the program does anything else at startup:
 
 ```rust
-let engine = Engine::new(&EngineOptions::default())?;
+let mut engine = Engine::new(&EngineOptions::default())?;
 engine.registry().function::<FindUser>()?.callback::<UserFound>()?;
 
-if manivelle::export_sdk_if_requested(engine.registry())? {
+if engine.setup_protocol()?.exported {
     return Ok(()); // the tool asked for the SDK: it is written, nothing else to do
 }
 // ... open the window, load the assets, run the game
 ```
 
-Without the request it returns `false` at once. The program is never inspected from
-outside: only a program that calls this function can be exported.
+Without a request from the tool it does nothing. The program is never inspected from
+outside: only a program that calls it can be exported. The same call lets
+[`manivelle run`](packages-and-the-manivelle-tool.md) load packages into the program. A program
+that only wants the SDK export can call `export_sdk_if_requested` alone.
 
 A mod author then runs, with your executable (a game, an editor, a server):
 

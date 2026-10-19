@@ -281,6 +281,9 @@ pub enum HostContractKind {
     Callback,
     /// Context contract.
     Context,
+    /// A function the script exports and the host calls; see
+    /// [`ScriptExport`](crate::ScriptExport).
+    Export,
 }
 
 /// Runtime and typing descriptor stored by the host contract registry.
@@ -302,6 +305,10 @@ pub struct HostContractDescriptor {
     pub function: Option<HostFunctionDescriptor>,
     /// Normalized ABI contract model derived from Rust traits.
     pub abi: HostContractAbi,
+    /// Documentation of the contract, rendered as JSDoc in the generated TypeScript.
+    /// Serialized descriptors omit it when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs: Option<String>,
 }
 
 /// Metadata specific to callback contracts.
@@ -355,6 +362,13 @@ pub enum HostContractAbi {
     Context {
         /// Context schema.
         schema: Schema,
+    },
+    /// A function a script exports.
+    Export {
+        /// The schema of each argument, in order.
+        args: Vec<Schema>,
+        /// What the export returns.
+        output: Schema,
     },
     /// ABI has not been specialized yet.
     Unknown,

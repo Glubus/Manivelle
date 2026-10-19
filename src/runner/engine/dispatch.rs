@@ -3,7 +3,7 @@
 
 use rquickjs::{CatchResultExt, CaughtError, Ctx, Value as JsValue};
 
-use crate::contract::{JsArgs, JsDecode, JsEncode};
+use crate::contract::{JsArgs, JsDecode, JsEncode, ScriptExport};
 use crate::error::EngineError;
 use crate::types::Emission;
 
@@ -55,6 +55,17 @@ impl Engine {
             result,
         );
         self.attribute_interrupt(self.settle(result))
+    }
+
+    /// Calls the export declared by `E`, like [`Engine::call`], with its name, argument
+    /// list and result type taken from the [`ScriptExport`] so that none can be misspelled
+    /// or mistyped at the call.
+    pub fn call_typed<E: ScriptExport>(
+        &self,
+        script_id: &str,
+        args: E::Args,
+    ) -> Result<E::Output, EngineError> {
+        self.call(script_id, E::NAME, args)
     }
 
     /// Delivers one event to every handler registered for it, script by script in load

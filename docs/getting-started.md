@@ -79,7 +79,7 @@ fn main() -> Result<(), EngineError> {
 
     engine.registry().function::<Add>()?;
     // `manivelle init --from <this program>` asks for the declarations here.
-    if manivelle::export_sdk_if_requested(engine.registry())? {
+    if engine.setup_protocol()?.exported {
         return Ok(());
     }
     engine.registry().write_sdk_files_with_names(
@@ -176,7 +176,7 @@ That requires setting `HostContract::IMPORT_MODULE = "my_sdk"` and
 
 ## For Mod Authors
 
-The lines with `export_sdk_if_requested` let people who write scripts for your program
+The line with `setup_protocol` lets people who write scripts for your program
 get its declarations without access to your source: they run
 `manivelle init my-mod --from path/to/your-program` and get a type-checking project.
 See [Generate TypeScript SDK Files](guides/generate-sdk-files.md#give-mod-authors-the-declarations-manivelle-init).

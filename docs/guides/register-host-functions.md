@@ -117,7 +117,13 @@ fn find_user(input: FindUserInput) -> Result<FindUserOutput, EngineError> {
 ```
 
 The function takes zero or one parameter (`Input` is `()` without one), and cannot be
-`async` or generic. Closures and `async_function_with` keep the manual form.
+`async` or generic. It returns `Result<Output, EngineError>`, or a plain `Output` (or
+nothing) when it cannot fail: only a return type named `Result` is read as fallible.
+Closures and `async_function_with` keep the manual form.
+
+The `///` comments of the function become the JSDoc of the generated TypeScript
+declarations and SDK, so a script author sees them when hovering `user.find` in an
+editor. With the manual form, set `HostContract::DOCS` to the same text.
 
 ### Group Functions Under A Namespace: `#[host_mod]`
 
@@ -144,6 +150,44 @@ mod math {
 Use `pub fn` to register the marker from outside the module. Only the module's own
 functions are rewritten: a nested module needs its own `#[host_mod]`. `mod name;` in
 another file is not supported, because a macro cannot read it.
+
+### Receive The Calling Script: `#[host_fn_with_ctx]`
+
+A static `HostFunction` cannot know which script called it. A function whose first
+parameter is the `Caller` is declared with `#[host_fn_with_ctx]` and registers itself:
+
+```rust
+use manivelle::{Caller, EngineError, host_fn_with_ctx};
+
+#[host_fn_with_ctx(name = "user.find")]
+fn find_user(ctx: &Caller<'_>, input: FindUserInput) -> Result<FindUserOutput, EngineError> {
+    Ok(FindUserOutput { display_name: format!("{} asks {}", ctx.script_id(), input.user_id) })
+}
+
+FindUser::register(engine.registry())?;
+```
+
+The marker has `HostContract` and `HostFunctionSignature` but no `HostFunction`; its
+`register` calls `function_with_caller`. The input is optional (`fn(ctx)`).
+
+### Settle Later: `#[host_fn_async]`
+
+An async contract takes a `HostResolver<Output>` as its last parameter, and the `Caller`
+first if it wants it. Keep the resolver where the game can settle it:
+
+```rust
+use manivelle::{HostResolver, host_fn_async};
+
+#[host_fn_async(name = "scores.lookup")]
+fn lookup_score(player: String, resolver: HostResolver<u32>) {
+    queue().push((player, resolver));
+}
+
+LookupScore::register(engine.registry())?;
+```
+
+`register` uses `async_function_with`, or `async_function_with_caller` with a `ctx`.
+Both macros also work inside `#[host_mod]`.
 
 ## Implement A Host Function With A Closure
 

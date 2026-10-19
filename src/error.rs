@@ -68,6 +68,26 @@ pub enum EngineError {
         /// line and column.
         details: String,
     },
+    /// A package called a host function, or listened to an event, that its `permissions`
+    /// do not list.
+    #[error(
+        "permission denied: package `{package}` needs `{permission}` in the `permissions` of its manivelle.kdl"
+    )]
+    PermissionDenied {
+        /// The package.
+        package: String,
+        /// The contract it reached for.
+        permission: String,
+    },
+    /// A package's `manivelle.kdl` manifest is malformed, or the set of packages cannot be
+    /// loaded.
+    #[error("invalid package manifest {path}: {details}")]
+    Manifest {
+        /// The manifest file, or the package it concerns.
+        path: String,
+        /// What is wrong, with the line and column when the text is at fault.
+        details: String,
+    },
     /// Filesystem operation failed.
     #[error("filesystem error: {0}")]
     Io(#[from] io::Error),

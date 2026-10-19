@@ -112,6 +112,13 @@ pub struct Engine {
     groups: HashMap<Box<str>, ScriptGroup, FxBuildHasher>,
     /// The environment of every script loaded into a group, for its `manivelle:env` module.
     envs: ScriptEnvs,
+    /// The packages `load_packages` loaded, in load order.
+    pub(crate) packages: Vec<crate::packages::PackageInfo>,
+    /// What each script loaded from a package may reach; a script not listed here is not
+    /// restricted.
+    pub(crate) permissions: HashMap<ScriptId, Rc<crate::packages::PermissionSet>>,
+    /// The connection to the `manivelle` tool that started the program, if any.
+    pub(crate) protocol: Option<crate::protocol::Link>,
     // Declared last: contexts and persistent values must drop before their runtime.
     rejections: UnhandledRejections,
     runtime: Runtime,
@@ -249,6 +256,9 @@ impl Engine {
             web_bytecode: WebBytecode::default(),
             groups: HashMap::default(),
             envs,
+            packages: Vec::new(),
+            permissions: HashMap::new(),
+            protocol: None,
             rejections: UnhandledRejections::install(&runtime),
             runtime,
         })
@@ -266,6 +276,18 @@ impl Engine {
     /// Without a sink, output goes to stderr as `[level] script: message`.
     pub fn set_console(&mut self, sink: impl Fn(ConsoleLevel, &str, &str) + 'static) {
         self.console.replace(sink);
+    }
+
+    /// Also passes every `console` line to `forward`, whatever sink
+    /// [`set_console`](Self::set_console) sets, and silences the default stderr output
+    /// while it does: how the protocol shows script output in the `manivelle` tool.
+    pub(crate) fn forward_console(&self, forward: impl Fn(ConsoleLevel, &str, &str) + 'static) {
+        self.console.forward(forward);
+    }
+
+    /// Ends [`forward_console`](Self::forward_console).
+    pub(crate) fn stop_forwarding_console(&self) {
+        self.console.stop_forwarding();
     }
 
     /// QuickJS memory counters for the whole engine.

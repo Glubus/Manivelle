@@ -1,10 +1,15 @@
 //! `manivelle`: the command line tool of Manivelle.
 //!
 //! - `manivelle init --from <program>` asks a program that opted in (it calls
-//!   `manivelle::export_sdk_if_requested`) for its scripting API, and sets up a script
-//!   project around the TypeScript declarations it gets.
+//!   `Engine::setup_protocol`) for its scripting API, and sets up a script project
+//!   around the TypeScript declarations it gets.
+//! - `manivelle run` starts the target named by a package's `manivelle.kdl`, with its packages or
+//!   without them (`--no-packages`), and stays connected to it.
 //! - `manivelle sdk <descriptors.json> <dir>` writes the declarations and SDK from a
 //!   descriptors file.
+
+#[path = "manivelle/run.rs"]
+mod run;
 
 use std::error::Error;
 use std::fs::{self, OpenOptions};
@@ -46,12 +51,18 @@ struct Cli {
 enum Command {
     /// Set up a script project from a program that opted in to exporting its API
     ///
-    /// Runs the program (which must call `manivelle::export_sdk_if_requested`) and writes
+    /// Runs the program (which must call `Engine::setup_protocol`) and writes
     /// its TypeScript declarations to DIR/manivelle/, plus a tsconfig.json and
     /// src/main.ts when they are missing. Run it again to refresh the declarations.
     /// Running a program means trusting it: only use `--from` on programs you would run
     /// anyway.
     Init(InitArgs),
+    /// Start the target of a package, with its packages or without, and stay connected to it
+    ///
+    /// Reads the `manivelle.kdl` of DIRECTORY, starts its `target` and gives it the package
+    /// (plus any `--packages`) to load: the target must call `Engine::setup_protocol`.
+    /// `--no-packages` starts it vanilla. Running a program means trusting it.
+    Run(run::RunArgs),
     /// Write the declarations and SDK module for a descriptors file
     Sdk(SdkArgs),
 }
@@ -145,6 +156,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), Failure> {
     match cli.command {
         Command::Init(args) => init(args),
+        Command::Run(args) => run::run_target(args),
         Command::Sdk(args) => sdk(args),
     }
 }
@@ -199,7 +211,7 @@ fn run_program(
     let Some(status) = wait_or_kill(&mut child, timeout)? else {
         return Err(format!(
             "{} did not export its SDK within {} s: it must call \
-             `manivelle::export_sdk_if_requested` at startup and exit when it returns true",
+             `Engine::setup_protocol` at startup and exit when `exported` is set",
             program.display(),
             timeout.as_secs()
         )
@@ -236,7 +248,7 @@ fn check_exported(program: &Path, status: ExitStatus, export_dir: &Path) -> Resu
     if !export_dir.join(DESCRIPTORS_FILE).is_file() {
         return Err(format!(
             "{} exited without exporting its SDK: it must call \
-             `manivelle::export_sdk_if_requested` at startup",
+             `Engine::setup_protocol` at startup",
             program.display()
         )
         .into());

@@ -1,6 +1,6 @@
 //! The `console` object of scripts, routed to a host sink.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::rc::Rc;
 
@@ -57,22 +57,54 @@ type SinkFn = dyn Fn(ConsoleLevel, &str, &str);
 /// Where every script's `console` output goes; shared by all contexts, so replacing
 /// it also reroutes the scripts already loaded.
 #[derive(Clone)]
-pub(super) struct ConsoleSink(Rc<RefCell<Box<SinkFn>>>);
+pub(super) struct ConsoleSink(Rc<Sinks>);
+
+/// The sink the host chose, and a tap that sees every line as well; `set_console`
+/// replaces the sink and leaves the tap.
+struct Sinks {
+    sink: RefCell<Box<SinkFn>>,
+    tap: RefCell<Option<Box<SinkFn>>>,
+    /// Whether `sink` is still the stderr writer nobody replaced.
+    default: Cell<bool>,
+}
+
+fn to_stderr(level: ConsoleLevel, script_id: &str, message: &str) {
+    eprintln!("[{level}] {script_id}: {message}");
+}
 
 impl Default for ConsoleSink {
     /// Writes `[level] script: message` lines to stderr.
     fn default() -> Self {
-        Self::new(|level, script_id, message| eprintln!("[{level}] {script_id}: {message}"))
+        Self(Rc::new(Sinks {
+            sink: RefCell::new(Box::new(to_stderr)),
+            tap: RefCell::new(None),
+            default: Cell::new(true),
+        }))
     }
 }
 
 impl ConsoleSink {
-    fn new(sink: impl Fn(ConsoleLevel, &str, &str) + 'static) -> Self {
-        Self(Rc::new(RefCell::new(Box::new(sink))))
+    pub(super) fn replace(&self, sink: impl Fn(ConsoleLevel, &str, &str) + 'static) {
+        *self.0.sink.borrow_mut() = Box::new(sink);
+        self.0.default.set(false);
     }
 
-    pub(super) fn replace(&self, sink: impl Fn(ConsoleLevel, &str, &str) + 'static) {
-        *self.0.borrow_mut() = Box::new(sink);
+    /// Passes every line to `forward` as well, whatever sink the host sets. While the
+    /// host has not chosen a sink, the default stderr writer is silenced: the receiver
+    /// of `forward` shows the lines instead of the program.
+    pub(super) fn forward(&self, forward: impl Fn(ConsoleLevel, &str, &str) + 'static) {
+        *self.0.tap.borrow_mut() = Some(Box::new(forward));
+        if self.0.default.get() {
+            *self.0.sink.borrow_mut() = Box::new(|_, _, _| {});
+        }
+    }
+
+    /// Ends [`forward`](Self::forward), and gives the stderr writer back if it was silenced.
+    pub(super) fn stop_forwarding(&self) {
+        *self.0.tap.borrow_mut() = None;
+        if self.0.default.get() {
+            *self.0.sink.borrow_mut() = Box::new(to_stderr);
+        }
     }
 
     /// The native function the prelude's `console` of script `script_id` writes to;
@@ -83,13 +115,17 @@ impl ConsoleSink {
         script_id: &str,
         modules: &ModuleStore,
     ) -> Result<Function<'js>, EngineError> {
-        let sink = Rc::clone(&self.0);
+        let sinks = Rc::clone(&self.0);
         let script_id = Box::<str>::from(script_id);
         let modules = modules.clone();
         Function::new(ctx.clone(), move |method: String, message: String| {
             let message = locations_in_typescript(&message, &modules);
             host_fn::guarded(|| {
-                (sink.borrow())(ConsoleLevel::from_method(&method), &script_id, &message);
+                let level = ConsoleLevel::from_method(&method);
+                (sinks.sink.borrow())(level, &script_id, &message);
+                if let Some(tap) = sinks.tap.borrow().as_ref() {
+                    tap(level, &script_id, &message);
+                }
             })
         })
         .map_err(js_error)

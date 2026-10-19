@@ -72,8 +72,9 @@ fn prefix_host_fn(function: &mut ItemFn, namespace: &str) -> syn::Result<()> {
 }
 
 fn is_host_fn(attr: &Attribute) -> bool {
-    attr.path()
-        .segments
-        .last()
-        .is_some_and(|segment| segment.ident == "host_fn")
+    attr.path().segments.last().is_some_and(|segment| {
+        segment.ident == "host_fn"
+            || segment.ident == "host_fn_with_ctx"
+            || segment.ident == "host_fn_async"
+    })
 }
