@@ -260,6 +260,49 @@ engine
     })?;
 ```
 
+### Reach The Host's State: `with_state`
+
+A handler is a `Send + Sync + 'static` closure, so it cannot capture a `&mut` the host
+owns, such as a game world. `Engine::with_state` lends one for the duration of a closure,
+and a handler that receives the `Caller` reads it:
+
+```rust
+struct World { score: u32 }
+
+engine
+    .registry()
+    .function_with_caller::<AddScore>(|caller, input| {
+        caller.with_state(|world: &mut World| {
+            world.score += input.amount;
+            AddScoreOutput { total: world.score }
+        })
+    })?;
+
+let mut world = World { score: 0 };
+engine.with_state(&mut world, |engine| {
+    engine.advance_timers(dt)?;
+    engine.emit("tick", &tick)?;
+    engine.pump()
+})??;
+```
+
+Every call that can enter a script (`call`, `emit`, `request`, `advance_timers`, `pump`,
+`load_script`, `reload_changed`) can run inside the closure; none of them changes. The
+`&mut` stays borrowed by `with_state` until it returns, so the host cannot touch the state
+while scripts run, and a handler cannot keep it afterwards.
+
+`Caller::with_state` takes a closure, never hands the `&mut` out, and returns an error
+where a second `&mut` would otherwise exist:
+
+| Error | When |
+| --- | --- |
+| `EngineError::NoState` | the call did not run inside `with_state`, for example a timer advanced outside a scope. The script sees a JavaScript error it can catch. |
+| `EngineError::StateType` | the scope lent another type than the one asked for. |
+| `EngineError::StateBusy` | a handler up the call stack already holds the state. |
+| `EngineError::StateScopeActive` | returned by `with_state` itself when called inside a scope: scopes do not nest. |
+
+Handlers without a `Caller` do not see the state.
+
 ## Errors And Panics In A Host Function
 
 A handler that returns `Err(EngineError)` throws a JavaScript error in the script, which can

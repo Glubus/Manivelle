@@ -19,6 +19,24 @@ pub enum EngineError {
     /// A lock was poisoned by a panic while it was held, typically in a host handler.
     #[error("a lock was poisoned by a panic in a host handler")]
     LockPoisoned,
+    /// A host function asked for the host state outside an
+    /// [`Engine::with_state`](crate::Engine::with_state) scope.
+    #[error("no host state is lent: the call did not run inside `Engine::with_state`")]
+    NoState,
+    /// A host function asked for a host state type other than the one the scope lent.
+    #[error("the host state lent by `Engine::with_state` is not a `{expected}`")]
+    StateType {
+        /// The type the host function asked for.
+        expected: &'static str,
+    },
+    /// A host function asked for the host state while an enclosing host function holds it:
+    /// two `&mut` to the same state cannot coexist.
+    #[error("the host state is already borrowed by a host function further up the call stack")]
+    StateBusy,
+    /// [`Engine::with_state`](crate::Engine::with_state) was called inside a scope: states
+    /// do not nest.
+    #[error("`Engine::with_state` is already running: its scopes do not nest")]
+    StateScopeActive,
     /// [`EngineOptions`](crate::EngineOptions) hold a value that would disable a protection
     /// instead of setting it.
     #[error("invalid engine options: {details}")]

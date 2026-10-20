@@ -13,6 +13,7 @@ mod metadata;
 mod native_bytes;
 mod schema;
 mod script_export;
+pub(crate) mod state;
 pub(crate) mod validation;
 
 pub use base::HostContract;

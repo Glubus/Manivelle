@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `Engine::with_state(&mut state, |engine| ...)` lends a `&mut` the host owns to the host
+  functions that run inside the closure, and `Caller::with_state::<T, _>(|state| ...)` reads
+  it from a handler registered with `function_with_caller`, `async_function_with_caller` or
+  `#[host_fn_with_ctx]`. Any call that can enter a script (`call`, `emit`, `request`,
+  `advance_timers`, `pump`, `load_script`, `reload_changed`) runs inside the scope unchanged,
+  so a host reaches its game world, editor or database without a global or a `Mutex`.
+  The state is taken back when the closure returns or panics.
+- `EngineError::NoState` (a handler asked for the state outside a scope; a script can
+  catch it), `EngineError::StateType { expected }` (the scope lent another type),
+  `EngineError::StateBusy` (a handler up the call stack holds the state) and
+  `EngineError::StateScopeActive` (`with_state` inside `with_state`: scopes do not nest).
+
 ## 0.2.0
 
 ### Changed (breaking)

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use rquickjs::{Ctx, Exception, Object, Result as JsResult, Value as JsValue};
 
+use crate::contract::state::StateSlot;
 use crate::contract::validation::Snapshot;
 use crate::contract::{
     Caller, HostFunctionSignature, HostResolver, JsDecode, JsEncode, js_to_snapshot,
@@ -35,6 +36,9 @@ pub struct NativeContext {
     pub execution: Arc<ExecutionControl>,
     /// The callable class the function is an instance of.
     pub class: HostFnClass,
+    /// The state a running [`Engine::with_state`](crate::Engine::with_state) scope lends
+    /// to the functions that ask for the calling script.
+    pub state: StateSlot,
 }
 
 /// A registered host function handler.
@@ -217,9 +221,10 @@ where
         let script_id = Box::<str>::from(script_id);
         let execution = Arc::clone(&native.execution);
         let class = native.class;
+        let state = native.state.clone();
         let call: HostCall = Box::new(move |ctx, input| {
             execution.start_clock();
-            let caller = Caller::new(&script_id);
+            let caller = Caller::new(&script_id, &state);
             call_validated::<C>(ctx, input, validator.as_deref(), |input| {
                 (self.handler)(&caller, input)
             })
@@ -258,6 +263,7 @@ where
         let promises = promises.clone();
         let execution = Arc::clone(&native.execution);
         let class = native.class;
+        let state = native.state.clone();
         let encode: EncodeReply<C::Output> = match validator.as_ref() {
             Some(validator) if validator.checks_output() => {
                 let validator = Arc::clone(validator);
@@ -272,7 +278,7 @@ where
         };
         let call: HostCall = Box::new(move |ctx, input| {
             execution.start_clock();
-            let caller = Caller::new(&script_id);
+            let caller = Caller::new(&script_id, &state);
             promises.call(
                 ctx,
                 C::NAME,

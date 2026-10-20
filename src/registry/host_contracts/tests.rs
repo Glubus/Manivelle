@@ -477,6 +477,7 @@ mod lock_tests {
                     &NativeContext {
                         execution: Arc::default(),
                         class: HostFnClass::register(&ctx).unwrap(),
+                        state: Default::default(),
                     },
                     None,
                     |_| None,

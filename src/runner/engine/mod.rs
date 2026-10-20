@@ -15,6 +15,7 @@ use rustc_hash::FxBuildHasher;
 
 use crate::compiler::WatchedFiles;
 use crate::config::{EngineOptions, ScriptBuiltins};
+use crate::contract::state::StateSlot;
 use crate::error::EngineError;
 use crate::registry::InMemoryHostContractRegistry;
 use crate::types::{MemoryStats, ScriptId};
@@ -46,6 +47,7 @@ mod invoke;
 mod load;
 mod mount;
 mod prelude;
+mod state;
 
 /// Single-thread Manivelle engine.
 ///
@@ -106,6 +108,8 @@ pub struct Engine {
     pub(crate) permissions: HashMap<ScriptId, Rc<crate::packages::PermissionSet>>,
     /// The connection to the `manivelle` tool that started the program, if any.
     pub(crate) protocol: Option<crate::protocol::Link>,
+    /// What [`Engine::with_state`] lends to the host functions of its scripts.
+    state: StateSlot,
     // Declared last: contexts and persistent values must drop before their runtime.
     rejections: UnhandledRejections,
     runtime: Runtime,
@@ -282,6 +286,7 @@ impl Engine {
             packages: Vec::new(),
             permissions: HashMap::new(),
             protocol: None,
+            state: StateSlot::default(),
             rejections: UnhandledRejections::install(&runtime),
             runtime,
         })

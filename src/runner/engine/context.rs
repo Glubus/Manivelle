@@ -92,6 +92,7 @@ impl Engine {
         let native_context = NativeContext {
             execution: Arc::clone(&self.execution),
             class: self.host_fn_class(ctx)?,
+            state: self.state.clone(),
         };
         let allowed = self.permissions.get(mounting.script_id).map(|set| &**set);
         self.registry
