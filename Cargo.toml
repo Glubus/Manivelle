@@ -1,6 +1,6 @@
 [package]
 name = "manivelle"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.96"
 description = "Embedded TypeScript runtime for Rust with typed host contracts and generated SDKs"
@@ -15,7 +15,7 @@ exclude = [".github", ".cargo", "benches", "docs", "package.json", "package-lock
 features = ["derive", "uuid", "chrono", "glam"]
 
 [workspace]
-members = [".", "manivelle_macros"]
+members = [".", "manivelle_macros", "manivelle_bevy"]
 
 [features]
 default = []

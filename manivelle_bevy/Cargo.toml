@@ -1,0 +1,22 @@
+[package]
+name = "manivelle_bevy"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "Bevy integration for Manivelle: run an Engine inside a Bevy app and hand the World to host functions"
+repository = "https://github.com/Glubus/Manivelle"
+readme = "README.md"
+license = "MIT"
+keywords = ["bevy", "typescript", "scripting", "gamedev", "quickjs"]
+categories = ["game-development"]
+
+[dependencies]
+manivelle = { version = "0.2.1", path = ".." }
+bevy_app = "0.20.0"
+bevy_ecs = "0.20.0"
+bevy_log = "0.20.0"
+bevy_time = "0.20.0"
+
+[dev-dependencies]
+manivelle = { path = "..", features = ["derive"] }
+tempfile = "3.23.0"
