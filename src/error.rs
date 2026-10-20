@@ -37,6 +37,13 @@ pub enum EngineError {
     /// do not nest.
     #[error("`Engine::with_state` is already running: its scopes do not nest")]
     StateScopeActive,
+    /// [`Engine::restore`](crate::Engine::restore) was given the state of a script that is
+    /// already loaded: its code has run, so the state could no longer be its `ctx.hot.data`.
+    #[error("script `{script_id}` is already loaded: restore its state before loading it")]
+    ScriptAlreadyLoaded {
+        /// The loaded script the snapshot holds a state for.
+        script_id: ScriptId,
+    },
     /// [`EngineOptions`](crate::EngineOptions) hold a value that would disable a protection
     /// instead of setting it.
     #[error("invalid engine options: {details}")]

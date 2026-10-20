@@ -16,7 +16,7 @@ use super::super::retained::Retained;
 use super::context::new_context;
 use super::hot_reload::hot_hook_error;
 use super::{
-    Disposed, Engine, EngineScript, HotData, Prelude, ScriptGroup, ScriptHooks, ScriptOrigin,
+    Disposed, Engine, EngineScript, HotSeed, Prelude, ScriptGroup, ScriptHooks, ScriptOrigin,
     ScriptSignals,
 };
 
@@ -58,11 +58,18 @@ impl Engine {
         origin: ScriptOrigin,
         group: Option<&str>,
     ) -> Result<Disposed, EngineError> {
-        let mounted = self
-            .save_hot_data(&id)
-            .and_then(|hot_data| self.mount(&id, &graph, hot_data, group));
+        let mounted = self.save_hot_data(&id).and_then(|saved| {
+            // A script that was not loaded starts from the state the host restored for it,
+            // kept until the load succeeds so that a failed first load can be retried.
+            let seed = match saved {
+                Some(data) => Some(HotSeed::Saved(data)),
+                None => self.restored.get(&id).cloned().map(HotSeed::Restored),
+            };
+            self.mount(&id, &graph, seed, group)
+        });
         match mounted {
             Ok(mounted) => {
+                self.restored.remove(&id);
                 if let Some(group) = group.and_then(|name| self.groups.get_mut(name)) {
                     group.scripts += 1;
                 }
@@ -102,7 +109,7 @@ impl Engine {
         &mut self,
         script_id: &str,
         graph: &RuntimeModuleGraph,
-        hot_data: Option<HotData>,
+        hot_data: Option<HotSeed>,
         group: Option<&str>,
     ) -> Result<Mounted, EngineError> {
         // The guard borrows a handle of its own, not `self`, which the group lookup
@@ -161,7 +168,7 @@ impl Engine {
         ctx: &Ctx<'js>,
         prelude: &Prelude,
         mounting: &Mounting<'_>,
-        hot_data: Option<HotData>,
+        hot_data: Option<HotSeed>,
     ) -> Result<(Retained, ScriptHooks), EngineError> {
         let (env, hooks) = self.build_env(ctx, prelude, mounting, hot_data)?;
         self.expose_env(ctx, prelude, mounting, env)?;

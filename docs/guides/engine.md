@@ -358,6 +358,41 @@ export function add(points: number): number {
   new version's classes is false for it.
 - Dropping the `Engine` runs no `dispose` callback.
 
+### Save State To Disk
+
+The state a script hands over with `ctx.hot.save` can also leave the process.
+`snapshot()` collects it from every loaded script as a `StateSnapshot`, which serializes
+to JSON (or any self-describing serde format: CBOR, MessagePack; not bincode or postcard):
+
+```rust
+let snapshot = engine.snapshot()?;
+std::fs::write("save.json", serde_json::to_string(&snapshot)?)?;
+
+// Next run: restore first, then load the scripts.
+let mut engine = Engine::new(&EngineOptions::default())?;
+engine.restore(serde_json::from_str(&std::fs::read_to_string("save.json")?)?)?;
+engine.load_script("game", source)?;
+```
+
+The scripts need nothing new: a script that reads `ctx.hot.data` and registers
+`ctx.hot.save` survives a reload and a restart the same way.
+
+- A script with no `save`, or whose `save` returns `undefined`, is not in the snapshot.
+- The state must be plain data: `null`, booleans, numbers, strings, arrays and plain
+  objects. `snapshot` fails, naming the script and the place (`state.players[0].seen`),
+  for a function, a symbol, a BigInt, a `Map`, a `Set`, a `Date`, a class instance or a
+  cycle, instead of saving it as `{}`. An `undefined` inside an object or array becomes
+  `null`. Keep a `Map` as an array of pairs and a date as a number or a string.
+- `snapshot` runs every `save`, so they must only read state, as for a reload. It stops
+  at the first one that throws and makes no snapshot.
+- `restore` keeps the states for scripts that are not loaded yet, and the first
+  successful load of each uses its state once. A load that fails leaves it for the next
+  try. It fails with `EngineError::ScriptAlreadyLoaded` for a script that is already
+  loaded, because that script's code has run. A state for a script that never loads is
+  never used.
+- The format is yours to version: a script that changes the shape of its state reads an
+  old `ctx.hot.data` the way it would after a reload.
+
 ## Execution Budget
 
 Every load, call, emit, request, deferred call or request, `pump`, and

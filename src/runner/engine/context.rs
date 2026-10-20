@@ -17,7 +17,7 @@ use super::super::retained::Retained;
 use super::super::timers::timer_hooks;
 use super::super::web;
 use super::mount::Mounting;
-use super::{Engine, HotData, Prelude, ScriptHooks};
+use super::{Engine, HotSeed, Prelude, ScriptHooks};
 
 impl Engine {
     /// Builds the environment of a script: its host functions, bound to its id, the hooks
@@ -28,7 +28,7 @@ impl Engine {
         ctx: &Ctx<'js>,
         prelude: &Prelude,
         mounting: &Mounting<'_>,
-        hot_data: Option<HotData>,
+        hot_data: Option<HotSeed>,
     ) -> Result<(Object<'js>, ScriptHooks), EngineError> {
         let hooks = self.env_hooks(ctx, mounting, hot_data)?;
         let env = prelude
@@ -48,7 +48,7 @@ impl Engine {
         &self,
         ctx: &Ctx<'js>,
         mounting: &Mounting<'_>,
-        hot_data: Option<HotData>,
+        hot_data: Option<HotSeed>,
     ) -> Result<Object<'js>, EngineError> {
         let signals = mounting.signals;
         let timers = timer_hooks(
@@ -77,7 +77,7 @@ impl Engine {
         set("now", timers.now.into_value())?;
         set("schedule", timers.schedule.into_value())?;
         if let Some(hot_data) = hot_data {
-            set("hotData", hot_data.restore(ctx).map_err(js_error)?)?;
+            set("hotData", hot_data.restore(ctx)?)?;
         }
         Ok(hooks)
     }

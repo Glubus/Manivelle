@@ -1,11 +1,14 @@
 //! Reloading projects whose files changed, unloading scripts, and handing the `ctx.hot`
 //! state from one version of a script to the next.
 
+use std::collections::BTreeMap;
+
 use rquickjs::{CatchResultExt, Ctx, Function, Persistent, Value as JsValue};
 
 use crate::compiler::WatchedFiles;
+use crate::contract::js_to_json;
 use crate::error::EngineError;
-use crate::types::ReloadReport;
+use crate::types::{ReloadReport, ScriptId, StateSnapshot};
 
 use super::super::errors::{caught_js_error, js_error};
 use super::{Disposed, Engine, EngineScript, HotData, script_not_found};
@@ -99,6 +102,68 @@ impl Engine {
         })
     }
 
+    /// Runs the `ctx.hot.save` callback of every loaded script and collects what they
+    /// return, as data a host can write to disk and later hand to [`Engine::restore`].
+    ///
+    /// A script that registered no `save`, or whose `save` returns `undefined`, is left
+    /// out. Like at a reload, `save` must not have side effects. Nothing is made when
+    /// a `save` throws or returns something JSON would lose (a function, a `Map`, a `Set`,
+    /// a `Date`, a class instance, a cycle): the error names the script and the place. See
+    /// [`StateSnapshot`] for what counts as plain data.
+    pub fn snapshot(&self) -> Result<StateSnapshot, EngineError> {
+        let mut states = BTreeMap::new();
+        for (id, script) in &self.scripts {
+            let saved = self.run_in_script(script, |ctx| {
+                let state = call_hot_hook(&ctx, &script.hooks.hot_save)?;
+                if state.is_undefined() {
+                    return Ok(None);
+                }
+                reject_non_data(&ctx, &state)?;
+                js_to_json(&ctx, state)
+                    .map(Some)
+                    .map_err(|error| EngineError::Execution {
+                        details: error.to_string(),
+                    })
+            });
+            let saved = saved.map_err(|error| {
+                hot_hook_error(
+                    error,
+                    &format!("`ctx.hot.save` of script `{id}` failed; no snapshot was made"),
+                )
+            })?;
+            if let Some(state) = saved {
+                states.insert(id.to_string(), state);
+            }
+        }
+        Ok(StateSnapshot(states))
+    }
+
+    /// Keeps the states of `snapshot` for the scripts that are not loaded yet: each one's
+    /// first load starts with its state as `ctx.hot.data`, as if a previous version had
+    /// saved it. A state is used once, by the first load that succeeds; a failed load
+    /// leaves it for the next try. A state for a script that never loads stays unused.
+    ///
+    /// Call it before loading the scripts. A snapshot that holds a script already loaded
+    /// fails with [`EngineError::ScriptAlreadyLoaded`], and none of its states is kept.
+    pub fn restore(&mut self, snapshot: StateSnapshot) -> Result<(), EngineError> {
+        if let Some(id) = snapshot
+            .0
+            .keys()
+            .find(|id| self.scripts.contains_key(id.as_str()))
+        {
+            return Err(EngineError::ScriptAlreadyLoaded {
+                script_id: ScriptId::from(id.as_str()),
+            });
+        }
+        self.restored.extend(
+            snapshot
+                .0
+                .into_iter()
+                .map(|(id, state)| (ScriptId::from(id), state)),
+        );
+        Ok(())
+    }
+
     /// Runs the loaded version's `ctx.hot.save` callback, when the script is loaded;
     /// its result becomes the next version's `ctx.hot.data`.
     pub(super) fn save_hot_data(&self, id: &str) -> Result<Option<HotData>, EngineError> {
@@ -168,6 +233,60 @@ impl Engine {
             .map(|project| project.entry_path.as_path())
             .collect();
         self.transpiler.retain_used(&modules, &projects);
+    }
+}
+
+/// Looks for the first value of a saved state that JSON cannot hold faithfully: a function,
+/// a symbol, a BigInt, a `Map`, a `Set`, a `Date`, a class instance, or an object that
+/// contains itself. The JSON conversion would turn a function, a `Map`, a `Set` or a `Date`
+/// into `{}` without a word, and a snapshot that loses data silently is worse than none.
+/// Evaluates to the place of the first one, or `undefined` for plain data.
+const FIND_NON_DATA: &str = r#"(value) => {
+  const ancestors = [];
+  const walk = (v, path) => {
+    if (v === null || v === undefined) return undefined;
+    const kind = typeof v;
+    if (kind === "boolean" || kind === "string" || kind === "number") return undefined;
+    if (kind !== "object") return `${path}: a ${kind}`;
+    if (ancestors.includes(v)) return `${path}: a reference to itself`;
+    const array = Array.isArray(v);
+    const proto = Object.getPrototypeOf(v);
+    if (!array && proto !== Object.prototype && proto !== null) {
+      return `${path}: ${v.constructor?.name ?? "an object"} is not plain data`;
+    }
+    ancestors.push(v);
+    let found;
+    if (array) {
+      for (let i = 0; i < v.length && found === undefined; i++) {
+        found = walk(v[i], `${path}[${i}]`);
+      }
+    } else {
+      for (const key of Object.keys(v)) {
+        found = walk(v[key], `${path}.${key}`);
+        if (found !== undefined) break;
+      }
+    }
+    ancestors.pop();
+    return found;
+  };
+  return walk(value, "state");
+}"#;
+
+/// Fails, naming where, when `state` holds something JSON cannot carry faithfully.
+fn reject_non_data<'js>(ctx: &Ctx<'js>, state: &JsValue<'js>) -> Result<(), EngineError> {
+    let find = ctx
+        .eval::<Function<'js>, _>(FIND_NON_DATA)
+        .catch(ctx)
+        .map_err(caught_js_error)?;
+    let place = find
+        .call::<_, Option<String>>((state.clone(),))
+        .catch(ctx)
+        .map_err(caught_js_error)?;
+    match place {
+        Some(place) => Err(EngineError::Execution {
+            details: format!("the saved state is not plain data at {place}"),
+        }),
+        None => Ok(()),
     }
 }
 

@@ -15,6 +15,7 @@ use rustc_hash::FxBuildHasher;
 
 use crate::compiler::WatchedFiles;
 use crate::config::{EngineOptions, ScriptBuiltins};
+use crate::contract::json_to_js;
 use crate::contract::state::StateSlot;
 use crate::error::EngineError;
 use crate::registry::InMemoryHostContractRegistry;
@@ -110,6 +111,8 @@ pub struct Engine {
     pub(crate) protocol: Option<crate::protocol::Link>,
     /// What [`Engine::with_state`] lends to the host functions of its scripts.
     state: StateSlot,
+    /// State the host restored for scripts not loaded yet, until each one loads.
+    restored: HashMap<ScriptId, serde_json::Value>,
     // Declared last: contexts and persistent values must drop before their runtime.
     rejections: UnhandledRejections,
     runtime: Runtime,
@@ -233,6 +236,26 @@ impl ScriptSignals {
 /// version's `ctx.hot.data`. Contexts share the runtime, so it is the object itself.
 type HotData = Persistent<JsValue<'static>>;
 
+/// What a script's `ctx.hot.data` starts as: the object a replaced version saved, or the
+/// state the host restored for a script that was not loaded.
+enum HotSeed {
+    Saved(HotData),
+    Restored(serde_json::Value),
+}
+
+impl HotSeed {
+    fn restore<'js>(self, ctx: &Ctx<'js>) -> Result<JsValue<'js>, EngineError> {
+        match self {
+            Self::Saved(data) => data.restore(ctx).map_err(js_error),
+            Self::Restored(state) => {
+                json_to_js(ctx, &state).map_err(|error| EngineError::Execution {
+                    details: format!("the restored state cannot become `ctx.hot.data`: {error}"),
+                })
+            }
+        }
+    }
+}
+
 /// Outcome of retiring a replaced or unloaded version: its `ctx.hot.dispose` error.
 type Disposed = Result<(), EngineError>;
 
@@ -287,6 +310,7 @@ impl Engine {
             permissions: HashMap::new(),
             protocol: None,
             state: StateSlot::default(),
+            restored: HashMap::new(),
             rejections: UnhandledRejections::install(&runtime),
             runtime,
         })

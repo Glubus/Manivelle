@@ -69,4 +69,4 @@ pub use sdk_files::{
     DESCRIPTORS_FILE, EXPORT_SDK_ENV, GeneratedSdkFiles, SdkFileNames, export_sdk_if_requested,
     write_host_sdk_files, write_host_sdk_files_with_names,
 };
-pub use types::{Emission, MemoryStats, ReloadReport, ScriptId};
+pub use types::{Emission, MemoryStats, ReloadReport, ScriptId, StateSnapshot};

@@ -1,6 +1,7 @@
 //! Shared public types.
 
 use std::borrow::Borrow;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -125,4 +126,41 @@ pub struct Emission {
     /// An error no script owns: a Promise job queued by a handler that threw later, an
     /// unhandled rejection, or the host's interrupt.
     pub unattributed: Option<EngineError>,
+}
+
+/// The state scripts keep through `ctx.hot.save`, as plain data a host can write to disk.
+///
+/// [`Engine::snapshot`](crate::Engine::snapshot) makes one and
+/// [`Engine::restore`](crate::Engine::restore) hands one to the scripts about to load. It
+/// serializes as a JSON object from script id to saved value, in id order, so the same state
+/// always writes the same bytes.
+///
+/// A saved state must be plain data: `null`, booleans, numbers, strings, arrays and plain
+/// objects. [`Engine::snapshot`](crate::Engine::snapshot) refuses anything JSON would lose
+/// (a function, a symbol, a BigInt, a `Map`, a `Set`, a `Date`, a class instance, a cycle)
+/// and says where. An `undefined` inside an object or array becomes `null`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct StateSnapshot(pub(crate) BTreeMap<String, serde_json::Value>);
+
+impl StateSnapshot {
+    /// What the script saved, or `None` when the snapshot holds nothing for it.
+    pub fn get(&self, script_id: &str) -> Option<&serde_json::Value> {
+        self.0.get(script_id)
+    }
+
+    /// The saved states with their script ids, in id order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &serde_json::Value)> {
+        self.0.iter().map(|(id, state)| (id.as_str(), state))
+    }
+
+    /// How many scripts saved a state.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether no script saved a state.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }

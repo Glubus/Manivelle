@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1
 
 ### Added
 
@@ -15,6 +15,14 @@
   catch it), `EngineError::StateType { expected }` (the scope lent another type),
   `EngineError::StateBusy` (a handler up the call stack holds the state) and
   `EngineError::StateScopeActive` (`with_state` inside `with_state`: scopes do not nest).
+- `Engine::snapshot()` runs the `ctx.hot.save` callback of every loaded script and returns a
+  `StateSnapshot`: the saved states as plain data, serializable (it is a JSON object from
+  script id to state, in id order). `Engine::restore(snapshot)` hands one back, before the
+  scripts load: the first load of each script starts with its state as `ctx.hot.data`.
+  A script with no `save`, or whose `save` returns `undefined`, is left out. `snapshot`
+  refuses what JSON would lose (a function, a `Map`, a `Set`, a `Date`, a class instance, a
+  cycle) and names the script and the place. `restore` fails with the new
+  `EngineError::ScriptAlreadyLoaded { script_id }` for a script that is already loaded.
 
 ## 0.2.0
 
