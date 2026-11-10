@@ -3,7 +3,9 @@ use std::path::Path;
 use std::process::Command;
 
 use super::InMemoryHostContractRegistry;
-use super::declarations::{ENV_MODULE_TYPE, HOT_CONTEXT_TYPE, render_typescript_declarations};
+use super::declarations::{
+    ENV_MODULE_TYPE, HOT_CONTEXT_TYPE, embedded_text, render_typescript_declarations,
+};
 use super::sdk::render_typescript_sdk;
 use crate::contract::{
     HostCallback, HostCallbackDescriptor, HostContext, HostContract, HostContractAbi,
@@ -400,8 +402,8 @@ fn ctx_declaration() -> String {
     let ctx_type = "{ readonly hot: HostHotContext }";
     format!(
         "{}\n\ndeclare const ctx: {ctx_type};\n\n{}\n",
-        HOT_CONTEXT_TYPE.trim(),
-        ENV_MODULE_TYPE.trim().replace("__CTX__", ctx_type)
+        embedded_text(HOT_CONTEXT_TYPE),
+        embedded_text(ENV_MODULE_TYPE).replace("__CTX__", ctx_type)
     )
 }
 

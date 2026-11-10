@@ -1,0 +1,4 @@
+# Files embedded with `include_str!` or compared byte for byte by a test keep LF in every
+# checkout, whatever `core.autocrlf` says.
+/assets/** text eol=lf
+/examples/game_loop/** text eol=lf

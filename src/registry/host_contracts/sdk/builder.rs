@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use crate::contract::{Schema, TsType};
 
 use super::super::declarations::{
-    DescriptorSink, EVENT_CONTEXT_TYPE, HOT_CONTEXT_TYPE, SchemaEmitter, function_output_type,
-    render_doc_comment, render_event_map, render_script_export, render_script_exports_type,
-    schema_type_name,
+    DescriptorSink, EVENT_CONTEXT_TYPE, HOT_CONTEXT_TYPE, SchemaEmitter, embedded_text,
+    function_output_type, render_doc_comment, render_event_map, render_script_export,
+    render_script_exports_type, schema_type_name,
 };
 use super::super::names::binding_names;
 use super::super::tree::ObjectTree;
@@ -164,8 +164,7 @@ impl SdkBuilder {
     }
 
     fn host_helpers(&self) -> Option<String> {
-        self.has_host_functions
-            .then(|| HOST_HELPERS.trim().to_owned())
+        self.has_host_functions.then(|| embedded_text(HOST_HELPERS))
     }
 
     fn host_event_types(&self) -> Option<String> {
@@ -215,7 +214,7 @@ impl SdkBuilder {
     }
 
     fn event_helpers(&self) -> Option<String> {
-        (!self.host_events.is_empty()).then(|| EVENT_CONTEXT_TYPE.trim().to_owned())
+        (!self.host_events.is_empty()).then(|| embedded_text(EVENT_CONTEXT_TYPE))
     }
 
     /// The `ctx` global: `ctx.hot` always, `ctx.on` and `ctx.off` once there are events
@@ -228,7 +227,7 @@ impl SdkBuilder {
         };
         format!(
             "{}\n\ntype HostContext = {events}{{ readonly hot: HostHotContext }};\n\nconst __ctx = (globalThis as unknown as {{ ctx: HostContext }}).ctx;\n\nexport const ctx = __ctx;",
-            HOT_CONTEXT_TYPE.trim()
+            embedded_text(HOT_CONTEXT_TYPE)
         )
     }
 }

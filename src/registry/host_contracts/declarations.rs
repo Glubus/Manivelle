@@ -19,6 +19,14 @@ pub(super) const EVENT_CONTEXT_TYPE: &str = include_str!("../../../assets/event_
 /// The `manivelle:env` module, whose `ctx` has the type `__CTX__`.
 pub(super) const ENV_MODULE_TYPE: &str = include_str!("../../../assets/env_module.ts");
 
+/// An embedded `assets/` file as it goes into generated output: trimmed, with `\n` line
+/// endings. `include_str!` keeps the bytes of the file, so a checkout that converts line
+/// endings (git's `core.autocrlf` on Windows) would otherwise put `\r\n` among the `\n` of
+/// the rest of the output.
+pub(super) fn embedded_text(source: &str) -> String {
+    source.trim().replace("\r\n", "\n")
+}
+
 pub(crate) fn render_typescript_declarations(descriptors: &[HostContractDescriptor]) -> String {
     let mut declarations = DeclarationBuffer::default();
 
@@ -250,15 +258,15 @@ impl DeclarationBuffer {
         let events = if self.host_events.is_empty() {
             ""
         } else {
-            self.sections.push(EVENT_CONTEXT_TYPE.trim().to_owned());
+            self.sections.push(embedded_text(EVENT_CONTEXT_TYPE));
             "HostEventContext & "
         };
-        self.sections.push(HOT_CONTEXT_TYPE.trim().to_owned());
+        self.sections.push(embedded_text(HOT_CONTEXT_TYPE));
         let ctx_type = format!("{events}{{ readonly hot: HostHotContext }}");
         self.sections
             .push(format!("declare const ctx: {ctx_type};"));
         self.sections
-            .push(ENV_MODULE_TYPE.trim().replace("__CTX__", &ctx_type));
+            .push(embedded_text(ENV_MODULE_TYPE).replace("__CTX__", &ctx_type));
     }
 }
 
