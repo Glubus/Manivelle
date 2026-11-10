@@ -14,6 +14,7 @@ use rustc_hash::FxHashMap;
 
 use crate::contract::HostResolver;
 use crate::error::EngineError;
+use crate::runner::host_fn;
 use crate::runner::reply_inbox::{EncodeReply, ReplyInbox, Settlement};
 
 /// The async host calls of one script version, from start to settlement.
@@ -83,14 +84,16 @@ impl HostPromises {
     ///
     /// # Errors
     ///
-    /// A failure to call a Promise function; the answers after it stay queued for the
-    /// next poll.
+    /// A failure to call a Promise function, or a panic in a reply's conversion (parked
+    /// for the end of the operation, see [`host_fn::guarded`]); the answers after it stay
+    /// queued for the next poll.
     pub(crate) fn poll(&self, ctx: &Ctx<'_>) -> JsResult<usize> {
         let mut settled = 0;
         while let Some((id, settlement)) = self.scope.inbox.pop() {
             let pending = self.scope.pending.borrow_mut().remove(&id);
             if let Some(pending) = pending {
-                pending.settle(ctx, settlement)?;
+                // The reply converts its own value, which is host code that may panic.
+                host_fn::guarded(ctx, || pending.settle(ctx, settlement))??;
                 settled += 1;
             }
         }
@@ -182,10 +185,24 @@ impl Scope {
 }
 
 impl PendingPromise {
+    /// Settles the Promise, or rejects it when `resolve` fails, so that it never waits for
+    /// an answer already taken off the queue. The error returned is the one that failed.
     fn settle(self, ctx: &Ctx<'_>, settlement: Settlement) -> JsResult<()> {
+        let reject = self.reject.restore(ctx)?;
         let reason = match settlement {
             Settlement::Resolved(reply) => match reply.into_js(ctx) {
-                Ok(value) => return self.resolve.restore(ctx)?.call::<_, ()>((value,)),
+                Ok(value) => {
+                    let delivered = (self.resolve.restore(ctx))
+                        .and_then(|resolve| resolve.call::<_, ()>((value,)));
+                    let Err(error) = delivered else {
+                        return Ok(());
+                    };
+                    // Taken off the pending exception, which the rejection must not run under.
+                    let thrown = matches!(error, JsError::Exception).then(|| ctx.catch());
+                    reject
+                        .call::<_, ()>((error_value(ctx, "failed to deliver the host reply")?,))?;
+                    return Err(thrown.map_or(error, |thrown| ctx.throw(thrown)));
+                }
                 Err(error) => rejection_reason(ctx, error)?,
             },
             Settlement::Rejected(message) => error_value(ctx, &message)?,
@@ -197,7 +214,7 @@ impl PendingPromise {
                 ),
             )?,
         };
-        self.reject.restore(ctx)?.call::<_, ()>((reason,))
+        reject.call::<_, ()>((reason,))
     }
 }
 
@@ -218,12 +235,14 @@ fn error_value<'js>(ctx: &Ctx<'js>, message: &str) -> JsResult<JsValue<'js>> {
 mod tests {
     use std::sync::Arc;
 
-    use rquickjs::{Context, Ctx, Promise, Result as JsResult, Runtime};
+    use rquickjs::{
+        Context, Ctx, Error as JsError, Function, Persistent, Promise, Result as JsResult, Runtime,
+    };
 
-    use super::{HostPromises, WeakHostPromises};
+    use super::{HostPromises, PendingPromise, WeakHostPromises};
     use crate::contract::HostResolver;
     use crate::error::EngineError;
-    use crate::runner::reply_inbox::{EncodeReply, ReplyValue};
+    use crate::runner::reply_inbox::{EncodeReply, ReplyValue, Settlement};
 
     struct Number(f64);
 
@@ -333,6 +352,66 @@ mod tests {
             assert_eq!(promises.poll(&ctx).expect("poll"), 2);
             assert!(rejection_message(&ctx, &rejected).contains("no score"));
             assert!(rejection_message(&ctx, &dropped).contains("dropped its resolver"));
+        });
+    }
+
+    /// A reply that cannot become a JavaScript value.
+    struct Unconvertible;
+
+    impl ReplyValue for Unconvertible {
+        fn into_js<'js>(self: Box<Self>, _ctx: &Ctx<'js>) -> JsResult<rquickjs::Value<'js>> {
+            Err(JsError::new_from_js_message(
+                "host",
+                "value",
+                "cannot convert",
+            ))
+        }
+    }
+
+    #[test]
+    fn a_reply_that_cannot_be_converted_rejects_the_promise() {
+        with_context(|ctx| {
+            let (promise, resolve, reject) = Promise::new(&ctx).expect("promise");
+            let pending = PendingPromise {
+                contract: "test.score",
+                resolve: Persistent::save(&ctx, resolve),
+                reject: Persistent::save(&ctx, reject),
+            };
+
+            pending
+                .settle(&ctx, Settlement::Resolved(Box::new(Unconvertible)))
+                .expect("the failed conversion is the Promise's rejection, not an error");
+
+            assert!(rejection_message(&ctx, &promise).contains("cannot convert"));
+        });
+    }
+
+    #[test]
+    fn a_reply_that_cannot_be_delivered_rejects_the_promise_and_reports_the_failure() {
+        with_context(|ctx| {
+            let (promise, _resolve, reject) = Promise::new(&ctx).expect("promise");
+            let failing: Function<'_> = ctx
+                .eval("(() => { throw new Error('resolve failed'); })")
+                .expect("function");
+            let pending = PendingPromise {
+                contract: "test.score",
+                resolve: Persistent::save(&ctx, failing),
+                reject: Persistent::save(&ctx, reject),
+            };
+
+            let outcome = pending.settle(&ctx, Settlement::Resolved(Box::new(Number(1.0))));
+
+            assert!(matches!(outcome, Err(JsError::Exception)), "{outcome:?}");
+            let failure = ctx.catch();
+            let failure = failure.as_object().expect("the error that failed");
+            assert_eq!(
+                failure.get::<_, String>("message").expect("message"),
+                "resolve failed"
+            );
+            assert_eq!(
+                rejection_message(&ctx, &promise),
+                "failed to deliver the host reply"
+            );
         });
     }
 

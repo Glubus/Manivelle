@@ -4,9 +4,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use rquickjs::{Object, Result as JsResult};
 
-use super::bindings::{ContractValidator, FunctionBindingStore, NativeContext};
+use super::bindings::{ContractValidator, FunctionBindingStore, NativeContext, duplicate_contract};
 use super::declarations::render_typescript_declarations;
 use super::import_modules::{HostModuleStyle, render_host_import_modules};
+use super::names::is_binding_name;
 use super::sdk::render_typescript_sdk;
 use crate::config::{ContractValidation, UnknownFieldValidation};
 use crate::contract::validation::{
@@ -66,6 +67,11 @@ impl InMemoryHostContractRegistry {
     /// The schemas come from `TsSchema` of the input and output types. Calls from
     /// scripts convert the input and output natively through [`JsDecode`] and
     /// [`JsEncode`].
+    ///
+    /// Every function registration refuses, with [`EngineError::InvalidOptions`], a name
+    /// with a dot-separated segment that is a reserved word (`demo.function`) or not an
+    /// identifier, because the generated TypeScript spells each segment as a namespace
+    /// or function name. A name already taken is [`EngineError::DuplicateContract`].
     pub fn function<T>(&self) -> Result<&Self, EngineError>
     where
         T: HostFunction + 'static,
@@ -244,8 +250,9 @@ impl InMemoryHostContractRegistry {
         };
         // Under a key of its own, so that an export named like a host contract replaces
         // neither. Declaring the same export again replaces its description.
-        self.lock_descriptors()?
-            .insert(format!("export {}", E::NAME), descriptor);
+        let mut guard = self.lock_descriptors()?;
+        refuse_conflicting_schemas(&descriptor, guard.values())?;
+        guard.insert(format!("export {}", E::NAME), descriptor);
         Ok(self)
     }
 
@@ -350,17 +357,26 @@ impl InMemoryHostContractRegistry {
 
     /// Registers `descriptor` under its name, and `bind` installs the function it describes.
     /// Both happen under one lock, so a name already taken fails with nothing changed.
+    /// A function whose name has a segment that is a reserved word, or no identifier, is
+    /// refused: the declarations spell each segment as a namespace or function name.
     fn insert_descriptor(
         &self,
         descriptor: HostContractDescriptor,
         bind: impl FnOnce(&FunctionBindingStore) -> Result<(), EngineError>,
     ) -> Result<(), EngineError> {
-        let mut guard = self.lock_descriptors()?;
-        if guard.contains_key(&descriptor.name) {
-            return Err(EngineError::DuplicateContract {
-                name: descriptor.name.clone(),
+        if descriptor.function.is_some() && !descriptor.name.split('.').all(is_binding_name) {
+            return Err(EngineError::InvalidOptions {
+                details: format!(
+                    "host function contract `{}` has a name segment that is a reserved word or not an identifier, so no TypeScript declaration can spell it",
+                    descriptor.name
+                ),
             });
         }
+        let mut guard = self.lock_descriptors()?;
+        if guard.contains_key(&descriptor.name) {
+            return Err(duplicate_contract(&descriptor.name));
+        }
+        refuse_conflicting_schemas(&descriptor, guard.values())?;
         bind(&self.function_bindings)?;
         guard.insert(descriptor.name.clone(), descriptor);
         Ok(())
@@ -427,6 +443,75 @@ impl InMemoryHostContractRegistry {
 fn validation_options(unknown_field_validation: UnknownFieldValidation) -> SchemaValidationOptions {
     SchemaValidationOptions {
         reject_unknown_fields: unknown_field_validation.rejects_unknown_fields(),
+    }
+}
+
+/// Refuses `descriptor` when two of its named schemas, or one of them and one of a
+/// `registered` descriptor, share a name but not a shape: a type reference resolves by
+/// name, and the declarations hold one `type` per name.
+fn refuse_conflicting_schemas<'a>(
+    descriptor: &HostContractDescriptor,
+    registered: impl Iterator<Item = &'a HostContractDescriptor>,
+) -> Result<(), EngineError> {
+    let mut new = Vec::new();
+    descriptor_schemas(descriptor, &mut new);
+    let clash = |name: &str, other: &str| EngineError::InvalidOptions {
+        details: format!(
+            "host contracts `{other}` and `{}` declare different types both named `{name}`",
+            descriptor.name
+        ),
+    };
+    for (index, schema) in new.iter().enumerate() {
+        let Some(name) = schema.declared_name() else {
+            continue;
+        };
+        if new[..index]
+            .iter()
+            .any(|earlier| earlier.declared_name() == Some(name) && earlier != schema)
+        {
+            return Err(clash(name, &descriptor.name));
+        }
+    }
+    for other in registered {
+        let mut known = Vec::new();
+        descriptor_schemas(other, &mut known);
+        for schema in &new {
+            let Some(name) = schema.declared_name() else {
+                continue;
+            };
+            if known
+                .iter()
+                .any(|k| k.declared_name() == Some(name) && k != schema)
+            {
+                return Err(clash(name, &other.name));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every named schema `descriptor` uses, dependencies included.
+fn descriptor_schemas<'a>(descriptor: &'a HostContractDescriptor, out: &mut Vec<&'a Schema>) {
+    let roots: Vec<&Schema> = match &descriptor.abi {
+        HostContractAbi::Function { input, output, .. } => vec![input, output],
+        HostContractAbi::Callback { payload, reply } => {
+            std::iter::once(payload).chain(reply.as_ref()).collect()
+        }
+        HostContractAbi::Context { schema } => vec![schema],
+        HostContractAbi::Export { args, output } => args.iter().chain([output]).collect(),
+        HostContractAbi::Unknown => Vec::new(),
+    };
+    for root in roots {
+        collect_named(root, out);
+    }
+}
+
+fn collect_named<'a>(schema: &'a Schema, out: &mut Vec<&'a Schema>) {
+    if schema.declared_name().is_some() {
+        out.push(schema);
+    }
+    for dependency in &schema.dependencies {
+        collect_named(dependency, out);
     }
 }
 

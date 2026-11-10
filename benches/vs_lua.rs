@@ -74,7 +74,6 @@ export function loop(n: number): number { let s = 0; for (let i = 0; i < n; i++)
 export function fib(n: number): number { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
 let last = 0;
 score.onUpdate((event: { combo: number }) => { last = event.combo; });
-export function readLast(): number { return last; }
 "#;
 
 fn payload() -> Value {
@@ -167,14 +166,9 @@ fn bench_call_scalar(c: &mut Criterion, backends: &Backends) {
         b.iter(|| black_box(sum.call::<f64>((20.0, 22.0)).expect("lua sum")));
     });
     group.bench_function("quickjs_raw", |b| {
-        b.iter(|| {
-            qjs.context.with(|ctx| {
-                black_box(
-                    js_function(&ctx, "sum")
-                        .call::<_, f64>((20.0, 22.0))
-                        .expect("quickjs sum"),
-                )
-            })
+        qjs.context.with(|ctx| {
+            let sum = js_function(&ctx, "sum");
+            b.iter(|| black_box(sum.call::<_, f64>((20.0, 22.0)).expect("quickjs sum")))
         });
     });
     group.bench_function("manivelle_engine", |b| {
@@ -203,10 +197,11 @@ fn bench_call_object(c: &mut Criterion, backends: &Backends) {
         });
     });
     group.bench_function("quickjs_raw", |b| {
-        b.iter(|| {
-            qjs.context.with(|ctx| {
+        qjs.context.with(|ctx| {
+            let process = js_function(&ctx, "process");
+            b.iter(|| {
                 let arg = json_to_js(&ctx, &input).expect("quickjs to js");
-                let result = js_function(&ctx, "process")
+                let result = process
                     .call::<_, JsValue<'_>>((arg,))
                     .expect("quickjs process");
                 black_box(js_to_json(&result).expect("quickjs to json"))
@@ -234,14 +229,9 @@ fn bench_host_calls(c: &mut Criterion, backends: &Backends) {
         b.iter(|| black_box(run.call::<f64>(HOST_CALLS).expect("lua loop")));
     });
     group.bench_function("quickjs_raw", |b| {
-        b.iter(|| {
-            qjs.context.with(|ctx| {
-                black_box(
-                    js_function(&ctx, "loop")
-                        .call::<_, f64>((HOST_CALLS,))
-                        .expect("quickjs loop"),
-                )
-            })
+        qjs.context.with(|ctx| {
+            let run = js_function(&ctx, "loop");
+            b.iter(|| black_box(run.call::<_, f64>((HOST_CALLS,)).expect("quickjs loop")))
         });
     });
     group.bench_function("manivelle_engine", |b| {
@@ -265,14 +255,9 @@ fn bench_compute(c: &mut Criterion, backends: &Backends) {
         b.iter(|| black_box(fib.call::<f64>(FIB_N).expect("lua fib")));
     });
     group.bench_function("quickjs_raw", |b| {
-        b.iter(|| {
-            qjs.context.with(|ctx| {
-                black_box(
-                    js_function(&ctx, "fib")
-                        .call::<_, f64>((FIB_N,))
-                        .expect("quickjs fib"),
-                )
-            })
+        qjs.context.with(|ctx| {
+            let fib = js_function(&ctx, "fib");
+            b.iter(|| black_box(fib.call::<_, f64>((FIB_N,)).expect("quickjs fib")))
         });
     });
     group.bench_function("manivelle_engine", |b| {
@@ -300,12 +285,11 @@ fn bench_emit(c: &mut Criterion, backends: &Backends) {
         });
     });
     group.bench_function("quickjs_raw", |b| {
-        b.iter(|| {
-            qjs.context.with(|ctx| {
+        qjs.context.with(|ctx| {
+            let handler = js_function(&ctx, "onScore");
+            b.iter(|| {
                 let arg = json_to_js(&ctx, &event).expect("quickjs to js");
-                js_function(&ctx, "onScore")
-                    .call::<_, ()>((arg,))
-                    .expect("quickjs handler");
+                handler.call::<_, ()>((arg,)).expect("quickjs handler");
             })
         });
     });
@@ -320,11 +304,11 @@ fn bench_reload(c: &mut Criterion, qjs: &QuickJsBench) {
     let variants = [TS_SOURCE.to_owned(), format!("{TS_SOURCE}\n// variant b\n")];
     let mut group = c.benchmark_group("reload_script_warm");
     configure(&mut group);
-    group.bench_function("mlua", |b| {
+    group.bench_function("mlua_exec_warm", |b| {
         let lua = LuaBench::new();
         b.iter(|| lua.lua.load(LUA_SOURCE).exec().expect("lua reload"));
     });
-    group.bench_function("quickjs_raw", |b| {
+    group.bench_function("quickjs_new_context_eval", |b| {
         b.iter(|| {
             let context = Context::full(&qjs.runtime).expect("create context");
             context.with(|ctx| {
@@ -338,7 +322,7 @@ fn bench_reload(c: &mut Criterion, qjs: &QuickJsBench) {
             black_box(context)
         });
     });
-    group.bench_function("manivelle_engine", |b| {
+    group.bench_function("manivelle_transpile_load", |b| {
         let mut next = 0usize;
         b.iter(|| {
             next ^= 1;

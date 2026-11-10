@@ -132,7 +132,7 @@ impl<R: JsDecode + 'static> RequestResults<R> {
         let id = script_id.clone();
         let completed = Rc::clone(state);
         let cancelled = state.borrow().handle.clone();
-        ScriptTask::watch(
+        let watched = ScriptTask::watch(
             ctx,
             value,
             Box::new(move |ctx, outcome| {
@@ -142,7 +142,18 @@ impl<R: JsDecode + 'static> RequestResults<R> {
                     .record(slot, reply.map(|reply| (id, reply)));
             }),
             Box::new(move || cancelled.complete(Err(EngineError::Cancelled))),
-        )
+        );
+        if let Err(error) = &watched {
+            // No task exists to fill the slot, and an empty one keeps the request open for
+            // good. `watch` only fails with `Execution`, which the caller also reports.
+            let details = match error {
+                EngineError::Execution { details } => details.clone(),
+                other => other.to_string(),
+            };
+            let failure = EngineError::Execution { details };
+            state.borrow_mut().record(slot, Err(failure));
+        }
+        watched
     }
 
     pub(super) fn fail(&mut self, error: EngineError) {
@@ -229,12 +240,14 @@ impl ScriptTask {
         // promise still reports its rejection to the pending Rust handle.
         promise
             .catch()
-            .map_err(js_error)?
+            .catch(ctx)
+            .map_err(caught_js_error)?
             .call::<_, JsValue<'js>>((
                 This(promise.clone()),
                 Func::from(|_reason: JsValue<'js>| {}),
             ))
-            .map_err(js_error)?;
+            .catch(ctx)
+            .map_err(caught_js_error)?;
         Ok(Some(Self {
             promise: Persistent::save(ctx, promise.clone()),
             finish: Some(finish),

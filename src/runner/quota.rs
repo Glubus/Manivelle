@@ -19,6 +19,8 @@ use std::rc::Rc;
 
 use rquickjs::allocator::Allocator;
 
+use crate::error::EngineError;
+
 /// QuickJS allocates values of up to 8 bytes of alignment.
 const ALIGN: usize = mem::align_of::<u64>();
 /// One word before each block: its size in the low bits, its owner in the high ones.
@@ -60,32 +62,42 @@ impl Quota {
     }
 
     /// A new owner, reusing the slot of a script that is gone and holds nothing.
-    pub(super) fn new_owner(self: &Rc<Self>) -> Owner {
+    ///
+    /// # Errors
+    ///
+    /// The engine holds as many scripts with a quota as the header of a block has bits for.
+    pub(super) fn new_owner(self: &Rc<Self>) -> Result<Owner, EngineError> {
         let mut accounts = self.accounts.borrow_mut();
         let free = accounts
             .iter()
             .position(|account| account.retired.get() && account.used.get() == 0);
-        let index = free.unwrap_or_else(|| {
-            assert!(
-                accounts.len() < MAX_OWNERS,
-                "an engine holds at most {MAX_OWNERS} script owners"
-            );
-            accounts.push(Account {
-                used: Cell::new(0),
-                refused: Cell::new(false),
-                retired: Cell::new(false),
-            });
-            accounts.len() - 1
-        });
+        let index = match free {
+            Some(index) => index,
+            None if accounts.len() >= MAX_OWNERS => {
+                return Err(EngineError::Execution {
+                    details: format!(
+                        "an engine holds at most {MAX_OWNERS} scripts with a memory quota"
+                    ),
+                });
+            }
+            None => {
+                accounts.push(Account {
+                    used: Cell::new(0),
+                    refused: Cell::new(false),
+                    retired: Cell::new(false),
+                });
+                accounts.len() - 1
+            }
+        };
         let account = &accounts[index];
         account.retired.set(false);
         account.refused.set(false);
         // Ids start at 1 (0 means no owner) and the cap keeps them within the header's owner bits.
         let id = u32::try_from(index + 1).expect("owner id fits the cap");
-        Owner {
+        Ok(Owner {
             quota: Rc::clone(self),
             id,
-        }
+        })
     }
 
     /// Charges the allocations made until the guard drops to `owner`, and forgets that it
@@ -118,7 +130,9 @@ impl Quota {
         let account = &accounts[owner as usize - 1];
         let used = account.used.get();
         debug_assert!(bytes <= used, "refund exceeds the owner's charge");
-        account.used.set(used - bytes);
+        // A bug that credits too much must not wrap the count in a release build; this runs
+        // inside `dealloc`, a C callback, where an `assert!` would abort the process.
+        account.used.set(used.saturating_sub(bytes));
     }
 }
 
@@ -217,8 +231,10 @@ impl QuotaAllocator {
     }
 }
 
-fn round(size: usize) -> usize {
-    size.div_ceil(ALIGN) * ALIGN
+/// `size` up to a multiple of [`ALIGN`]; `None` when that overflows, which no allocation
+/// QuickJS asks for can, but a refusal is the answer if one ever does.
+fn round(size: usize) -> Option<usize> {
+    size.div_ceil(ALIGN).checked_mul(ALIGN)
 }
 
 fn header(size: usize, owner: u32) -> u64 {
@@ -252,17 +268,17 @@ unsafe fn read_header(ptr: *mut u8) -> (usize, u32) {
 // recorded in the header, as the Rust allocator of rquickjs does.
 unsafe impl Allocator for QuotaAllocator {
     fn alloc(&mut self, size: usize) -> *mut u8 {
-        self.allocate(round(size), false)
+        round(size).map_or(ptr::null_mut(), |size| self.allocate(size, false))
     }
 
     fn calloc(&mut self, count: usize, size: usize) -> *mut u8 {
         if count == 0 || size == 0 {
             return ptr::null_mut();
         }
-        match count.checked_mul(size) {
-            Some(total) => self.allocate(round(total), true),
-            None => ptr::null_mut(),
-        }
+        count
+            .checked_mul(size)
+            .and_then(round)
+            .map_or(ptr::null_mut(), |total| self.allocate(total, true))
     }
 
     unsafe fn dealloc(&mut self, ptr: *mut u8) {
@@ -277,10 +293,12 @@ unsafe impl Allocator for QuotaAllocator {
     }
 
     unsafe fn realloc(&mut self, ptr: *mut u8, new_size: usize) -> *mut u8 {
+        let Some(new_size) = round(new_size) else {
+            return ptr::null_mut();
+        };
         if ptr.is_null() {
-            return self.allocate(round(new_size), false);
+            return self.allocate(new_size, false);
         }
-        let new_size = round(new_size);
         if new_size > SIZE_MASK as usize {
             return ptr::null_mut();
         }
@@ -317,5 +335,21 @@ unsafe impl Allocator for QuotaAllocator {
     unsafe fn usable_size(ptr: *mut u8) -> usize {
         // SAFETY: `ptr` came from this allocator.
         unsafe { read_header(ptr).0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_size_that_cannot_be_rounded_is_refused_instead_of_wrapping() {
+        let mut allocator = QuotaAllocator::new(Quota::new(1 << 20));
+
+        assert!(allocator.alloc(usize::MAX).is_null());
+        assert!(allocator.calloc(1, usize::MAX).is_null());
+        // SAFETY: a null pointer asks `realloc` for a new block, which it refuses.
+        assert!(unsafe { allocator.realloc(ptr::null_mut(), usize::MAX) }.is_null());
+        assert_eq!(round(1), Some(ALIGN));
     }
 }

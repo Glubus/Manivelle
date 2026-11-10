@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const LARGE_FIELD_COUNT: usize = 64;
+/// Field read by the single-field benchmarks; must be below `LARGE_FIELD_COUNT`.
+const SAMPLED_FIELD_INDEX: usize = 7;
 const BYTE_COUNTS: &[usize] = &[1024, 64 * 1024, 1024 * 1024];
 /// Entry counts of the maps and JSON objects `Engine::call` encodes as arguments.
 const OBJECT_ENTRY_COUNTS: &[usize] = &[16, 1024];
@@ -293,10 +295,9 @@ impl NativeBridgeBench {
     fn new() -> Self {
         let runtime = Runtime::new().expect("create runtime");
         let context = Context::full(&runtime).expect("create context");
-        let fixtures = Arc::new(NativeFixtures::new());
-        let _ = FIXTURES.set(fixtures.clone());
+        let _ = FIXTURES.set(Arc::new(NativeFixtures::new()));
 
-        context.with(|ctx| install_bridge(ctx, fixtures).expect("install bridge"));
+        context.with(|ctx| install_bridge(ctx).expect("install bridge"));
 
         Self {
             _runtime: runtime,
@@ -559,7 +560,7 @@ fn parse_byte_input(input: Value) -> Result<ByteInput, EngineError> {
     })
 }
 
-fn install_bridge(ctx: Ctx<'_>, _fixtures: Arc<NativeFixtures>) -> JsResult<()> {
+fn install_bridge(ctx: Ctx<'_>) -> JsResult<()> {
     let globals = ctx.globals();
 
     globals.set("copySmall", Func::from(copy_small_bridge))?;
@@ -570,7 +571,7 @@ fn install_bridge(ctx: Ctx<'_>, _fixtures: Arc<NativeFixtures>) -> JsResult<()> 
     globals.set("bytesCopiedArray", Func::from(bytes_copied_array_bridge))?;
     globals.set("bytesSharedArray", Func::from(bytes_shared_array_bridge))?;
 
-    ctx.eval::<(), _>(BRIDGE_SCRIPT)
+    ctx.eval::<(), _>(bridge_script())
 }
 
 fn fixtures() -> &'static NativeFixtures {
@@ -671,76 +672,82 @@ fn make_bytes(byte_count: usize) -> Arc<[u8]> {
         .into()
 }
 
-const BRIDGE_SCRIPT: &str = r#"
-globalThis.sumCopySmall = function () {
+fn bridge_script() -> String {
+    format!(
+        r#"
+globalThis.sumCopySmall = function () {{
   const value = copySmall();
   return value.id + value.hp + value.mp;
-};
+}};
 
-globalThis.sumGetterSmall = function () {
+globalThis.sumGetterSmall = function () {{
   return getField(1, 0) + getField(1, 1) + getField(1, 2);
-};
+}};
 
-globalThis.sumCopyLarge = function () {
+globalThis.sumCopyLarge = function () {{
   const value = copyLarge();
   let total = 0;
-  for (let index = 0; index < value.fieldCount; index += 1) {
+  for (let index = 0; index < value.fieldCount; index += 1) {{
     total += value["f" + index];
-  }
+  }}
   return total;
-};
+}};
 
-globalThis.sumGetterLargeAll = function () {
+globalThis.sumGetterLargeAll = function () {{
   let total = 0;
-  for (let index = 0; index < 64; index += 1) {
+  for (let index = 0; index < {large_field_count}; index += 1) {{
     total += getField(2, index);
-  }
+  }}
   return total;
-};
+}};
 
-globalThis.sumGetterLargeOne = function () {
-  return getField(2, 7);
-};
+globalThis.sumGetterLargeOne = function () {{
+  return getField(2, {sampled_field});
+}};
 
-globalThis.sumNativeMemoryAll = function () {
+globalThis.sumNativeMemoryAll = function () {{
   let total = 0;
-  for (let offset = 0; offset < 64; offset += 1) {
+  for (let offset = 0; offset < {large_field_count}; offset += 1) {{
     total += readNativeU32(2, offset);
-  }
+  }}
   return total;
-};
+}};
 
-globalThis.sumNativeMemoryOne = function () {
-  return readNativeU32(2, 7);
-};
+globalThis.sumNativeMemoryOne = function () {{
+  return readNativeU32(2, {sampled_field});
+}};
 
-globalThis.sumBytesJsonArray = function (byteCount) {
+globalThis.sumBytesJsonArray = function (byteCount) {{
   const bytes = bytesJsonArray(byteCount);
   let total = 0;
-  for (let index = 0; index < bytes.length; index += 4096) {
+  for (let index = 0; index < bytes.length; index += 4096) {{
     total += bytes[index];
-  }
+  }}
   return total + bytes.length;
-};
+}};
 
-globalThis.sumBytesCopiedArray = function (byteCount) {
+globalThis.sumBytesCopiedArray = function (byteCount) {{
   const bytes = bytesCopiedArray(byteCount);
   let total = 0;
-  for (let index = 0; index < bytes.length; index += 4096) {
+  for (let index = 0; index < bytes.length; index += 4096) {{
     total += bytes[index];
-  }
+  }}
   return total + bytes.length;
-};
+}};
 
-globalThis.sumBytesSharedArray = function (byteCount) {
+globalThis.sumBytesSharedArray = function (byteCount) {{
   const bytes = bytesSharedArray(byteCount);
   let total = 0;
-  for (let index = 0; index < bytes.length; index += 4096) {
+  for (let index = 0; index < bytes.length; index += 4096) {{
     total += bytes[index];
-  }
+  }}
   return total + bytes.length;
-};
-"#;
+}};
+"#,
+        large_field_count = LARGE_FIELD_COUNT,
+        sampled_field = SAMPLED_FIELD_INDEX,
+    )
+}
 
 const INTEGRATED_BRIDGE_SCRIPT: &str = r#"
 function hostValue(name, input) {

@@ -2,7 +2,7 @@
 
 mod host_contracts;
 
-pub(crate) use host_contracts::{GENERATED_SDK_MARKER, HostModuleStyle, NativeContext};
+pub(crate) use host_contracts::{HostModuleStyle, NativeContext};
 
 pub use host_contracts::{
     InMemoryHostContractRegistry, render_typescript_declarations_for_descriptors,

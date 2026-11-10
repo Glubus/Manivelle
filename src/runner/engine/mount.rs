@@ -119,7 +119,7 @@ impl Engine {
         // Everything the mount allocates, the context included, is the script's. Held
         // through a handle of its own: `self` is borrowed mutably below.
         let quota = self.faults.quota.clone();
-        let owner = quota.as_ref().map(Quota::new_owner);
+        let owner = quota.as_ref().map(Quota::new_owner).transpose()?;
         let _charge = quota
             .as_deref()
             .zip(owner.as_ref())

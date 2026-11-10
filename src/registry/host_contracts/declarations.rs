@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::contract::{
     HostContractAbi, HostContractDescriptor, Schema, TsEnumVariant, TsField, TsLiteral,
@@ -86,7 +86,7 @@ pub(super) fn push_descriptor(sink: &mut impl DescriptorSink, descriptor: &HostC
 /// The `type` aliases of the schemas a registry uses: each name once, dependencies first.
 #[derive(Default)]
 pub(super) struct SchemaEmitter {
-    emitted: BTreeSet<String>,
+    emitted: BTreeMap<String, TsType>,
     /// The object schemas, which the SDK renders as model classes.
     models: BTreeMap<String, TsType>,
 }
@@ -98,9 +98,15 @@ impl SchemaEmitter {
         let Some(name) = schema.declared_name() else {
             return;
         };
-        if !self.emitted.insert(name.to_owned()) {
+        if let Some(known) = self.emitted.get(name) {
+            // The registry refuses two shapes under one name when contracts register.
+            assert!(
+                *known == schema.ts_type,
+                "two schemas are named `{name}` but have different shapes"
+            );
             return;
         }
+        self.emitted.insert(name.to_owned(), schema.ts_type.clone());
 
         for dependency in &schema.dependencies {
             self.emit(dependency, sections);

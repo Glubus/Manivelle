@@ -1,5 +1,11 @@
 # Getting Started
 
+Before you start:
+
+- Rust 1.96 or newer, with `cargo`.
+- No Node or Deno: Manivelle runs the TypeScript script itself.
+- `tsc` is optional: it only checks the script in your editor or in CI.
+
 This guide creates a tiny Rust application that embeds TypeScript and exposes
 one Rust function to the script.
 
@@ -19,7 +25,7 @@ cd manivelle-hello
 Add dependencies:
 
 ```text
-cargo add manivelle@0.1 --features derive
+cargo add manivelle@0.2 --features derive
 cargo add serde --features derive
 cargo add serde_json
 ```
@@ -90,7 +96,7 @@ fn main() -> Result<(), EngineError> {
         },
     )?;
 
-    engine.load_script("math-script", include_str!("math_script.ts"))?;
+    engine.load_script("math-script", include_str!("getting_started.ts"))?;
 
     let output: Value = engine.call("math-script", "run", ())?;
     println!("{output}");
@@ -112,7 +118,7 @@ What matters:
 
 ## Add The TypeScript Script
 
-Create `src/math_script.ts`:
+Create `src/getting_started.ts`:
 
 ```ts
 export function run() {

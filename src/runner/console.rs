@@ -119,16 +119,19 @@ impl ConsoleSink {
         let sinks = Rc::clone(&self.0);
         let script_id = Box::<str>::from(script_id);
         let modules = modules.clone();
-        Function::new(ctx.clone(), move |method: String, message: String| {
-            let message = locations_in_typescript(&message, &modules);
-            host_fn::guarded(|| {
-                let level = ConsoleLevel::from_method(&method);
-                (sinks.sink.borrow())(level, &script_id, &message);
-                if let Some(tap) = sinks.tap.borrow().as_ref() {
-                    tap(level, &script_id, &message);
-                }
-            })
-        })
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'_>, method: String, message: String| {
+                let message = locations_in_typescript(&message, &modules);
+                host_fn::guarded(&ctx, || {
+                    let level = ConsoleLevel::from_method(&method);
+                    (sinks.sink.borrow())(level, &script_id, &message);
+                    if let Some(tap) = sinks.tap.borrow().as_ref() {
+                        tap(level, &script_id, &message);
+                    }
+                })
+            },
+        )
         .map_err(js_error)
     }
 }

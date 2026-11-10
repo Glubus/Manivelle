@@ -47,11 +47,15 @@ numbers. Generated declarations quote property names that are not identifiers
 | `HashMap<{integer}, V, S>`, `BTreeMap<{integer}, V>` | `Record<number, V>` | Keys are canonical decimal strings in JavaScript. |
 | `(A, B, …)` up to 12 elements | `[A, B, …]` | Length must match exactly. |
 | `Box<T>`, `Arc<T>`, `Rc<T>` | `T` | Transparent. |
-| `serde_json::Value` | JSON value | Integers still follow the safe-range rule. |
+| `serde_json::Value` | JSON value | Integers still follow the safe-range rule. A property set to `undefined`, a function or a symbol is left out, as with `JSON.stringify`; an `undefined` array item becomes `null`. A `Date`, a `Map`, a `Set` or an object with a `toJSON` method is refused with `<Name> is not plain data`. |
 | `NativeBytes` | `Uint8Array` | See [Use Native Bytes](native-bytes.md). |
 
 A map key must implement `MapKey`, a sealed trait implemented for `String` and the
 primitive integers only.
+
+Decoding to `f32` casts the `f64` value: any `f64` is accepted, and one out of `f32`'s range
+becomes `±Infinity` (`1e300` decodes to `Infinity`). Integers refuse any loss of value, as
+serde does.
 
 ### Feature-Gated Third-Party Types
 
@@ -127,8 +131,16 @@ newtype variant, which serde merges the same way, follows the same rule.
 Missing fields decode like serde: `Option<T>` becomes `None`, fields with
 `default` take their default, anything else fails.
 
+Derived structs read only the object's own enumerable properties. An inherited field
+(from the prototype or a class getter) does not fill a field, and no inherited getter
+runs. A property holding `undefined`, a function or a symbol counts as missing.
+
 Errors name the failing path, for example `position.x: expected integer in u8
 range, got 300` or `inventory[sword][2].id: missing field`.
+
+Limits: a JavaScript array of more than 4 194 304 items is refused before decoding.
+Typed decoding nested deeper than 128 levels fails with `value is nested too deeply
+or contains a cycle`, which also covers a cyclic value.
 
 ### Directions
 

@@ -7,7 +7,6 @@ mod import_modules;
 mod names;
 
 pub(crate) use import_modules::HostModuleStyle;
-pub(crate) use sdk::GENERATED_SDK_MARKER;
 mod memory;
 mod sdk;
 mod tree;

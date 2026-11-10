@@ -138,7 +138,8 @@ pub struct Emission {
 /// A saved state must be plain data: `null`, booleans, numbers, strings, arrays and plain
 /// objects. [`Engine::snapshot`](crate::Engine::snapshot) refuses anything JSON would lose
 /// (a function, a symbol, a BigInt, a `Map`, a `Set`, a `Date`, a class instance, a cycle)
-/// and says where. An `undefined` inside an object or array becomes `null`.
+/// and says where. As with `JSON.stringify`, an `undefined` property is left out and an
+/// `undefined` array item becomes `null`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct StateSnapshot(pub(crate) BTreeMap<String, serde_json::Value>);

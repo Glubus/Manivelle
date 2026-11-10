@@ -8,9 +8,11 @@ use std::hash::{BuildHasher, Hash};
 
 use rquickjs::{Ctx, Filter, Object, String as JsString, Value as JsValue};
 
+use super::js_text::JsText;
 use super::stack_text::StackText;
 use super::{
-    CodecError, JsDecode, JsEncode, PathSegment, define_property, expect_object, is_dropped_by_json,
+    CodecError, DepthGuard, JsDecode, JsEncode, PathSegment, define_property, expect_object,
+    is_dropped_by_json,
 };
 
 /// Room for the decimal text of any integer key, `-170141183460469231731687303715884105728`.
@@ -87,11 +89,15 @@ integer_keys!(
     i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize
 );
 
-/// Whether `text` is an integer as JSON writes it: optional `-`, no `+`, no leading zeros.
-fn is_canonical_integer(text: &str) -> bool {
+/// Whether `text` is an integer as JSON writes it: optional `-`, no `+`, no leading zeros,
+/// and no `-0`, which no integer prints as.
+pub(crate) fn is_canonical_integer(text: &str) -> bool {
     let digits = text.strip_prefix('-').unwrap_or(text);
     let leading_zero = digits.len() > 1 && digits.starts_with('0');
-    !digits.is_empty() && !leading_zero && digits.bytes().all(|byte| byte.is_ascii_digit())
+    !digits.is_empty()
+        && !leading_zero
+        && text != "-0"
+        && digits.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn encode_entries<'js, 'a, K, V>(
@@ -127,12 +133,13 @@ where
     V: JsDecode,
 {
     let object = expect_object(value, rust)?;
+    let _depth = DepthGuard::enter(object.as_value(), rust)?;
     for property in object.own_props::<JsString<'js>, JsValue<'js>>(Filter::default()) {
         let (key, value) = property?;
         if is_dropped_by_json(&value) {
             continue;
         }
-        let key = key.to_string()?;
+        let key = JsText::new(key, rust)?.as_str().to_owned();
         let value =
             V::decode_js(ctx, value).map_err(|error| error.at(PathSegment::Key(key.clone())))?;
         insert(decode_key(key, rust)?, value);

@@ -1,0 +1,6 @@
+error: serde writes this name as `outName` but reads it as `inName`, and the schema of a type that is both encoded and decoded has one key; add `#[manivelle(encode_only)]` or `#[manivelle(decode_only)]` to the type
+ --> tests/ui/derive_schema/asymmetric_rename_both.rs:5:5
+  |
+5 | /     #[serde(rename(serialize = "outName", deserialize = "inName"))]
+6 | |     value: u8,
+  | |_____________^

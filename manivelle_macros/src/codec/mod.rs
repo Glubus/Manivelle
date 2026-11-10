@@ -96,6 +96,7 @@ fn decode_trait_impl(
     body: &TokenStream,
 ) -> TokenStream {
     let ident = container.ident;
+    let rust = ident.to_string();
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     quote! {
         #[automatically_derived]
@@ -104,6 +105,7 @@ fn decode_trait_impl(
                 __ctx: &::manivelle::js::Ctx<'__js>,
                 __value: ::manivelle::js::Value<'__js>,
             ) -> ::std::result::Result<Self, ::manivelle::CodecError> {
+                let _depth = ::manivelle::__private::derive::DepthGuard::enter(&__value, #rust)?;
                 #body
             }
         }

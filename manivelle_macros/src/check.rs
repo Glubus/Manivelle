@@ -6,6 +6,7 @@ use syn::{DeriveInput, Error, Fields, GenericArgument, PathArguments, Result, Ty
 use crate::attrs::{JsonOnly, SchemaOnly};
 use crate::directions::Directions;
 use crate::model::{Body, Container, Field, Shape, Style, Tagging};
+use crate::rename::Name;
 
 const TYPE_OPT_IN: &str = "add `#[manivelle(codec = \"json\")]` to the type";
 const FIELD_OPT_IN: &str = "add `#[manivelle(codec = \"json\")]` (or a native `#[manivelle(with = \"...\")]`) to this field, or `#[manivelle(codec = \"json\")]` to the type";
@@ -18,6 +19,7 @@ pub(crate) fn check(container: &Container<'_>, input: &DeriveInput) -> Result<()
         check_field_codecs(shape)?;
     }
     check_internal_variants(container)?;
+    check_symmetric_names(container)?;
     if container.codecs() == Directions::NONE {
         return Ok(());
     }
@@ -27,6 +29,45 @@ pub(crate) fn check(container: &Container<'_>, input: &DeriveInput) -> Result<()
     }
     check_json_only_attrs(container)?;
     check_native_limits(container, input)
+}
+
+/// The schema of a type that is both encoded and decoded shows one key per field and
+/// variant, so a name serde writes differently than it reads would be wrong in one
+/// direction.
+fn check_symmetric_names(container: &Container<'_>) -> Result<()> {
+    if container.schema_directions() != Directions::BOTH {
+        return Ok(());
+    }
+    if let Body::Enum(variants) = &container.body {
+        for variant in variants {
+            let skipped = variant.attrs.skip_serializing && variant.attrs.skip_deserializing;
+            if !skipped && variant.attrs.schema_rename.is_none() {
+                check_symmetric_name(&variant.name, variant.original)?;
+            }
+        }
+    }
+    for shape in shapes(container) {
+        for field in &shape.fields {
+            let skipped = field.attrs.skip_serializing && field.attrs.skip_deserializing;
+            if !skipped && field.attrs.schema_rename.is_none() {
+                check_symmetric_name(&field.name, field.original)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_symmetric_name(name: &Name, item: impl quote::ToTokens) -> Result<()> {
+    if name.serialize == name.deserialize {
+        return Ok(());
+    }
+    Err(Error::new_spanned(
+        item,
+        format!(
+            "serde writes this name as `{}` but reads it as `{}`, and the schema of a type that is both encoded and decoded has one key; add `#[manivelle(encode_only)]` or `#[manivelle(decode_only)]` to the type",
+            name.serialize, name.deserialize
+        ),
+    ))
 }
 
 fn shapes<'c>(container: &'c Container<'_>) -> Vec<&'c Shape<'c>> {

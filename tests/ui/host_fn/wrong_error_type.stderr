@@ -1,0 +1,5 @@
+error: a host function must return `Result<Output, EngineError>`
+ --> tests/ui/host_fn/wrong_error_type.rs:7:25
+  |
+7 | fn one() -> Result<f64, MathError> {
+  |                         ^^^^^^^^^

@@ -1,19 +1,21 @@
 //! `manivelle run`: starts the target of a package, with its packages or without, and stays
 //! connected to it.
 
+use std::error::Error;
+use std::fmt;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command as Process, ExitStatus};
+use std::process::{Child, Command as Process, ExitCode, ExitStatus};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use clap::Args;
-use manivelle::PackageManifest;
 use manivelle::protocol::{
     Command, FromProgram, PACKAGES_ENV, PROTOCOL_ENV, Reply, Request, TOKEN_ENV,
 };
+use manivelle::{MANIFEST_FILE, PackageManifest};
 
 use super::Failure;
 use super::roots::canonical_roots;
@@ -106,19 +108,53 @@ fn spawn_target(
     Ok(child)
 }
 
+/// The target exited without success. `manivelle run` exits with the same code.
+#[derive(Debug)]
+pub struct TargetExit {
+    target: PathBuf,
+    status: ExitStatus,
+}
+
+impl TargetExit {
+    /// The exit code of the target; a failure when it has none (ended by a signal) or
+    /// when it does not fit a process exit code.
+    pub fn exit_code(&self) -> ExitCode {
+        self.status
+            .code()
+            .and_then(|code| u8::try_from(code).ok())
+            .map_or(ExitCode::FAILURE, ExitCode::from)
+    }
+}
+
+impl fmt::Display for TargetExit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} exited with {}",
+            self.target.display(),
+            self.status
+        )
+    }
+}
+
+impl Error for TargetExit {}
+
 /// Succeeds when the target exited successfully.
 fn exit_outcome(target: &Path, status: ExitStatus) -> Result<(), Failure> {
     if status.success() {
         Ok(())
     } else {
-        Err(format!("{} exited with {status}", target.display()).into())
+        Err(Box::new(TargetExit {
+            target: target.to_path_buf(),
+            status,
+        }))
     }
 }
 
 fn plan(args: &RunArgs) -> Result<Plan, Failure> {
     let manifest = match PackageManifest::read(&args.directory) {
         Ok(manifest) => Some(manifest),
-        Err(_) if args.no_packages && args.target.is_some() => None,
+        Err(_) if args.no_packages && args.target.is_some() && manifest_is_absent(args) => None,
         Err(error) => return Err(error.into()),
     };
     let target = match (&args.target, &manifest) {
@@ -142,6 +178,12 @@ fn plan(args: &RunArgs) -> Result<Plan, Failure> {
         target,
         package_roots,
     })
+}
+
+/// Whether there is no manifest to read in the package directory, as opposed to one that
+/// cannot be read or is invalid: a broken manifest is never skipped.
+fn manifest_is_absent(args: &RunArgs) -> bool {
+    matches!(args.directory.join(MANIFEST_FILE).try_exists(), Ok(false))
 }
 
 fn no_target() -> Failure {
@@ -233,8 +275,15 @@ fn attended(connection: Connection, child: &mut Child, watch: bool) -> Result<Ex
     let mut next_id = 0;
     let mut asked = Instant::now();
     let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(error) => {
+                // Not knowing whether the target runs, do not leave it running.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error.into());
+            }
         }
         if watch && asked.elapsed() >= WATCH_EVERY {
             asked = Instant::now();

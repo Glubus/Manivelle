@@ -1,5 +1,82 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- A package's modules, entry included, can no longer resolve outside the package directory,
+  whatever `tsconfig.json` sits above it. A symlinked entry that leaves the package is
+  refused. `load_project` is unchanged.
+- Loading unrestricted code with `load_script` or `load_project` (and the `_in` variants)
+  under the id of a package script fails with the new `EngineError::ScriptRestricted` until
+  `unload_script` is called. It no longer lifts the script's permissions silently.
+- A JavaScript array of more than 4 194 304 items, including a sparse `a.length = 2 ** 32 - 1`,
+  fails to decode with a `CodecError` instead of building the items on the host.
+- Typed decoding nested deeper than 128 levels fails with `value is nested too deeply or
+  contains a cycle` instead of overflowing the stack.
+- A permission such as `events*` is rejected in the manifest. `ns.*` is the only wildcard
+  form; `*` alone still allows everything.
+
+### Changed (breaking)
+
+- Derived decoders read only own enumerable properties. An inherited field (prototype, class
+  getter) no longer fills a field, and no inherited getter runs while decoding.
+- `Engine::snapshot` and `serde_json::Value` leave out a property set to `undefined`, a
+  function or a symbol. An array item of such a value becomes `null`, as with
+  `JSON.stringify`; before, an `undefined` property became `null`. A `Date`, `Map`, `Set`
+  or object with `toJSON` fails with `<Name> is not plain data` instead of becoming `{}`.
+- `#[derive(TsSchema)]` refuses at compile time a field or variant that serde writes under
+  one name and reads under another, on a type both encoded and decoded. Add
+  `#[manivelle(encode_only)]` or `#[manivelle(decode_only)]`.
+- `#[host_fn]`, `#[host_fn_with_ctx]` and `#[host_fn_async]` require `EngineError` as the
+  error type.
+
+### Changed
+
+- A host panic reaches a script as the same `InternalError` ("a host function panicked")
+  from a host function or the `console` sink. The sink used to produce a `TypeError`.
+- A thrown value that is not an `Error` (`throw { code: 1 }`) is reported as its JSON.
+- `getrandom` is an optional dependency, enabled by the `cli` feature.
+- `manivelle_bevy`: `with_engine` panics with the real `with_state` error, and the crate
+  ships its `LICENSE`.
+
+### Fixed
+
+- A protocol `Reply`, `Fatal` or `Packages` message is no longer dropped when the outbox is
+  full; only console lines are. Dropping the link waits up to 2 s to flush.
+- `request_deferred` finishes with the error when a handler returns a Promise the engine
+  cannot watch, instead of staying open.
+- A host answer whose Promise resolve fails rejects the script's Promise (`failed to deliver
+  the host reply`) instead of leaving it pending.
+- A panic while an async host reply is converted no longer strands the replies queued
+  behind it.
+- A script's own `Error('out of memory')` is no longer counted as a memory fault. A real one
+  is recognised by its type.
+- An engine at the maximum number of quota-tracked scripts returns an error from the load
+  instead of panicking. A pathological allocation size is refused instead of wrapping.
+- No event handler is entered after an interrupt requested before the first one.
+- Registering a host function whose name has a reserved-word segment (`demo.function`) fails
+  with `InvalidOptions` instead of producing an invalid `.d.ts`.
+- A host contract that declares a type under a name already used with another shape, in the
+  same or another contract, is refused at registration instead of being declared under the
+  first shape.
+- The generated SDK no longer exports a root named `ctx`, `events`, `call`, `models` or
+  `manivelleSdk` twice.
+- Registering a binding twice reports `DuplicateContract` instead of `InvalidOptions`.
+- An optional contract field set to `undefined` passes validation. `Record<number, T>` keys
+  validate as the canonical integers the decoder accepts, and `-0` is no integer key.
+- Derived enums with a variant, tag or content named `__proto__` keep it as an own property.
+- A map key with a lone surrogate fails with `expected Unicode text, got a string with lone
+  surrogates`.
+- The analysis recognises the generated SDK by its `.sdk.ts` name, not by a first-line marker.
+- The transpile cache key includes the transpile options.
+- `manivelle run` exits with the target's exit code and kills the child when waiting on it
+  fails. `--no-packages --target` no longer hides a broken manifest. `check --fix` replaces
+  the manifest atomically (symlinks are replaced, not followed) and handles non-ASCII
+  manifests.
+- Docs: install instructions point to 0.2, Getting Started names `getting_started.ts`, and
+  `manivelle_bevy` documents the derive feature.
+
 ## 0.2.1
 
 ### Added

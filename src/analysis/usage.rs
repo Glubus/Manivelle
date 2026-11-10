@@ -1,6 +1,5 @@
 //! Which host contracts the TypeScript of a package uses, found by reading its code.
 
-use crate::registry::GENERATED_SDK_MARKER;
 use std::collections::HashMap;
 
 use oxc::allocator::Allocator;
@@ -374,8 +373,10 @@ impl ScriptUsage {
     }
 }
 
-/// The module paths and sources of the files a project is made of that the analysis
-/// reads: the generated SDK defines the calls it forwards, so it is not the package's.
-pub(super) fn is_generated(source: &str, file: &str) -> bool {
-    file.ends_with(".d.ts") || source.starts_with(GENERATED_SDK_MARKER)
+/// Whether the file of a project is one the analysis does not read as code: a declaration
+/// file, or a generated SDK module (named `*.sdk.ts`, like the `manivelle.sdk.ts` the tool
+/// writes), which defines the calls it forwards and is not the package's. Recognized by
+/// its name, never by what the file says about itself: a first line is easy to copy.
+pub(super) fn is_generated(file: &str) -> bool {
+    file.ends_with(".d.ts") || file.ends_with(".sdk.ts")
 }

@@ -50,6 +50,54 @@ pub(super) fn define_field<'js>(
     define_atom_property(object, field_atom(ctx, name)?, value)
 }
 
+/// Reads the own enumerable property `name` of `object`, or `None` when it has none:
+/// inherited and non-enumerable properties are absent, as for `JSON.stringify`. An own
+/// getter runs, like any own property read during a conversion. The name's atom comes
+/// from the same cache as [`define_field`], so the lookup allocates nothing.
+pub(super) fn own_field<'js>(
+    ctx: &Ctx<'js>,
+    object: &Object<'js>,
+    name: &'static str,
+) -> JsResult<Option<JsValue<'js>>> {
+    let atom = field_atom(ctx, name)?;
+    let mut descriptor = std::mem::MaybeUninit::<qjs::JSPropertyDescriptor>::uninit();
+    // SAFETY: `object` belongs to `ctx` and `atom` is kept alive by the cache;
+    // `JS_GetOwnProperty` only borrows them and fills `descriptor` when it returns 1.
+    let found = unsafe {
+        qjs::JS_GetOwnProperty(
+            ctx.as_raw().as_ptr(),
+            descriptor.as_mut_ptr(),
+            object.as_value().as_raw(),
+            atom,
+        )
+    };
+    if found < 0 {
+        return Err(JsError::Exception);
+    }
+    if found == 0 {
+        return Ok(None);
+    }
+    // SAFETY: `found` is 1, so `descriptor` is initialised. It owns one reference to each
+    // of `value`, `getter` and `setter` (`undefined` where unused); wrapping each in a
+    // `Value` hands the reference to its drop.
+    let (flags, value, _getter, _setter) = unsafe {
+        let descriptor = descriptor.assume_init();
+        (
+            descriptor.flags,
+            JsValue::from_raw(ctx.clone(), descriptor.value),
+            JsValue::from_raw(ctx.clone(), descriptor.getter),
+            JsValue::from_raw(ctx.clone(), descriptor.setter),
+        )
+    };
+    if flags & qjs::JS_PROP_ENUMERABLE as i32 == 0 {
+        return Ok(None);
+    }
+    if flags & qjs::JS_PROP_GETSET as i32 != 0 {
+        return object.get(name).map(Some);
+    }
+    Ok(Some(value))
+}
+
 /// The atom of `name`, created on first use in this runtime.
 fn field_atom(ctx: &Ctx<'_>, name: &'static str) -> JsResult<qjs::JSAtom> {
     let key = (name.as_ptr() as usize, name.len());

@@ -6,8 +6,8 @@ use std::hash::{BuildHasher, Hash};
 use rquickjs::{Array, Ctx, Value as JsValue};
 
 use super::{
-    CodecError, JsDecode, JsEncode, array_length, cautious_capacity, decode_item, encode_item,
-    expect_array, expect_array_len,
+    CodecError, DepthGuard, JsDecode, JsEncode, array_length, cautious_capacity, decode_item,
+    encode_item, expect_array, expect_array_len,
 };
 
 /// Encodes `items` as a JavaScript array, prefixing errors with the item index.
@@ -38,6 +38,7 @@ where
     T: JsDecode,
 {
     let array = expect_array(value, rust)?;
+    let _depth = DepthGuard::enter(array.as_object().as_value(), rust)?;
     let len = array_length(&array, rust)?;
     let mut collection = create(cautious_capacity::<T>(len));
     for index in 0..len {

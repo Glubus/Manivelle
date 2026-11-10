@@ -278,7 +278,9 @@ fn a_missing_entry_and_an_unresolved_import_are_findings() {
     let manifest = package(dir.path(), &[], &[]);
     let report = check_package(&manifest, &descriptors()).unwrap();
     assert!(
-        messages(&report)[0].contains("is not a file"),
+        messages(&report)
+            .iter()
+            .any(|message| message.contains("is not a file")),
         "{:?}",
         messages(&report)
     );
@@ -287,10 +289,63 @@ fn a_missing_entry_and_an_unresolved_import_are_findings() {
     let manifest = package(dir.path(), &[], &[("main.ts", "import \"./nowhere\";\n")]);
     let report = check_package(&manifest, &descriptors()).unwrap();
     assert!(
-        messages(&report)[0].contains("cannot read the project"),
+        messages(&report)
+            .iter()
+            .any(|message| message.contains("cannot read the project")),
         "{:?}",
         messages(&report)
     );
+}
+
+#[test]
+fn a_file_that_does_not_parse_is_an_error_not_a_clean_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = package(
+        dir.path(),
+        &[],
+        &[
+            (
+                "main.ts",
+                "import \"./helper\";\nexport const run = () => 1;\n",
+            ),
+            ("helper.ts", "export const broken = ;\n"),
+        ],
+    );
+
+    let report = check_package(&manifest, &descriptors()).unwrap();
+
+    assert_eq!(report.errors(), 1, "{:?}", messages(&report));
+    assert!(
+        messages(&report)
+            .iter()
+            .any(|message| message.contains("cannot read the project")
+                && message.contains("helper.ts")),
+        "{:?}",
+        messages(&report)
+    );
+}
+
+#[test]
+fn a_file_is_generated_by_its_path_not_by_a_marker_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = package(
+        dir.path(),
+        &[],
+        &[
+            (
+                "main.ts",
+                "import \"./helper\";\nexport const run = () => 1;\n",
+            ),
+            (
+                "helper.ts",
+                "// manivelle: generated\nexport const hidden = () => world.modify();\n",
+            ),
+        ],
+    );
+
+    let report = check_package(&manifest, &descriptors()).unwrap();
+
+    assert_eq!(report.missing_permissions, ["world.modify"]);
 }
 
 #[test]

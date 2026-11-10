@@ -143,7 +143,7 @@ fn bench_frame_budget(c: &mut Criterion) {
                 )
             });
         });
-        group.bench_function(format!("advance_timers_{script_count}"), |b| {
+        group.bench_function(format!("advance_timers_{script_count}_firing"), |b| {
             b.iter(|| {
                 black_box(
                     timers

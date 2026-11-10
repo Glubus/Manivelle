@@ -1,0 +1,8 @@
+error: serde transparent is only supported for structs
+ --> tests/ui/derive_schema/transparent_enum.rs:4:1
+  |
+4 | / #[serde(transparent)]
+5 | | enum Shape {
+6 | |     Circle(f64),
+7 | | }
+  | |_^

@@ -1,0 +1,5 @@
+error: serde content requires serde tag
+ --> tests/ui/derive_schema/content_without_tag.rs:4:1
+  |
+4 | #[serde(content = "data")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^

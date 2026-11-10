@@ -18,9 +18,25 @@
 //! app.add_manivelle(engine);
 //! ```
 //!
+//! Enable the `derive` feature of `manivelle` for `#[host_fn_with_ctx]`; this crate does not
+//! forward it:
+//!
+//! ```toml
+//! manivelle = { version = "0.2", features = ["derive"] }
+//! ```
+//!
 //! [`AppManivelleExt::add_manivelle`] stores the engine and adds the system that drives it
 //! each frame. To call a script or emit an event from your own systems, use
 //! [`with_engine`].
+
+#![deny(clippy::correctness)]
+#![warn(clippy::suspicious)]
+#![warn(clippy::style)]
+#![warn(clippy::complexity)]
+#![warn(clippy::perf)]
+#![warn(clippy::undocumented_unsafe_blocks)]
+#![warn(clippy::clone_on_ref_ptr)]
+#![warn(missing_docs)]
 
 use std::time::Duration;
 
@@ -88,9 +104,10 @@ pub fn with_engine<R>(world: &mut World, f: impl FnOnce(&mut Engine) -> R) -> Op
         world,
     };
     let engine = lent.engine.as_mut()?;
-    let result = engine.with_state(&mut *lent.world, f);
-    // The engine was just taken out of the world, so no scope of it can be running.
-    Some(result.expect("an engine out of the world has no state scope running"))
+    match engine.with_state(&mut *lent.world, f) {
+        Ok(result) => Some(result),
+        Err(error) => panic!("with_engine: {error}"),
+    }
 }
 
 /// The engine taken out of the world, put back when this drops, on every way out.

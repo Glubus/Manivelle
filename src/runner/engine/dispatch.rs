@@ -10,7 +10,7 @@ use crate::types::{Emission, ScriptId};
 use super::super::errors::{caught_js_error, pending_exception};
 use super::super::host_fn;
 use super::super::source_locations::in_typescript;
-use super::super::tasks::RequestGuard;
+use super::super::tasks::{RequestGuard, ScriptTask};
 use super::delivery::Audience;
 use super::faults::run_jobs;
 use super::invoke::invoke;
@@ -285,15 +285,37 @@ impl Engine {
                 script.context.with(|ctx| {
                     tasks.retain_mut(|task| !task.poll(&ctx, &self.rejections, &self.module_store));
                 });
-                self.scheduling
-                    .active_tasks
-                    .set(self.scheduling.active_tasks.get() - (before - tasks.len()));
+                self.release_tasks(before - tasks.len());
             }
             script
                 .request_guards
                 .borrow_mut()
                 .retain(RequestGuard::is_pending);
         }
+    }
+
+    /// Keeps `task`, which `script` left waiting, and counts it: the one way a task joins
+    /// `script.tasks`, so that the count settling reads is the number of tasks held.
+    pub(super) fn adopt_task(&self, script: &EngineScript, task: ScriptTask) {
+        script.tasks.borrow_mut().push(task);
+        self.scheduling
+            .active_tasks
+            .set(self.scheduling.active_tasks.get() + 1);
+    }
+
+    /// Counts `count` tasks as gone: the one way the count goes down, for tasks that
+    /// finished or were dropped with their script.
+    pub(super) fn release_tasks(&self, count: usize) {
+        let active = self.scheduling.active_tasks.get();
+        // A bug here is the module's, not the host's. The count is not asserted while
+        // unwinding, so it never hides the panic in flight.
+        assert!(
+            count <= active || std::thread::panicking(),
+            "{count} tasks released of the {active} counted"
+        );
+        self.scheduling
+            .active_tasks
+            .set(active.saturating_sub(count));
     }
 
     /// An error as the host sees it: TypeScript locations, and an out of memory, however

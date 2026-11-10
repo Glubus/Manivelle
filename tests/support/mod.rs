@@ -1,6 +1,8 @@
-//! Helpers shared by the integration tests. Each test crate compiles this whole module
-//! and uses only part of it, so unused items are allowed here rather than per item.
+//! Helpers shared by the integration tests. A build without some features leaves part of
+//! them unused, so unused items are allowed here rather than per item.
 #![allow(dead_code)]
+
+pub(crate) mod codec;
 
 use std::ffi::OsStr;
 use std::fs;

@@ -67,7 +67,9 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");
-            ExitCode::FAILURE
+            error
+                .downcast_ref::<run::TargetExit>()
+                .map_or(ExitCode::FAILURE, run::TargetExit::exit_code)
         }
     }
 }

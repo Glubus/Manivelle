@@ -246,7 +246,7 @@ fn permissions(node: &Node) -> Result<Vec<String>, Failure> {
     for child in &node.children {
         child.no_args()?;
         child.no_children()?;
-        let valid = well_formed(&child.name, &['_', '.', '*', '-']);
+        let valid = is_permission_name(&child.name);
         if !valid {
             return Err(Failure::at(
                 child.line,
@@ -258,6 +258,13 @@ fn permissions(node: &Node) -> Result<Vec<String>, Failure> {
         }
     }
     Ok(found)
+}
+
+/// Whether `name` is a contract name, `namespace.*` or `*`: a `*` anywhere else would
+/// allow more than the manifest says (`events*` would cover `eventsx.listen`).
+fn is_permission_name(name: &str) -> bool {
+    let contract = |name: &str| well_formed(name, &['_', '.', '-']);
+    name == "*" || contract(name) || name.strip_suffix(".*").is_some_and(contract)
 }
 
 /// Whether `name` is not empty and has only ASCII letters and digits, and the `extra`
@@ -578,6 +585,26 @@ package "better-combat" {
                 .unwrap_err()
                 .contains("properties")
         );
+    }
+
+    #[test]
+    fn a_star_is_a_permission_only_alone_or_after_a_namespace_dot() {
+        let wrap = |name: &str| {
+            format!(
+                "package \"m\" {{\n version \"1.0.0\"\n entry \"a.ts\"\n permissions {{\n  {name}\n }}\n}}"
+            )
+        };
+        for valid in ["*", "world.*", "world.modify"] {
+            assert!(parse(&wrap(valid)).is_ok(), "{valid}");
+        }
+        for invalid in ["events*", "ev*ents.listen", "*.listen", "world.**"] {
+            assert!(
+                parse(&wrap(invalid))
+                    .unwrap_err()
+                    .contains("is not a permission name"),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]

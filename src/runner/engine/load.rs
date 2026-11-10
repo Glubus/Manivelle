@@ -18,12 +18,14 @@ impl Engine {
     /// Loads or replaces one TypeScript script. It may import host modules, not other
     /// files; use [`Engine::load_project`] for those. A failed load keeps the previous
     /// version; see [`Engine`] for the `ctx.hot` state a replaced version hands over.
+    /// An id that holds a script loaded by [`Engine::load_packages`] is refused with
+    /// [`EngineError::ScriptRestricted`]: unload it first.
     pub fn load_script(
         &mut self,
         id: impl Into<ScriptId>,
         source: &str,
     ) -> Result<(), EngineError> {
-        self.load_forgetting_permissions(id.into(), |engine, id| {
+        self.load_unrestricted(id.into(), |engine, id| {
             engine.mount_inline(None, id, source)
         })
     }
@@ -51,21 +53,23 @@ impl Engine {
         id: impl Into<ScriptId>,
         source: &str,
     ) -> Result<(), EngineError> {
-        self.load_forgetting_permissions(id.into(), |engine, id| {
+        self.load_unrestricted(id.into(), |engine, id| {
             engine.mount_inline(Some(group), id, source)
         })
     }
 
-    /// Runs one load's mount, then drops the permissions a package load gave `id`. A load
-    /// that fails before the new version is swapped in keeps them.
-    fn load_forgetting_permissions(
+    /// Runs one load's mount, unless `id` holds a script loaded from a package: this load
+    /// has no permissions, and replacing the script would lift the package's.
+    /// [`Engine::reload_changed`] reloads a package through its own path and keeps them.
+    fn load_unrestricted(
         &mut self,
         id: ScriptId,
         mount: impl FnOnce(&mut Self, ScriptId) -> Result<Disposed, EngineError>,
     ) -> Result<(), EngineError> {
-        let loaded = mount(self, id.clone())?;
-        self.permissions.remove(&id);
-        loaded
+        if self.permissions.contains_key(&id) {
+            return Err(EngineError::ScriptRestricted { script_id: id });
+        }
+        mount(self, id)?
     }
 
     fn mount_inline(
@@ -94,13 +98,15 @@ impl Engine {
     /// `import()` is rejected. Modules are transpiled one by one and remembered by
     /// content, so reloading a project only transpiles the files that changed. A
     /// failed load keeps the previous version; see [`Engine`] for the `ctx.hot` state
-    /// a replaced version hands over.
+    /// a replaced version hands over. An id that holds a script loaded by
+    /// [`Engine::load_packages`] is refused with [`EngineError::ScriptRestricted`], since
+    /// the load would lift the package's `permissions`: unload it first.
     pub fn load_project(
         &mut self,
         id: impl Into<ScriptId>,
         entry_path: impl AsRef<Path>,
     ) -> Result<(), EngineError> {
-        self.load_forgetting_permissions(id.into(), |engine, id| {
+        self.load_unrestricted(id.into(), |engine, id| {
             engine.mount_project(None, id, entry_path.as_ref())
         })
     }
@@ -113,7 +119,7 @@ impl Engine {
         id: impl Into<ScriptId>,
         entry_path: impl AsRef<Path>,
     ) -> Result<(), EngineError> {
-        self.load_forgetting_permissions(id.into(), |engine, id| {
+        self.load_unrestricted(id.into(), |engine, id| {
             engine.mount_project(Some(group), id, entry_path.as_ref())
         })
     }
@@ -149,7 +155,11 @@ impl Engine {
     ) -> Result<Disposed, EngineError> {
         let mut external_modules = self.registry.import_module_names()?;
         external_modules.insert(ENV_SPECIFIER.to_owned());
-        let project = match self.transpiler.project(entry_path, &external_modules) {
+        let package_root = self.permissions.get(&id).and_then(|set| set.package_root());
+        let project = match self
+            .transpiler
+            .project(entry_path, package_root, &external_modules)
+        {
             Ok(project) => project,
             Err(ProjectFailure { error, watched }) => {
                 self.watch_failed_attempt(&id, watched);

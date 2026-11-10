@@ -135,7 +135,9 @@ pub struct EngineOptions {
     /// a timer or an answer is delivered to it before it is quarantined: its handlers and
     /// timers stop running until it is reloaded or unloaded, and
     /// [`Engine::quarantined_scripts`](crate::Engine::quarantined_scripts) lists it.
-    /// `0` never quarantines. A script that throws an ordinary error is not faulting.
+    /// `0` never quarantines. A script that throws an ordinary error is not faulting, even
+    /// one whose message says "out of memory": the engine tells a real out of memory by the
+    /// error's type, not its words.
     pub max_script_faults: u32,
     /// The most QuickJS memory one script may hold, in bytes, inside the engine's
     /// `memory_limit_bytes` pool: a script that asks for more fails with an out of memory

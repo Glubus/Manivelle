@@ -46,14 +46,24 @@ pub(crate) fn resume_panic() {
     }
 }
 
-/// Runs host code a script can reach through an rquickjs function, parking a panic of it
-/// for [`resume_panic`] and returning an error, which the script sees as an exception it
-/// can catch, instead of unwinding through QuickJS.
-pub(crate) fn guarded<R>(host: impl FnOnce() -> R) -> JsResult<R> {
+/// Runs host code a script can reach through an rquickjs function of `ctx`, parking a panic
+/// of it for [`resume_panic`] and returning an error, which the script sees as an exception
+/// it can catch, instead of unwinding through QuickJS.
+pub(crate) fn guarded<R>(ctx: &Ctx<'_>, host: impl FnOnce() -> R) -> JsResult<R> {
     catch_unwind(AssertUnwindSafe(host)).map_err(|payload| {
         park(payload);
-        Error::new_from_js_message("host", "function", "a host function panicked")
+        panic_error(ctx.as_raw().as_ptr())
     })
+}
+
+/// What a script sees of a host panic, however it came: an `InternalError` it can catch,
+/// thrown in `ctx`, which is live. The error returned says that one is pending.
+fn panic_error(ctx: *mut qjs::JSContext) -> Error {
+    // SAFETY: `ctx` is live; the message is a constant.
+    unsafe {
+        qjs::JS_ThrowInternalError(ctx, c"%s".as_ptr(), c"a host function panicked".as_ptr());
+    }
+    Error::Exception
 }
 
 fn park(payload: Box<dyn Any + Send>) {
@@ -152,14 +162,7 @@ unsafe extern "C" fn call(
         Ok(value) => value,
         Err(payload) => {
             park(payload);
-            // SAFETY: `ctx` is live; the message is a constant.
-            unsafe {
-                qjs::JS_ThrowInternalError(
-                    ctx,
-                    c"%s".as_ptr(),
-                    c"a host function panicked".as_ptr(),
-                )
-            }
+            throw(ctx, &panic_error(ctx))
         }
     }
 }

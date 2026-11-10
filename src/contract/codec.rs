@@ -27,6 +27,7 @@ mod text;
 mod tuples;
 mod wrappers;
 
+use std::cell::Cell;
 use std::fmt::{self, Display};
 
 use rquickjs::atom::PredefinedAtom;
@@ -36,6 +37,7 @@ use rquickjs::{Array, Ctx, Error as JsError, Object, Result as JsResult, Value a
 pub(crate) use bytes::with_engine_bytes;
 pub use error::{CodecError, PathSegment};
 pub use maps::MapKey;
+pub(crate) use maps::is_canonical_integer;
 pub(crate) use number::exact_integer;
 
 /// Upper bound, in bytes, on memory reserved up front from a length the other side
@@ -45,6 +47,57 @@ const MAX_PREALLOCATED_BYTES: usize = 1 << 20;
 /// Capacity to reserve for `len` items of `T` announced by untrusted input.
 pub(crate) fn cautious_capacity<T>(len: usize) -> usize {
     len.min(MAX_PREALLOCATED_BYTES / size_of::<T>().max(1))
+}
+
+/// Most items one JavaScript array may hold for it to cross into Rust. A script controls
+/// array lengths and a sparse array is free for it, while every item costs the host a
+/// decoded value.
+const MAX_DECODED_ITEMS: usize = 1 << 22;
+
+/// How deeply typed decoding may nest, the limit the JSON bridge applies to JSON values.
+/// Decoding recurses on the Rust stack, which QuickJS's stack limit does not cover.
+const MAX_DECODE_DEPTH: usize = 128;
+
+thread_local! {
+    /// Levels of arrays, objects and derived types being decoded on this thread.
+    static DECODE_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// One level of typed decoding, released on drop. [`DepthGuard::enter`] fails once
+/// [`MAX_DECODE_DEPTH`] levels are open, so a recursive type fed a deeply nested (or
+/// cyclic) value is an error and not a stack overflow.
+#[doc(hidden)]
+pub struct DepthGuard(());
+
+impl DepthGuard {
+    /// Opens a level for decoding `value` as `rust`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when decoding is already nested too deeply.
+    pub fn enter(value: &JsValue<'_>, rust: &'static str) -> Result<Self, CodecError> {
+        let depth = DECODE_DEPTH.get();
+        if depth >= MAX_DECODE_DEPTH {
+            return Err(CodecError::from_js(
+                value.type_name(),
+                rust,
+                "value is nested too deeply or contains a cycle",
+            ));
+        }
+        DECODE_DEPTH.set(depth + 1);
+        Ok(Self(()))
+    }
+}
+
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        let depth = DECODE_DEPTH.get();
+        assert!(
+            depth > 0 || std::thread::panicking(),
+            "a decoding depth guard dropped with no level open"
+        );
+        DECODE_DEPTH.set(depth.saturating_sub(1));
+    }
 }
 
 /// Whether `JSON.stringify` drops a property holding `value`: `undefined`, functions and
@@ -188,7 +241,10 @@ pub fn expect_object<'js>(
 }
 
 /// Length of a JavaScript array. Lengths beyond `i32::MAX` are stored as floats, which
-/// `Array::len` panics on; this reads them, and reports anything else as an error.
+/// `Array::len` panics on; this reads them, and reports anything else as an error. A
+/// length above [`MAX_DECODED_ITEMS`] is an error too: holes cost the script nothing, so
+/// `a.length = 2 ** 32 - 1` would make every caller build four billion items on the
+/// Rust heap, outside the script's memory quota and time budget.
 pub(crate) fn array_length(array: &Array<'_>, rust: &'static str) -> Result<usize, CodecError> {
     let length = array
         .as_object()
@@ -200,7 +256,15 @@ pub(crate) fn array_length(array: &Array<'_>, rust: &'static str) -> Result<usiz
             .and_then(exact_integer)
             .and_then(|wide| usize::try_from(wide).ok()),
     };
-    valid.ok_or_else(|| mismatch(&length, rust, "array length"))
+    let valid = valid.ok_or_else(|| mismatch(&length, rust, "array length"))?;
+    if valid > MAX_DECODED_ITEMS {
+        return Err(CodecError::from_js(
+            "array",
+            rust,
+            format!("array has {valid} items, more than the {MAX_DECODED_ITEMS} allowed"),
+        ));
+    }
+    Ok(valid)
 }
 
 /// Defines `object[key] = value` as an own enumerable, writable, configurable data

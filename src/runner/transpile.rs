@@ -83,16 +83,19 @@ impl Transpiler {
 
     /// Resolves the project graph from `entry_path` and transpiles every module.
     /// Imports of `external_modules` stay unresolved; the module loader provides them.
-    /// A failure carries the files looked at before it.
+    /// `package_root` confines the project to a package's directory. A failure carries the
+    /// files looked at before it.
     pub(crate) fn project(
         &mut self,
         entry_path: &Path,
+        package_root: Option<&Path>,
         external_modules: &BTreeSet<String>,
     ) -> Result<TranspiledProject, ProjectFailure> {
         let memo = &mut self.memo;
         let previous = self.projects.remove(entry_path);
         let (project, state) = discover_project(
             entry_path,
+            package_root,
             external_modules,
             previous,
             &mut |source, path| {

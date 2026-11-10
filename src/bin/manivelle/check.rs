@@ -13,6 +13,7 @@ use manivelle::{
 
 use super::Failure;
 use super::export::{read_descriptors, run_program};
+use super::files::replace_file;
 use super::roots::canonical_roots;
 
 #[derive(Args)]
@@ -104,9 +105,9 @@ fn fix(
 ) -> Result<PackageReport, Failure> {
     let path = package.root.join(MANIFEST_FILE);
     let source = fs::read_to_string(&path)?;
-    fs::write(
+    replace_file(
         &path,
-        add_permissions(&source, &report.missing_permissions)?,
+        add_permissions(&source, &report.missing_permissions)?.as_bytes(),
     )?;
     println!(
         "[manivelle] added to the permissions of {}: {}",

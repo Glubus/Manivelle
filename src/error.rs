@@ -44,6 +44,15 @@ pub enum EngineError {
         /// The loaded script the snapshot holds a state for.
         script_id: ScriptId,
     },
+    /// Code without permissions was loaded under the id of a script that came from a
+    /// package: replacing it would lift the package's `permissions`. Unload it first.
+    #[error(
+        "script `{script_id}` was loaded from a package with permissions: call `unload_script` before loading other code under its id"
+    )]
+    ScriptRestricted {
+        /// The id of the package's script.
+        script_id: ScriptId,
+    },
     /// [`EngineOptions`](crate::EngineOptions) hold a value that would disable a protection
     /// instead of setting it.
     #[error("invalid engine options: {details}")]

@@ -102,8 +102,9 @@ impl Engine {
         self.protocol = connect_from_env()?;
         if let Some(outbox) = self.protocol.as_ref().map(Link::outbox) {
             self.forward_console(move |level, script, message| {
-                // A full outbox drops the line; the target never waits for the tool.
-                let _ = outbox.send(FromProgram::Console {
+                // A full outbox drops the line; the target never waits for the tool. The
+                // other messages are never dropped: see `Engine::tell`.
+                let _ = outbox.send_or_drop(FromProgram::Console {
                     level: level.to_string(),
                     script: script.to_owned(),
                     message: message.to_owned(),
@@ -206,8 +207,9 @@ impl Engine {
         }
     }
 
-    /// Sends `message` to the tool; a tool that cannot be reached any more is let go
-    /// rather than stalling or failing the program.
+    /// Sends `message` to the tool, waiting for room in the outbox: only `console` lines
+    /// may be dropped. A tool that cannot be reached any more is let go rather than
+    /// stalling or failing the program.
     fn tell(&mut self, message: FromProgram) {
         if let Some(link) = &self.protocol
             && link.send(message).is_err()

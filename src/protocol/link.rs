@@ -36,15 +36,24 @@ enum Outbound {
 #[derive(Debug)]
 pub(crate) struct Disconnected;
 
-/// A cheap handle that queues messages for the tool without ever waiting, for code that
-/// outlives a borrow of the link, such as the `console` tap.
+/// A cheap handle that queues messages for the tool, for code that outlives a borrow of
+/// the link, such as the `console` tap.
 #[derive(Clone)]
 pub(crate) struct Outbox(SyncSender<Outbound>);
 
 impl Outbox {
-    /// Queues `message`; `Err` once the tool cannot be reached any more. A full queue drops
-    /// the message and is not an error.
+    /// Queues `message`, waiting for room when the queue is full; `Err` once the tool
+    /// cannot be reached any more. The wait ends because a tool that stops reading makes
+    /// the writing thread fail within [`TIMEOUT`], which closes the queue.
     pub(crate) fn send(&self, message: FromProgram) -> Result<(), Disconnected> {
+        self.0
+            .send(Outbound::Message(message))
+            .map_err(|_| Disconnected)
+    }
+
+    /// Queues `message` without ever waiting: a full queue drops it and is not an error.
+    /// Only for `console` lines; every other message goes through [`send`](Self::send).
+    pub(crate) fn send_or_drop(&self, message: FromProgram) -> Result<(), Disconnected> {
         match self.0.try_send(Outbound::Message(message)) {
             Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
             Err(TrySendError::Disconnected(_)) => Err(Disconnected),
@@ -84,8 +93,8 @@ impl Link {
         })
     }
 
-    /// Hands one message to the writing thread; `Err` once the tool cannot be reached
-    /// any more. A full outbox drops the message and is not an error.
+    /// Hands one message to the writing thread, waiting for room when the outbox is full;
+    /// `Err` once the tool cannot be reached any more.
     pub(crate) fn send(&self, message: FromProgram) -> Result<(), Disconnected> {
         self.outbox.send(message)
     }
@@ -95,7 +104,8 @@ impl Link {
         self.alive.load(Ordering::Acquire)
     }
 
-    /// A handle that queues messages like [`send`](Self::send).
+    /// A handle that queues messages like [`send_or_drop`](Outbox::send_or_drop) and
+    /// [`send`](Outbox::send).
     pub(crate) fn outbox(&self) -> Outbox {
         self.outbox.clone()
     }
@@ -115,11 +125,20 @@ impl Drop for Link {
     /// `console` lines of a program that ends right after them reach the tool, then closes
     /// the sending side: on Windows a program that ends with its socket still open resets
     /// the connection, and the tool loses what it had not read yet. A program that ends
-    /// without dropping its engine (`std::process::exit`) still loses them.
+    /// without dropping its engine (`std::process::exit`) still loses them. A full queue
+    /// is waited on, within [`FLUSH`] in all.
     fn drop(&mut self) {
         if self.is_alive() {
             let (done, flushed) = mpsc::channel();
-            if self.outbox.0.try_send(Outbound::Flush(done)).is_ok() {
+            let outbox = self.outbox.clone();
+            // A thread, because the standard queue has no send with a timeout: it waits
+            // for room, and ends when the flush is queued or the writing thread is gone.
+            let queued = thread::Builder::new()
+                .name("manivelle-protocol-flush".to_owned())
+                .spawn(move || {
+                    let _ = outbox.0.send(Outbound::Flush(done));
+                });
+            if queued.is_ok() {
                 let _ = flushed.recv_timeout(FLUSH);
             }
         }
@@ -204,4 +223,92 @@ fn spawn_writer(
             alive.store(false, Ordering::Release);
         })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::TcpListener;
+
+    use super::super::wire::Reply;
+    use super::*;
+
+    fn console(n: usize) -> FromProgram {
+        FromProgram::Console {
+            level: "log".to_owned(),
+            script: "mod".to_owned(),
+            message: n.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_reply_waits_for_room_while_console_lines_are_dropped() {
+        let (queue, pending) = mpsc::sync_channel(2);
+        let outbox = Outbox(queue);
+        for n in 0..5 {
+            outbox.send_or_drop(console(n)).expect("connected");
+        }
+
+        // The queue holds two console lines and the other three are gone. The reply is
+        // not dropped: it waits until the writing side takes a line. The writing side
+        // here is slow, as a tool that reads late: it starts once the sender has begun.
+        let sender = outbox.clone();
+        let (begun, sending) = mpsc::channel();
+        let reply = thread::spawn(move || {
+            begun.send(()).expect("test is waiting");
+            sender.send(FromProgram::Reply {
+                id: 7,
+                reply: Reply::Done,
+            })
+        });
+        drop(outbox);
+        sending.recv().expect("sender began");
+        thread::sleep(Duration::from_millis(100));
+        let received: Vec<Outbound> = pending.iter().collect();
+
+        assert!(reply.join().expect("sender thread").is_ok());
+        assert!(
+            matches!(
+                received.as_slice(),
+                [
+                    Outbound::Message(FromProgram::Console { .. }),
+                    Outbound::Message(FromProgram::Console { .. }),
+                    Outbound::Message(FromProgram::Reply { id: 7, .. }),
+                ]
+            ),
+            "{} messages",
+            received.len()
+        );
+    }
+
+    #[test]
+    fn dropping_the_link_waits_for_room_to_flush_a_full_queue() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listen");
+        let socket = TcpStream::connect(listener.local_addr().expect("address")).expect("connect");
+        let (_tool, _) = listener.accept().expect("accept");
+        let (queue, pending) = mpsc::sync_channel(1);
+        let (_requests, commands) = mpsc::channel();
+        let link = Link {
+            outbox: Outbox(queue),
+            commands,
+            waiting: Arc::new(AtomicBool::new(false)),
+            alive: Arc::new(AtomicBool::new(true)),
+            socket,
+        };
+        link.outbox().send_or_drop(console(0)).expect("connected");
+
+        // A slow writing thread: the queue is full when the link drops, and has room
+        // a little later. The flush must wait for it, and its answer ends the drop.
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            let line = matches!(pending.recv(), Ok(Outbound::Message(_)));
+            let flush = match pending.recv() {
+                Ok(Outbound::Flush(done)) => done.send(()).is_ok(),
+                _ => false,
+            };
+            (line, flush)
+        });
+        drop(link);
+
+        assert_eq!(writer.join().expect("writer thread"), (true, true));
+    }
 }

@@ -1,6 +1,5 @@
 /target
 book/
-Cargo.lock
 .idea/
 node_modules/
 # Test fixtures ship their own packages.

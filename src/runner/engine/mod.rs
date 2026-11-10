@@ -22,7 +22,7 @@ use crate::registry::InMemoryHostContractRegistry;
 use crate::types::{MemoryStats, ScriptId};
 
 use super::console::{ConsoleLevel, ConsoleSink};
-use super::errors::{js_error, pending_exception};
+use super::errors::{forget_out_of_memory, js_error, pending_exception};
 use super::events::{EventIndex, ListenedEvents};
 use super::execution::{ExecutionControl, ExecutionGuard};
 use super::host_fn::HostFnClass;
@@ -394,6 +394,7 @@ impl Engine {
     /// Starts the execution budget for one operation; it ends when the guard drops.
     fn budget(&self) -> ExecutionGuard<'_> {
         self.faults.memory_fault_seen.set(false);
+        forget_out_of_memory();
         self.execution.enter(self.execution_timeout)
     }
 }

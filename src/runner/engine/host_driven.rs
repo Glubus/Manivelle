@@ -82,10 +82,7 @@ impl Engine {
             let returned = unsafe { JsValue::from_raw(ctx.clone(), returned) };
             let handle = PendingCall::new();
             if let Some(task) = ScriptTask::observe(&ctx, returned, &handle)? {
-                script.tasks.borrow_mut().push(task);
-                self.scheduling
-                    .active_tasks
-                    .set(self.scheduling.active_tasks.get() + 1);
+                self.adopt_task(script, task);
             }
             Ok(handle)
         })
@@ -162,10 +159,7 @@ impl Engine {
                     .borrow_mut()
                     .push(RequestGuard::new(&replies));
                 if let Some(task) = RequestResults::observe(&replies, ctx, script_id, value)? {
-                    script.tasks.borrow_mut().push(task);
-                    self.scheduling
-                        .active_tasks
-                        .set(self.scheduling.active_tasks.get() + 1);
+                    self.adopt_task(script, task);
                 }
                 Ok(())
             });

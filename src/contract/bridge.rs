@@ -1,13 +1,14 @@
 //! Structural conversion between QuickJS values and `serde_json` values, without JSON
 //! text. Untyped host boundaries use it directly; `serde_json::Value` codecs wrap it.
 
+use rquickjs::atom::PredefinedAtom;
 use rquickjs::{Array, Ctx, Filter, FromJs, IntoJs, Object, String as JsString, Value as JsValue};
 use serde_json::{Map, Number, Value};
 
 use super::JsEncode;
 use super::codec::{
     CodecError, PathSegment, array_length, cautious_capacity, define_property, exact_integer,
-    with_engine_bytes,
+    is_dropped_by_json, with_engine_bytes,
 };
 use super::validation::Snapshot;
 
@@ -49,6 +50,38 @@ fn unsupported(value: &JsValue<'_>) -> CodecError {
     CodecError::from_js(value.type_name(), "json", "unsupported host bridge value")
 }
 
+/// Refuses what `JSON.stringify` would not write as itself: an object with a `toJSON`
+/// method (a `Date`, say) and a `Map` or a `Set`, which it writes as `{}`. The error
+/// reads as the one of a saved state that is not plain data.
+fn reject_non_plain(object: &Object<'_>) -> Result<(), CodecError> {
+    let mut plain = !object.contains_key(PredefinedAtom::ToJSON)?;
+    if plain {
+        let tag: JsValue<'_> = object.get(PredefinedAtom::SymbolToStringTag)?;
+        if let Some(tag) = tag.as_string() {
+            plain = !matches!(tag.to_string()?.as_str(), "Map" | "Set");
+        }
+    }
+    if plain {
+        return Ok(());
+    }
+    let constructor: JsValue<'_> = object.get(PredefinedAtom::Constructor)?;
+    let name = match constructor.as_object() {
+        Some(constructor) => {
+            let name: JsValue<'_> = constructor.get(PredefinedAtom::Name)?;
+            name.as_string().map(JsString::to_string).transpose()?
+        }
+        None => None,
+    };
+    Err(CodecError::from_js(
+        "object",
+        "json",
+        format!(
+            "{} is not plain data",
+            name.as_deref().unwrap_or("an object")
+        ),
+    ))
+}
+
 fn json_value<'js>(ctx: &Ctx<'js>, value: JsValue<'js>, depth: usize) -> Result<Value, CodecError> {
     if value.is_null() || value.is_undefined() {
         return Ok(Value::Null);
@@ -75,7 +108,9 @@ fn json_value<'js>(ctx: &Ctx<'js>, value: JsValue<'js>, depth: usize) -> Result<
         if depth >= MAX_JSON_DEPTH {
             return Err(too_deep(&value));
         }
-        return json_object(ctx, &Object::from_js(ctx, value)?, depth + 1);
+        let object = Object::from_js(ctx, value)?;
+        reject_non_plain(&object)?;
+        return json_object(ctx, &object, depth + 1);
     }
     Err(unsupported(&value))
 }
@@ -84,7 +119,12 @@ fn json_array<'js>(ctx: &Ctx<'js>, array: &Array<'js>, depth: usize) -> Result<V
     let len = array_length(array, "json")?;
     let mut items = Vec::with_capacity(cautious_capacity::<Value>(len));
     for index in 0..len {
-        let item = json_value(ctx, array.get(index)?, depth).map_err(|error| error.at(index))?;
+        let item: JsValue<'js> = array.get(index)?;
+        let item = if is_dropped_by_json(&item) {
+            Value::Null
+        } else {
+            json_value(ctx, item, depth).map_err(|error| error.at(index))?
+        };
         items.push(item);
     }
     Ok(Value::Array(items))
@@ -98,6 +138,9 @@ fn json_object<'js>(
     let mut map = Map::new();
     for property in object.own_props::<JsString<'js>, JsValue<'js>>(Filter::default()) {
         let (key, value) = property?;
+        if is_dropped_by_json(&value) {
+            continue;
+        }
         let key = key.to_string()?;
         let value = json_value(ctx, value, depth)
             .map_err(|error| error.at(PathSegment::Key(key.clone())))?;
@@ -163,8 +206,12 @@ fn snapshot_array<'js>(
     let len = array_length(array, "json")?;
     let mut items = Vec::with_capacity(cautious_capacity::<Snapshot>(len));
     for index in 0..len {
-        let item =
-            snapshot_value(ctx, array.get(index)?, depth).map_err(|error| error.at(index))?;
+        let item: JsValue<'js> = array.get(index)?;
+        let item = if is_dropped_by_json(&item) {
+            Snapshot::Null
+        } else {
+            snapshot_value(ctx, item, depth).map_err(|error| error.at(index))?
+        };
         items.push(item);
     }
     Ok(Snapshot::Array(items))
@@ -178,6 +225,9 @@ fn snapshot_object<'js>(
     let mut entries = Vec::new();
     for property in object.own_props::<JsString<'js>, JsValue<'js>>(Filter::default()) {
         let (key, value) = property?;
+        if is_dropped_by_json(&value) {
+            continue;
+        }
         let key = key.to_string()?;
         let value = snapshot_value(ctx, value, depth)
             .map_err(|error| error.at(PathSegment::Key(key.clone())))?;

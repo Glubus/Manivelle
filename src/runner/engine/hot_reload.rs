@@ -190,9 +190,7 @@ impl Engine {
         for guard in script.request_guards.borrow_mut().drain(..) {
             guard.cancel();
         }
-        self.scheduling
-            .active_tasks
-            .set(self.scheduling.active_tasks.get() - script.tasks.borrow().len());
+        self.release_tasks(script.tasks.borrow().len());
         script.tasks.borrow_mut().clear();
         let disposed = self.dispose(&script);
         script.host_promises.cancel();

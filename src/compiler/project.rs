@@ -86,17 +86,19 @@ struct KnownModule {
 /// Walks the static import graph from `entry_path`, reusing `previous` when it is the
 /// state of the same project. `imports_of` returns the static import requests of one
 /// module source; requests naming `external_modules` stay unresolved for the module
-/// loader. Returns the graph and the state for the next discovery, or the error with
-/// the files looked at before it.
+/// loader. A project that belongs to a package passes the package's canonical
+/// `package_root`: neither the entry nor any import may leave it. Returns the graph and
+/// the state for the next discovery, or the error with the files looked at before it.
 pub(crate) fn discover_project(
     entry_path: &Path,
+    package_root: Option<&Path>,
     external_modules: &BTreeSet<String>,
     previous: Option<ProjectState>,
     imports_of: &mut ImportsOf<'_>,
 ) -> Result<(DiscoveredProject, ProjectState), ProjectFailure> {
-    let entry_path = normalize_entry_path(entry_path)?;
+    let entry_path = normalize_entry_path(entry_path, package_root)?;
     let (resolver, structure, known, structure_unchanged) =
-        reuse_state(previous, &entry_path, external_modules)?;
+        reuse_state(previous, &entry_path, package_root, external_modules)?;
     let mut discovery = Discovery {
         resolver: &resolver,
         external_modules,
@@ -157,6 +159,7 @@ pub(crate) fn discover_project(
 fn reuse_state(
     previous: Option<ProjectState>,
     entry_path: &Path,
+    package_root: Option<&Path>,
     external_modules: &BTreeSet<String>,
 ) -> Result<
     (
@@ -169,18 +172,20 @@ fn reuse_state(
 > {
     match previous {
         Some(state)
-            if state.external_modules == *external_modules && !state.structure.changed() =>
+            if state.external_modules == *external_modules
+                && state.resolver.package_root() == package_root
+                && !state.structure.changed() =>
         {
             Ok((state.resolver, state.structure, state.modules, true))
         }
         Some(state) => Ok((
-            ModuleResolver::for_entry(entry_path)?,
+            ModuleResolver::for_entry(entry_path)?.with_package_root(package_root),
             WatchedFiles::default(),
             state.modules,
             false,
         )),
         None => Ok((
-            ModuleResolver::for_entry(entry_path)?,
+            ModuleResolver::for_entry(entry_path)?.with_package_root(package_root),
             WatchedFiles::default(),
             HashMap::new(),
             false,
@@ -285,14 +290,28 @@ impl Discovery<'_, '_> {
     }
 }
 
-fn normalize_entry_path(entry_path: &Path) -> Result<PathBuf, EngineError> {
+fn normalize_entry_path(
+    entry_path: &Path,
+    package_root: Option<&Path>,
+) -> Result<PathBuf, EngineError> {
     if !entry_path.exists() {
         return Err(EngineError::Resolve {
             details: format!("entry path does not exist: {}", entry_path.display()),
         });
     }
 
-    entry_path.canonicalize().map_err(EngineError::from)
+    let canonical = entry_path.canonicalize().map_err(EngineError::from)?;
+    match package_root {
+        Some(root) if !canonical.starts_with(root) => Err(EngineError::Resolve {
+            details: format!(
+                "entry {} resolves outside the package root {}: {}",
+                entry_path.display(),
+                root.display(),
+                canonical.display()
+            ),
+        }),
+        _ => Ok(canonical),
+    }
 }
 
 fn module_id(path: &Path) -> String {

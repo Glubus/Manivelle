@@ -70,7 +70,9 @@ impl Engine {
     /// The `permissions` of a manifest are enforced: the package's script can only call
     /// the host functions, and listen to the events, they name (a package that names none
     /// reaches no host contract). A script loaded with `load_script` or `load_project` is
-    /// not restricted.
+    /// not restricted. A package's modules, its entry included, cannot resolve outside the
+    /// package's directory (a `tsconfig.json` above it widens nothing), so a mod cannot
+    /// import the program's own sources.
     ///
     /// # Errors
     ///
@@ -92,7 +94,17 @@ impl Engine {
                 });
                 continue;
             }
-            let permissions = PermissionSet::new(&manifest.permissions);
+            let root = match manifest.root.canonicalize() {
+                Ok(root) => root,
+                Err(error) => {
+                    report.failed.push(PackageFailure {
+                        name: manifest.name,
+                        reason: format!("cannot read the package directory: {error}"),
+                    });
+                    continue;
+                }
+            };
+            let permissions = PermissionSet::new(&manifest.permissions).with_package_root(root);
             match self.load_project_restricted(
                 manifest.name.as_str(),
                 manifest.entry_path(),

@@ -16,6 +16,9 @@ const MODULE_EXTENSIONS: &[&str] = &[".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs
 pub(crate) struct ModuleResolver {
     resolver: Resolver,
     project_root: PathBuf,
+    /// The canonical root of the package the project belongs to, when it is a package:
+    /// no module of it resolves outside, whatever the `tsconfig.json` allows.
+    package_root: Option<PathBuf>,
     /// The `tsconfig.json` found for the entry, then the configs it `extends`,
     /// directly or not.
     tsconfig_files: Vec<PathBuf>,
@@ -44,8 +47,20 @@ impl ModuleResolver {
         Ok(Self {
             resolver,
             project_root,
+            package_root: None,
             tsconfig_files,
         })
+    }
+
+    /// This resolver, confining the project to `package_root`, a canonical directory.
+    pub(crate) fn with_package_root(mut self, package_root: Option<&Path>) -> Self {
+        self.package_root = package_root.map(Path::to_path_buf);
+        self
+    }
+
+    /// The canonical root the project is confined to, if any.
+    pub(crate) fn package_root(&self) -> Option<&Path> {
+        self.package_root.as_deref()
     }
 
     /// The `tsconfig.json` this project resolves `paths` and `baseUrl` with, then the
@@ -91,14 +106,19 @@ impl ModuleResolver {
         resolved_path: &Path,
     ) -> Result<PathBuf, EngineError> {
         let canonical_resolved_path = resolved_path.canonicalize().map_err(EngineError::from)?;
-        if canonical_resolved_path.starts_with(&self.project_root) {
+        let inside = |root: &Path| canonical_resolved_path.starts_with(root);
+        if inside(&self.project_root) && self.package_root.as_deref().is_none_or(inside) {
             return Ok(canonical_resolved_path);
         }
+        let root = match &self.package_root {
+            Some(package_root) if inside(&self.project_root) => package_root,
+            _ => &self.project_root,
+        };
 
         Err(EngineError::Resolve {
             details: format!(
                 "resolved import `{request}` outside project root {}: {}",
-                self.project_root.display(),
+                root.display(),
                 canonical_resolved_path.display()
             ),
         })

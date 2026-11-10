@@ -381,8 +381,9 @@ The scripts need nothing new: a script that reads `ctx.hot.data` and registers
 - The state must be plain data: `null`, booleans, numbers, strings, arrays and plain
   objects. `snapshot` fails, naming the script and the place (`state.players[0].seen`),
   for a function, a symbol, a BigInt, a `Map`, a `Set`, a `Date`, a class instance or a
-  cycle, instead of saving it as `{}`. An `undefined` inside an object or array becomes
-  `null`. Keep a `Map` as an array of pairs and a date as a number or a string.
+  cycle, instead of saving it as `{}`. An `undefined` property is left out and an
+  `undefined` array item becomes `null`, as with `JSON.stringify`. Keep a `Map` as an
+  array of pairs and a date as a number or a string.
 - `snapshot` runs every `save`, so they must only read state, as for a reload. It stops
   at the first one that throws and makes no snapshot.
 - `restore` keeps the states for scripts that are not loaded yet, and the first
@@ -685,7 +686,7 @@ QuickJS keeps about 250 internal assertions on, even in a release build. The
 `disable-assertions` feature builds it without them:
 
 ```toml
-manivelle = { version = "0.1", features = ["disable-assertions"] }
+manivelle = { version = "0.2", features = ["disable-assertions"] }
 ```
 
 On a loaded development machine it made a call-heavy script (`fib(20)`) about 23 %
@@ -717,5 +718,5 @@ numbers and events take raw-value fast paths that the direct rquickjs code in th
 bench does not, so they come out ahead of it. The direct QuickJS reload only creates a
 context and evaluates JavaScript; the `Engine` reload loads a changed TypeScript source
 (two variants alternate) with the default options, without a disk cache.
-Run `cargo run --release --example native_roundtrip` for a quick check of the same
+Run `cargo bench --bench native_roundtrip` for a quick check of the same
 comparison.

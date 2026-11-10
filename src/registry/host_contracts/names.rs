@@ -74,21 +74,24 @@ pub(super) fn property_name(name: &str) -> String {
 }
 
 /// The binding name of each name of one level of exports: the name itself when it is a
-/// binding name, else a fresh `sdk`, `sdk2`, ... that no other name of the level takes.
+/// binding name that is not in `reserved`, else a fresh `sdk`, `sdk2`, ... that no other
+/// name of the level takes.
 pub(super) fn binding_names<'a>(
     names: impl IntoIterator<Item = &'a str>,
+    reserved: &[&str],
 ) -> BTreeMap<String, String> {
+    let is_free = |name: &str| is_binding_name(name) && !reserved.contains(&name);
     let names: BTreeSet<&str> = names.into_iter().collect();
     let mut taken: BTreeSet<String> = names
         .iter()
-        .filter(|name| is_binding_name(name))
+        .filter(|name| is_free(name))
         .map(|name| (*name).to_owned())
         .collect();
 
     names
         .into_iter()
         .map(|name| {
-            if is_binding_name(name) {
+            if is_free(name) {
                 return (name.to_owned(), name.to_owned());
             }
             let mut candidate = String::from("sdk");

@@ -6,6 +6,7 @@ use std::fmt;
 
 use serde_json::Value;
 
+use super::codec::is_canonical_integer;
 use super::{Schema, TsEnumVariant, TsField, TsLiteral, TsRecordKey, TsType};
 
 /// A value to validate, owned and shaped the way validation reads it. A JSON value converts
@@ -83,7 +84,7 @@ pub(crate) fn validate_schema_with_options(
     value: &Snapshot,
     options: SchemaValidationOptions,
 ) -> Result<(), String> {
-    let mut context = ValidationContext::new(schema);
+    let mut context = ValidationContext::new(schema)?;
     validate_type(&schema.ts_type, value, &Path::Root, options, &mut context)
 }
 
@@ -125,29 +126,41 @@ struct ValidationContext<'a> {
 }
 
 impl<'a> ValidationContext<'a> {
-    fn new(schema: &'a Schema) -> Self {
+    fn new(schema: &'a Schema) -> Result<Self, String> {
         let mut dependencies = HashMap::new();
-        collect_dependencies(&schema.dependencies, &mut dependencies);
-        Self {
+        collect_dependencies(&schema.dependencies, &mut dependencies)?;
+        Ok(Self {
             dependencies,
             resolving: Vec::new(),
-        }
+        })
     }
 }
 
+/// Records each named dependency once. Two with the same name must have the same shape:
+/// a type reference is resolved by name, so the second would be validated and declared
+/// as the first.
 fn collect_dependencies<'a>(
     schemas: &'a [Schema],
     dependencies: &mut HashMap<&'a str, Dependency<'a>>,
-) {
+) -> Result<(), String> {
     for schema in schemas {
-        if let Some(name) = schema.declared_name()
-            && !dependencies.contains_key(name)
-        {
-            let id = dependencies.len();
-            dependencies.insert(name, Dependency { id, schema });
+        if let Some(name) = schema.declared_name() {
+            match dependencies.get(name) {
+                Some(known) if known.schema != schema => {
+                    return Err(format!(
+                        "two schemas are named `{name}` but have different shapes"
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    let id = dependencies.len();
+                    dependencies.insert(name, Dependency { id, schema });
+                }
+            }
         }
-        collect_dependencies(&schema.dependencies, dependencies);
+        collect_dependencies(&schema.dependencies, dependencies)?;
     }
+    Ok(())
 }
 
 fn validate_type(
@@ -514,7 +527,7 @@ fn validate_record_key(key: TsRecordKey, field: &str, path: &Path<'_>) -> Result
 }
 
 fn validate_numeric_record_key(field: &str) -> bool {
-    field.parse::<f64>().is_ok_and(f64::is_finite)
+    is_canonical_integer(field)
 }
 
 /// Accepts a value that some member accepts. Otherwise the message keeps every member's
@@ -754,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn numeric_record_key_validation_rejects_non_finite_numbers() {
+    fn numeric_record_keys_must_be_canonical_integers() {
         let schema = Schema::typed(
             "Scores",
             TsType::Record {
@@ -766,20 +779,50 @@ mod tests {
         assert!(
             validate_schema_with_options(
                 &schema,
-                &Snapshot::from(&json!({ "42": "ok", "-1.5": "ok", "1e3": "ok" })),
+                &Snapshot::from(&json!({ "42": "ok", "-7": "ok", "0": "ok" })),
                 SchemaValidationOptions::default(),
             )
             .is_ok()
         );
 
-        let error = validate_schema_with_options(
-            &schema,
-            &Snapshot::from(&json!({ "NaN": "bad" })),
-            SchemaValidationOptions::default(),
-        )
-        .expect_err("non-finite numeric record key should fail");
+        // The decoder reads these keys as integers and refuses each of them.
+        for key in ["NaN", "1.5", "1e3", "+42", "-0", "007"] {
+            let error = validate_schema_with_options(
+                &schema,
+                &Snapshot::from(&json!({ key: "bad" })),
+                SchemaValidationOptions::default(),
+            )
+            .expect_err("a key the decoder refuses should fail");
 
-        assert_eq!(error, "$: expected numeric record key, got \"NaN\"");
+            assert_eq!(
+                error,
+                format!("$: expected numeric record key, got {key:?}")
+            );
+        }
+    }
+
+    #[test]
+    fn two_dependencies_with_one_name_must_have_the_same_shape() {
+        let item = |ty| Schema::typed("Item", ty);
+        let root = |dependencies| {
+            Schema::typed("Root", TsType::Object(Vec::new())).with_dependencies(dependencies)
+        };
+        let validate = |schema: &Schema| {
+            validate_schema_with_options(
+                schema,
+                &Snapshot::from(&json!({})),
+                SchemaValidationOptions::default(),
+            )
+        };
+
+        assert!(validate(&root(vec![item(TsType::Number), item(TsType::Number)])).is_ok());
+
+        let error = validate(&root(vec![item(TsType::Number), item(TsType::String)]))
+            .expect_err("two shapes cannot share a name");
+        assert_eq!(
+            error,
+            "two schemas are named `Item` but have different shapes"
+        );
     }
 
     #[test]

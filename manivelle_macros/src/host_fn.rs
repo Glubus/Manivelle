@@ -367,13 +367,26 @@ fn output_type(function: &ItemFn) -> syn::Result<(Type, bool)> {
             "expected `Result<Output, EngineError>`",
         ));
     };
-    match generics.args.first() {
-        Some(GenericArgument::Type(output)) => Ok((output.clone(), true)),
-        _ => Err(Error::new(
+    let Some(GenericArgument::Type(output)) = generics.args.first() else {
+        return Err(Error::new(
             ty.span(),
             "expected `Result<Output, EngineError>`",
-        )),
+        ));
+    };
+    if let Some(GenericArgument::Type(error)) = generics.args.iter().nth(1)
+        && !is_engine_error(error)
+    {
+        return Err(Error::new(
+            error.span(),
+            "a host function must return `Result<Output, EngineError>`",
+        ));
     }
+    Ok((output.clone(), true))
+}
+
+/// Whether `ty` is a path ending in `EngineError`.
+fn is_engine_error(ty: &Type) -> bool {
+    matches!(ty, Type::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "EngineError"))
 }
 
 /// `find_user` → `FindUser`.

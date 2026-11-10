@@ -14,7 +14,7 @@ This guide shows the normal flow:
 
 ```toml
 [dependencies]
-manivelle = { version = "0.1", features = ["derive"] }
+manivelle = { version = "0.2", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 ```
 

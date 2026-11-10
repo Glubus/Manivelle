@@ -130,14 +130,14 @@ pub fn analyze_project(
 ) -> Result<ScriptUsage, EngineError> {
     let mut externals = contracts.host_modules.clone();
     externals.insert("manivelle:env".to_owned());
-    let (project, _) = discover_project(entry, &externals, None, &mut |source, path| {
+    let (project, _) = discover_project(entry, None, &externals, None, &mut |source, path| {
         extract_static_import_requests(source, path)
     })
     .map_err(|failure| failure.error)?;
 
     let mut usage = ScriptUsage::default();
     for module in &project.modules {
-        if usage::is_generated(&module.source, &module.display_path) {
+        if usage::is_generated(&module.display_path) {
             continue;
         }
         let is_entry = module.module_id == project.entry_module_id;

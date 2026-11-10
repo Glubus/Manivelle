@@ -153,9 +153,7 @@ pub(super) fn new_context(
         })
     });
     if failed {
-        Err(EngineError::Execution {
-            details: String::from("out of memory while creating a script context"),
-        })
+        Err(js_error(rquickjs::Error::Allocation))
     } else {
         Ok(context)
     }

@@ -243,14 +243,16 @@ fn deliver_each<'js>(
 ) -> Result<(), EngineError> {
     let mut first_error = None;
     for handler in handlers {
+        // Checked before each call, the first included: no handler is entered once the
+        // operation must stop, whatever the caller checked.
+        if execution.should_stop() {
+            break;
+        }
         let outcome = handler
             .call(ctx, &mut [payload.as_raw()])
             .and_then(&mut receive);
         if let Err(error) = outcome {
             first_error.get_or_insert(error);
-        }
-        if execution.should_stop() {
-            break;
         }
     }
     first_error.map_or(Ok(()), Err)

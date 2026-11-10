@@ -6,7 +6,8 @@
 use rquickjs::{Array, Ctx, Object, String as JsString, Value as JsValue};
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::field_atoms::define_field;
+pub use super::DepthGuard;
+use super::field_atoms::{define_field, own_field};
 pub use super::js_text::JsText;
 use super::{CodecError, JsDecode, JsEncode, define_property_named, is_dropped_by_json};
 
@@ -53,15 +54,18 @@ pub fn json_decode_with<'js, T>(
 }
 
 /// Returns the first present property among `names` (a field name followed by its
-/// aliases). Properties `JSON.stringify` drops (undefined, functions, symbols) count as
-/// absent, so inherited methods such as `constructor` never shadow a missing field.
+/// aliases). Only own enumerable properties count, as in `JSON.parse` output: an
+/// inherited value or getter never fills a field. Properties `JSON.stringify` drops
+/// (undefined, functions, symbols) count as absent, so a method never shadows a missing
+/// field.
 pub fn field_value<'js>(
     object: &Object<'js>,
     names: &[&'static str],
 ) -> Result<Option<JsValue<'js>>, CodecError> {
     for name in names {
-        let value: JsValue<'js> = object.get(*name)?;
-        if !is_dropped_by_json(&value) {
+        if let Some(value) = own_field(object.ctx(), object, name)?
+            && !is_dropped_by_json(&value)
+        {
             return Ok(Some(value));
         }
     }
@@ -122,6 +126,17 @@ pub fn encode_field<'js, T: ?Sized>(
     encode: impl FnOnce(&T, &Ctx<'js>) -> Result<JsValue<'js>, CodecError>,
 ) -> Result<(), CodecError> {
     let value = encode(value, ctx).map_err(|error| error.at(name))?;
+    Ok(define_field(ctx, object, name, value)?)
+}
+
+/// Defines `object[name] = value`, an encoded value, as an own data property. `object` is
+/// the plain object the derived encoder just created, so no setter can run.
+pub fn define_value<'js>(
+    ctx: &Ctx<'js>,
+    object: &Object<'js>,
+    name: &'static str,
+    value: JsValue<'js>,
+) -> Result<(), CodecError> {
     Ok(define_field(ctx, object, name, value)?)
 }
 

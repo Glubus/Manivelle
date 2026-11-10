@@ -1,0 +1,13 @@
+error: a host function cannot take `self`
+ --> tests/ui/host_fn/self_receiver.rs:7:12
+  |
+7 |     fn one(&self) -> Result<f64, EngineError> {
+  |            ^
+
+warning: unused import: `EngineError`
+ --> tests/ui/host_fn/self_receiver.rs:1:17
+  |
+1 | use manivelle::{EngineError, host_fn};
+  |                 ^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

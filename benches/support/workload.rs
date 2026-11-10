@@ -1,5 +1,5 @@
-//! Host contracts shared by `benches/vs_lua.rs` and `examples/native_roundtrip.rs`.
-//! The example includes this file with `#[path]`, so it uses only the public API.
+//! Host contracts shared by `benches/vs_lua.rs` and `benches/native_roundtrip.rs`.
+//! The bench includes this file with `#[path]`, so it uses only the public API.
 
 use manivelle::{
     EngineError, HostCallback, HostContract, HostContractKind, HostFunction, HostFunctionSignature,

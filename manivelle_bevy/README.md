@@ -24,6 +24,13 @@ fn add_score(ctx: &Caller<'_>, amount: u32) -> Result<u32, EngineError> {
 }
 ```
 
+Enable the `derive` feature of `manivelle` for `#[host_fn_with_ctx]`; this crate does not
+forward it:
+
+```toml
+manivelle = { version = "0.2", features = ["derive"] }
+```
+
 ```rust
 use manivelle::{Engine, EngineOptions};
 use manivelle_bevy::AppManivelleExt;
@@ -70,5 +77,4 @@ It returns `None` when the world holds no engine, or when called inside another
   catch.
 - Scripts run on the thread that runs exclusive systems, one at a time. This crate does not
   schedule them in parallel with other systems.
-- Until a `manivelle` release that contains `Engine::with_state` is published, depend on
-  this repository by path.
+- This crate needs `manivelle` 0.2.1 or newer, the first release with `Engine::with_state`.

@@ -57,6 +57,11 @@ The script calls `math.add(...)` as if it were TypeScript, and the declarations 
 generates for it (`declare namespace math { export function add(input: AddInput): AddOutput; }`,
 with the `///` comment as JSDoc) come from the same Rust function.
 
+The example above uses the macros. [`examples/getting_started.rs`](examples/getting_started.rs)
+is the same contract written by hand, with the `HostContract` traits and no macro. Input
+validation is off by default; set `ContractValidation::InputsAndOutputs` before you run mods
+you do not trust (see [Untrusted Mods](docs/guides/untrusted-mods.md)).
+
 ## Use It As A Library: No Tool Needed
 
 **Manivelle is a Rust crate, and that is all you need.** Everything above and below works
@@ -223,6 +228,8 @@ handler 143 ns against 264 ns. Pure
 compute is QuickJS speed, about 3× slower than Lua. Context groups and the
 `disable-assertions` feature (about 23 % faster on call-heavy scripts) are described in
 [the Engine guide](docs/guides/engine.md#performance), with the full comparison.
+Reproduce these numbers with `cargo bench --bench vs_lua`; the figures above are from one run
+and are not a guarantee.
 
 `poll_protocol`, called once per frame, costs about 0.7 ns when no tool is attached and
 about 0.9 ns when one is attached and idle (a release build on Linux).

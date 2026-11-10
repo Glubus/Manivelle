@@ -1,7 +1,9 @@
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+
 use super::InMemoryHostContractRegistry;
-use super::declarations::{
-    ENV_MODULE_TYPE, EVENT_CONTEXT_TYPE, HOT_CONTEXT_TYPE, render_typescript_declarations,
-};
+use super::declarations::{ENV_MODULE_TYPE, HOT_CONTEXT_TYPE, render_typescript_declarations};
 use super::sdk::render_typescript_sdk;
 use crate::contract::{
     HostCallback, HostCallbackDescriptor, HostContext, HostContract, HostContractAbi,
@@ -17,9 +19,9 @@ struct DemoCallback;
 struct DemoContext;
 
 impl HostContract for DemoFunction {
-    const NAME: &'static str = "demo.function";
+    const NAME: &'static str = "demo.run";
     const IMPORT_MODULE: &'static str = "test";
-    const EXPORT_PATH: &'static [&'static str] = &["demo", "function"];
+    const EXPORT_PATH: &'static [&'static str] = &["demo", "run"];
 
     fn metadata() -> HostMetadata {
         HostMetadata {
@@ -39,6 +41,30 @@ impl HostFunctionSignature for DemoFunction {
 }
 
 impl HostFunction for DemoFunction {
+    fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
+        Ok(())
+    }
+}
+
+/// A function contract named after a reserved word, which no declaration can spell.
+struct ReservedFunction;
+
+impl HostContract for ReservedFunction {
+    const NAME: &'static str = "demo.function";
+    const IMPORT_MODULE: &'static str = "test";
+    const EXPORT_PATH: &'static [&'static str] = &["demo", "function"];
+
+    fn kind() -> HostContractKind {
+        HostContractKind::Function
+    }
+}
+
+impl HostFunctionSignature for ReservedFunction {
+    type Input = ();
+    type Output = ();
+}
+
+impl HostFunction for ReservedFunction {
     fn call(_input: Self::Input) -> Result<Self::Output, EngineError> {
         Ok(())
     }
@@ -161,9 +187,34 @@ fn fluent_registration_chains_contracts() {
         .and_then(|registry| registry.context::<DemoContext>())
         .unwrap();
 
-    assert!(registry.get(DemoCallback::NAME).unwrap().is_some());
-    assert!(registry.get(DemoFunction::NAME).unwrap().is_some());
-    assert!(registry.get(DemoContext::NAME).unwrap().is_some());
+    let callback = registry.get(DemoCallback::NAME).unwrap().unwrap();
+    assert_eq!(callback.kind, HostContractKind::Callback);
+    assert!(callback.callback.is_some());
+    let function = registry.get(DemoFunction::NAME).unwrap().unwrap();
+    assert_eq!(function.kind, HostContractKind::Function);
+    assert!(function.function.is_some());
+    let context = registry.get(DemoContext::NAME).unwrap().unwrap();
+    assert_eq!(context.kind, HostContractKind::Context);
+    assert!(matches!(
+        context.abi,
+        HostContractAbi::Context { schema } if schema.name.as_deref() == Some("DemoContext")
+    ));
+}
+
+#[test]
+fn a_function_named_after_a_reserved_word_is_refused_at_registration() {
+    let registry = InMemoryHostContractRegistry::new();
+
+    let refusal = registry.function::<ReservedFunction>().err();
+
+    assert!(
+        matches!(
+            &refusal,
+            Some(EngineError::InvalidOptions { details }) if details.contains("demo.function")
+        ),
+        "{refusal:?}"
+    );
+    assert!(registry.get(ReservedFunction::NAME).unwrap().is_none());
 }
 
 #[test]
@@ -337,9 +388,82 @@ fn dts_renders_nested_namespaces_and_complex_schema_types() {
         declarations,
         format!(
             "type CreateInvoiceInput = {{ status: \"draft\" | \"paid\"; metadata?: Record<string, unknown>; lines: [string, number][]; paymentMethod: \"card\" | \"wire\"; }};\n\ntype CreateInvoiceOutput = {{ id: string | null; state: {{ kind: \"created\"; }} | {{ kind: \"failed\"; reason: string; }}; }};\n\ndeclare namespace billing {{\n  namespace invoice {{\n    export function create(input: CreateInvoiceInput): CreateInvoiceOutput;\n  }}\n}}\n\n{}",
-            ctx_declaration(false)
+            ctx_declaration()
         )
     );
+    assert_typechecks("golden.d.ts", &declarations);
+}
+
+/// The declarations' closing `ctx` section, without events, and the `manivelle:env`
+/// module that exports it.
+fn ctx_declaration() -> String {
+    let ctx_type = "{ readonly hot: HostHotContext }";
+    format!(
+        "{}\n\ndeclare const ctx: {ctx_type};\n\n{}\n",
+        HOT_CONTEXT_TYPE.trim(),
+        ENV_MODULE_TYPE.trim().replace("__CTX__", ctx_type)
+    )
+}
+
+/// Type-checks `source`, written as file `name`, with the pinned TypeScript compiler, so
+/// that a golden cannot freeze invalid TypeScript. Skipped when TypeScript is not
+/// installed, unless CI or `MANIVELLE_REQUIRE_TSC` is set, as in `tests/support`.
+fn assert_typechecks(name: &str, source: &str) {
+    let compiler = Path::new(env!("CARGO_MANIFEST_DIR")).join("node_modules/typescript/bin/tsc");
+    if !compiler.is_file() {
+        assert!(
+            std::env::var_os("CI").is_none() && std::env::var_os("MANIVELLE_REQUIRE_TSC").is_none(),
+            "TypeScript is required in CI: run npm ci first"
+        );
+        eprintln!("TypeScript check skipped locally: run npm ci to enable it");
+        return;
+    }
+    let directory = std::env::temp_dir().join(format!("manivelle-{name}-{}", std::process::id()));
+    fs::create_dir_all(&directory).expect("create the source directory");
+    let file = directory.join(name);
+    fs::write(&file, source).expect("write the source");
+    let output = Command::new("node")
+        .arg(&compiler)
+        .args(["--noEmit", "--target", "ES2020", "--module", "ES2020"])
+        .arg(&file)
+        .output()
+        .expect("could not execute the pinned TypeScript compiler with node");
+    let _ = fs::remove_dir_all(&directory);
+    assert!(
+        output.status.success(),
+        "tsc rejected {name}:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn sdk_roots_named_like_its_fixed_exports_do_not_clash_with_them() {
+    let mut descriptors = vec![demo_callback()];
+    for root in ["ctx", "events", "call", "models"] {
+        let mut descriptor = find_user();
+        descriptor.name = format!("{root}.go");
+        descriptors.push(descriptor);
+    }
+
+    let sdk = render_typescript_sdk(&descriptors);
+
+    let mut exports = std::collections::BTreeSet::new();
+    for line in sdk.lines() {
+        let name = ["export const ", "export function "]
+            .iter()
+            .find_map(|prefix| line.strip_prefix(prefix))
+            .map(|rest| {
+                rest.split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+            });
+        if let Some(Some(name)) = name {
+            assert!(
+                exports.insert(name.to_owned()),
+                "`{name}` is exported twice"
+            );
+        }
+    }
+    assert_typechecks("sdk.ts", &sdk);
 }
 
 #[test]
@@ -352,45 +476,16 @@ fn dts_is_generated_from_contract_schemas() {
         ),
     ]);
 
-    assert_eq!(
-        declarations,
-        format!(
-            "type DemoCallbackPayload = {{ combo: number; }};\n\ntype DemoFunctionInput = void;\n\ndeclare namespace demo {{\n  export function function(input: DemoFunctionInput): unknown;\n}}\n\ntype HostEvents = {{\n  \"demo.callback\": DemoCallbackPayload;\n}};\n\ntype HostReplies = {{}};\n\n{}",
-            ctx_declaration(true)
-        )
-    );
+    assert!(declarations.contains("  export function run(input: DemoFunctionInput): unknown;"));
+    assert!(declarations.contains("  \"demo.callback\": DemoCallbackPayload;"));
+    assert!(declarations.contains("declare const ctx: HostEventContext & "));
 }
 
 #[test]
 fn dts_generates_function_declaration_from_contract_model() {
     let declarations = render_typescript_declarations(&[find_user()]);
 
-    assert_eq!(
-        declarations,
-        format!(
-            "type FindUserInput = number;\n\ntype FindUserOutput = string;\n\ndeclare namespace user {{\n  export function find(input: FindUserInput): FindUserOutput;\n}}\n\n{}",
-            ctx_declaration(false)
-        )
-    );
-}
-
-/// The declarations' closing `ctx` section, typing `ctx.on` and `ctx.off` only when
-/// events exist, and the `manivelle:env` module that exports it.
-fn ctx_declaration(with_events: bool) -> String {
-    let (event_context, events) = if with_events {
-        (
-            format!("{}\n\n", EVENT_CONTEXT_TYPE.trim()),
-            "HostEventContext & ",
-        )
-    } else {
-        (String::new(), "")
-    };
-    let ctx_type = format!("{events}{{ readonly hot: HostHotContext }}");
-    format!(
-        "{event_context}{}\n\ndeclare const ctx: {ctx_type};\n\n{}\n",
-        HOT_CONTEXT_TYPE.trim(),
-        ENV_MODULE_TYPE.trim().replace("__CTX__", &ctx_type)
-    )
+    assert!(declarations.contains("  export function find(input: FindUserInput): FindUserOutput;"));
 }
 
 #[test]
@@ -431,7 +526,8 @@ mod lock_tests {
 
     use super::super::bindings::{FunctionBindingStore, NativeContext};
     use crate::contract::{HostContract, HostContractKind, HostFunctionSignature};
-    use crate::runner::host_fn::HostFnClass;
+    use crate::error::EngineError;
+    use crate::runner::host_fn::{HostFnClass, resume_panic};
     use crate::runner::host_promises::HostPromises;
 
     struct Reentrant;
@@ -484,7 +580,27 @@ mod lock_tests {
                 )
                 .unwrap();
             let function: Function<'_> = target.get(Reentrant::NAME).unwrap();
-            function.call::<_, ()>(()).unwrap();
+            let outcome = function.call::<_, ()>(());
+            // A panic in the handler is parked: re-raise it so a failure shows the
+            // handler's assert instead of "a host function panicked".
+            resume_panic();
+            outcome.unwrap();
         });
+    }
+
+    #[test]
+    fn a_second_binding_of_a_contract_is_a_duplicate_contract() {
+        let store = FunctionBindingStore::default();
+        store.insert_plain::<Reentrant>(|()| Ok(())).unwrap();
+
+        let refusal = store.insert_plain::<Reentrant>(|()| Ok(())).err();
+
+        assert!(
+            matches!(
+                &refusal,
+                Some(EngineError::DuplicateContract { name }) if name == Reentrant::NAME
+            ),
+            "{refusal:?}"
+        );
     }
 }

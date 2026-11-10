@@ -16,6 +16,10 @@ use super::tree_render::{
 };
 use super::{GENERATED_SDK_MARKER, HOST_HELPERS};
 
+/// The exports the SDK always declares itself, which no root of a domain or context
+/// tree may take.
+const FIXED_EXPORTS: &[&str] = &["ctx", "events", "call", "models", "manivelleSdk"];
+
 #[derive(Default)]
 pub(super) struct SdkBuilder {
     schemas: SchemaEmitter,
@@ -124,8 +128,11 @@ impl SdkBuilder {
         let ctx_export = self.ctx_export();
         let script_exports = self.script_exports_type();
         let domain = domain_tree(&self.functions, &self.events);
-        let domain_names = binding_names(domain.roots.keys().map(String::as_str));
-        let context_names = binding_names(self.contexts.roots.keys().map(String::as_str));
+        let domain_names = binding_names(domain.roots.keys().map(String::as_str), FIXED_EXPORTS);
+        let context_names = binding_names(
+            self.contexts.roots.keys().map(String::as_str),
+            FIXED_EXPORTS,
+        );
         let models = self.schemas.into_models();
 
         let mut sections = vec![GENERATED_SDK_MARKER.to_owned()];

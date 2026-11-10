@@ -1,0 +1,5 @@
+error: serde untagged cannot be combined with tag or content
+ --> tests/ui/derive_schema/untagged_with_tag.rs:4:1
+  |
+4 | #[serde(untagged, tag = "kind")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

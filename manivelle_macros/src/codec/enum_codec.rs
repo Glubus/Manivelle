@@ -82,7 +82,7 @@ fn encode_external(
     quote!({
         let __payload = #payload?;
         let __object = ::manivelle::js::Object::new(__ctx.clone())?;
-        __object.set(#key, __payload)?;
+        ::manivelle::__private::derive::define_value(__ctx, &__object, #key, __payload)?;
         ::std::result::Result::Ok(__object.into_value())
     })
 }
@@ -122,7 +122,7 @@ fn encode_adjacent(
     let key = &variant.name.serialize;
     let content_statement = (variant.shape.style != Style::Unit).then(|| {
         let payload = encode_payload(scope, &variant.shape, accessors);
-        quote!(__object.set(#content, #payload?)?;)
+        quote!(::manivelle::__private::derive::define_value(__ctx, &__object, #content, #payload?)?;)
     });
     tagged_object(tag, key, &Vec::from_iter(content_statement))
 }
@@ -131,7 +131,12 @@ fn encode_adjacent(
 fn tagged_object(tag: &str, key: &str, statements: &[TokenStream]) -> TokenStream {
     quote!({
         let __object = ::manivelle::js::Object::new(__ctx.clone())?;
-        __object.set(#tag, #key)?;
+        ::manivelle::__private::derive::define_value(
+            __ctx,
+            &__object,
+            #tag,
+            <str as ::manivelle::JsEncode>::encode_js(#key, __ctx)?,
+        )?;
         #(#statements)*
         ::std::result::Result::Ok(__object.into_value())
     })

@@ -76,6 +76,9 @@ cannot do, what it can do to the others, and how to run code you do not trust.
    make its own reload fail through a throwing `ctx.hot.save`; `unload_script` always
    works.
 
+A permission such as `ns.*` also grants the functions added later under `ns.`, so give a mod
+exact names where you can.
+
 ## What is out of scope
 
 Manivelle does not protect against a malicious script exploiting a bug in QuickJS or in

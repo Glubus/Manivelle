@@ -297,8 +297,8 @@ where
 /// The error of registering a second contract under `name`, which the registry refuses so
 /// that a name always means one implementation.
 pub(super) fn duplicate_contract(name: &str) -> EngineError {
-    EngineError::InvalidOptions {
-        details: format!("host contract `{name}` is already registered"),
+    EngineError::DuplicateContract {
+        name: name.to_owned(),
     }
 }
 

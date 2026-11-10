@@ -1,17 +1,22 @@
 //! What a package may reach on the target.
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 /// The host contracts a package declared in its `permissions` block.
 ///
 /// A permission is the name of a contract (`world.modify`), or a namespace with a
 /// wildcard (`world.*`: every contract whose name starts with `world.`), or `*` for
 /// all of them. A contract is the name of a host function or of an event.
+///
+/// The set also carries the canonical root directory of the package it restricts, when
+/// there is one: the package's modules may not import from outside it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PermissionSet {
     exact: HashSet<String>,
     prefixes: Vec<String>,
     all: bool,
+    package_root: Option<PathBuf>,
 }
 
 impl PermissionSet {
@@ -21,13 +26,26 @@ impl PermissionSet {
         for permission in declared {
             if permission == "*" {
                 set.all = true;
-            } else if let Some(prefix) = permission.strip_suffix('*') {
+            } else if let Some(prefix) = permission.strip_suffix('*')
+                && prefix.ends_with('.')
+            {
                 set.prefixes.push(prefix.to_owned());
             } else {
                 set.exact.insert(permission.clone());
             }
         }
         set
+    }
+
+    /// This set, restricting the package whose canonical root directory is `root`.
+    pub(crate) fn with_package_root(mut self, root: PathBuf) -> Self {
+        self.package_root = Some(root);
+        self
+    }
+
+    /// The canonical root directory of the package this set restricts.
+    pub(crate) fn package_root(&self) -> Option<&Path> {
+        self.package_root.as_deref()
     }
 
     /// Whether the package may use contract `contract`.
@@ -72,6 +90,14 @@ mod tests {
         assert!(!namespace.allows("eventsx.listen"));
 
         assert!(set(&["*"]).allows("anything.at.all"));
+    }
+
+    #[test]
+    fn a_star_that_does_not_follow_a_dot_is_no_wildcard() {
+        let set = set(&["events*"]);
+        assert!(!set.allows("eventsx.listen"));
+        assert!(!set.allows("events.listen"));
+        assert!(!set.allows("events"));
     }
 
     #[test]

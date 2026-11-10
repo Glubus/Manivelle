@@ -2,6 +2,8 @@
 //! for the names it looks up.
 
 use std::cell::{Cell, RefCell};
+use std::marker::PhantomData;
+use std::rc::Rc;
 
 use rquickjs::{Ctx, Value, qjs};
 use rustc_hash::FxHashMap;
@@ -23,6 +25,8 @@ use crate::error::EngineError;
 pub(super) struct Retained {
     rt: *mut qjs::JSRuntime,
     value: qjs::JSValue,
+    /// Ties the value to its thread, as its contract says.
+    not_send: PhantomData<Rc<()>>,
 }
 
 impl Retained {
@@ -34,6 +38,7 @@ impl Retained {
             Self {
                 rt: qjs::JS_GetRuntime(ctx),
                 value: qjs::JS_DupValue(ctx, value.as_raw()),
+                not_send: PhantomData,
             }
         }
     }
@@ -131,6 +136,8 @@ const KEPT_ATOMS: usize = 1024;
 pub(super) struct KeptAtoms {
     rt: Cell<*mut qjs::JSRuntime>,
     atoms: RefCell<FxHashMap<Box<str>, qjs::JSAtom>>,
+    /// Ties the cache to its thread, as its contract says.
+    not_send: PhantomData<Rc<()>>,
 }
 
 impl Default for KeptAtoms {
@@ -138,6 +145,7 @@ impl Default for KeptAtoms {
         Self {
             rt: Cell::new(std::ptr::null_mut()),
             atoms: RefCell::default(),
+            not_send: PhantomData,
         }
     }
 }
@@ -151,7 +159,10 @@ impl KeptAtoms {
         name: &str,
         with: impl FnOnce(qjs::JSAtom) -> R,
     ) -> Option<R> {
-        if let Some(&atom) = self.atoms.borrow().get(name) {
+        // The borrow ends before `with` runs, as it does on a miss: a callback that reached
+        // back into this cache would otherwise find the `RefCell` borrowed.
+        let kept = self.atoms.borrow().get(name).copied();
+        if let Some(atom) = kept {
             return Some(with(atom));
         }
         let raw = ctx.as_raw().as_ptr();

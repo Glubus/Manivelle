@@ -11,8 +11,7 @@ use crate::error::EngineError;
 ///
 /// # Errors
 ///
-/// Fails when `source` is not a manifest with a `package` node, or holds non-ASCII text,
-/// which would make the positions the edit relies on unsafe.
+/// Fails when `source` is not a manifest with a `package` node.
 pub fn add_permissions(source: &str, names: &[String]) -> Result<String, EngineError> {
     let fail = |details: &str| EngineError::Manifest {
         path: MANIFEST_FILE.to_owned(),
@@ -20,11 +19,6 @@ pub fn add_permissions(source: &str, names: &[String]) -> Result<String, EngineE
     };
     if names.is_empty() {
         return Ok(source.to_owned());
-    }
-    if !source.is_ascii() {
-        return Err(fail(
-            "the manifest holds non-ASCII text; add the permissions by hand",
-        ));
     }
     let document = KdlDocument::parse(source).map_err(|error| fail(&error.to_string()))?;
     let package = document
@@ -75,7 +69,7 @@ pub fn add_permissions(source: &str, names: &[String]) -> Result<String, EngineE
     }
 }
 
-/// The byte range of a node in an ASCII source.
+/// The byte range of a node in its source.
 fn range_of(node: &kdl::KdlNode) -> std::ops::Range<usize> {
     let span = node.span();
     span.offset()..span.offset() + span.len()
@@ -175,8 +169,24 @@ mod tests {
     }
 
     #[test]
-    fn non_ascii_manifests_are_left_alone() {
-        let source = "package \"p\" {\n    version \"1.0.0\"\n    author \"Élodie\"\n    entry \"a.ts\"\n}\n";
-        assert!(add_permissions(source, &names(&["math.add"])).is_err());
+    fn non_ascii_text_does_not_move_the_edit() {
+        let comment = "        // ééé\n";
+        let with_block = format!(
+            "// Élodie\npackage \"p\" {{\n    author \"Élodie\"\n    version \"1.0.0\"\n    entry \"a.ts\"\n    permissions {{\n{comment}        world.read\n    }}\n}}\n"
+        );
+        let edited = add_permissions(&with_block, &names(&["math.add"])).unwrap();
+        assert_eq!(
+            edited,
+            with_block.replace(
+                "        world.read\n",
+                "        world.read\n        math.add\n"
+            )
+        );
+
+        let without_block = "// Élodie\npackage \"p\" {\n    author \"Élodie\"\n    version \"1.0.0\"\n    entry \"a.ts\"\n}\n";
+        let edited = add_permissions(without_block, &names(&["math.add"])).unwrap();
+        let manifest = PackageManifest::parse(&edited, std::path::Path::new("/p")).unwrap();
+        assert_eq!(manifest.permissions, ["math.add"], "{edited}");
+        assert_eq!(manifest.author.as_deref(), Some("Élodie"));
     }
 }

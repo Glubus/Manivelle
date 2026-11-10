@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use rquickjs::{Ctx, qjs};
 
-use super::super::errors::{OUT_OF_MEMORY, pending_exception};
+use super::super::errors::{
+    OUT_OF_MEMORY, forget_out_of_memory, pending_exception, raised_out_of_memory,
+};
 use super::super::quota::ChargeGuard;
 use super::dispatch::NULL_EXCEPTION;
 use super::{Engine, EngineScript};
@@ -67,6 +69,7 @@ impl Engine {
     ) -> Result<(), EngineError> {
         let _charge = self.charge_to(script);
         self.execution.restart_slice();
+        forget_out_of_memory();
         let outcome = body();
         let jobs = drain_jobs(ctx);
         self.judge_slice(ctx, id, script, outcome.and(jobs), what)
@@ -165,7 +168,7 @@ impl Engine {
                 .as_ref()
                 .map(|quota| Fault::Quota(quota.limit()));
         }
-        let ran_out_of_memory = details.starts_with(OUT_OF_MEMORY)
+        let ran_out_of_memory = (details.starts_with(OUT_OF_MEMORY) && raised_out_of_memory())
             || (looks_like_exhaustion(details) && pool_nearly_full(ctx));
         (ran_out_of_memory && !self.faults.memory_fault_seen.replace(true)).then_some(Fault::Memory)
     }
@@ -208,9 +211,13 @@ impl Engine {
 }
 
 /// Whether an error message is one QuickJS gives when an allocation fails while it was
-/// already handling a failure: nothing, or a thrown `null`.
+/// already handling a failure (nothing, or a thrown `null`), or says out of memory about
+/// an error that really was one: a script's own `throw new Error("out of memory")` is an
+/// ordinary error, and `details` cannot tell them apart.
 fn looks_like_exhaustion(details: &str) -> bool {
-    details.is_empty() || details.starts_with(NULL_EXCEPTION) || details.starts_with(OUT_OF_MEMORY)
+    details.is_empty()
+        || details.starts_with(NULL_EXCEPTION)
+        || (details.starts_with(OUT_OF_MEMORY) && raised_out_of_memory())
 }
 
 /// Whether `used` is at least nine tenths of `limit`; a zero limit is no limit at all.

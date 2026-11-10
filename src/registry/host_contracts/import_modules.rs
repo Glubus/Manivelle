@@ -74,7 +74,7 @@ fn render_module_source(tree: &ObjectTree<HostModuleBinding>, style: HostModuleS
         output.push_str("import { __native, __on } from \"manivelle:env\";\n");
     }
 
-    let names = binding_names(tree.roots.keys().map(String::as_str));
+    let names = binding_names(tree.roots.keys().map(String::as_str), &[]);
     for (name, node) in &tree.roots {
         output.push_str("export const ");
         output.push_str(&names[name]);
