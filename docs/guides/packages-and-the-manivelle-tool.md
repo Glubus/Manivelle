@@ -125,7 +125,10 @@ The tool listens on `127.0.0.1` and starts the target with three environment var
 `MANIVELLE_PROTOCOL` (the address), `MANIVELLE_TOKEN` (a random secret the target must
 show in its first message) and `MANIVELLE_PACKAGES` (the directories to load, separated like
 `PATH`; unset with `--no-packages`). Messages are JSON lines, defined in
-`manivelle::protocol`. Anything that connects without the token is dropped.
+`manivelle::protocol`. Anything that connects without the token is dropped. The tool
+answers the first message with a `welcome` line, and `setup_protocol` returns only once it
+has read it: a target that ends right after `setup_protocol` has still been heard, and one
+the tool does not welcome within 5 s fails to start.
 
 The connection starts one thread in the target. It only reads requests and queues them;
 it never touches the engine. The requests run on the engine's own thread in

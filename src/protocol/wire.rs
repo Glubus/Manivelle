@@ -82,6 +82,18 @@ pub enum FromProgram {
     },
 }
 
+/// What the tool sends the program besides [`Command`]s.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FromTool {
+    /// The first line the tool sends: it read the program's [`FromProgram::Hello`] and the
+    /// secret in it is right. `Engine::setup_protocol` waits for it, so a program that
+    /// ends right after it returns has still been heard: on Windows a program that ends
+    /// with its socket open resets the connection, and the tool loses what it had not
+    /// read yet.
+    Welcome,
+}
+
 /// What the tool sends the program: a request to run on the program's own thread, at its
 /// next `Engine::poll_protocol`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

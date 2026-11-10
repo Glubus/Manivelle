@@ -12,10 +12,10 @@ use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::thread;
 use std::time::Duration;
 
-use super::wire::{Command, FromProgram};
+use super::wire::{Command, FromProgram, FromTool};
 
-/// How long a connection or a write to the tool may take before the program gives up on
-/// the tool rather than stall.
+/// How long a connection, the tool's welcome or a write to the tool may take before the
+/// program gives up on the tool rather than stall.
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How many messages wait for the tool to read them. A tool that reads too slowly loses
@@ -73,10 +73,9 @@ pub(crate) struct Link {
 }
 
 impl Link {
-    /// Connects to the tool at `address` and shows it `token`.
+    /// Connects to the tool at `address`, shows it `token` and waits for its welcome.
     pub(crate) fn connect(address: &str, token: &str) -> io::Result<Self> {
-        let stream = handshake(address, token)?;
-        let reader = BufReader::new(stream.try_clone()?);
+        let (stream, reader) = handshake(address, token)?;
         let (queue, commands) = mpsc::channel();
         let waiting = Arc::new(AtomicBool::new(false));
         let alive = Arc::new(AtomicBool::new(true));
@@ -153,8 +152,11 @@ fn write_line(stream: &mut TcpStream, message: &FromProgram) -> io::Result<()> {
     stream.flush()
 }
 
-/// Opens the connection and shows the tool `token`.
-fn handshake(address: &str, token: &str) -> io::Result<TcpStream> {
+/// Opens the connection, shows the tool `token` and waits for its welcome, returning the
+/// reader that holds whatever the tool sent after it. The program goes on only once the
+/// tool has read the greeting: a program that ended before, on Windows, would reset a
+/// connection the tool had not read yet, and the tool would lose the greeting.
+fn handshake(address: &str, token: &str) -> io::Result<(TcpStream, BufReader<TcpStream>)> {
     let target = address
         .to_socket_addrs()?
         .next()
@@ -170,7 +172,38 @@ fn handshake(address: &str, token: &str) -> io::Result<TcpStream> {
             manivelle: env!("CARGO_PKG_VERSION").to_owned(),
         },
     )?;
-    Ok(stream)
+    let mut reader = BufReader::new(stream.try_clone()?);
+    await_welcome(&stream, &mut reader)?;
+    Ok((stream, reader))
+}
+
+/// Reads the tool's first line, which must be its welcome, within [`TIMEOUT`]. The tool
+/// closing the connection instead means it did not accept the greeting.
+fn await_welcome(stream: &TcpStream, reader: &mut BufReader<TcpStream>) -> io::Result<()> {
+    stream.set_read_timeout(Some(TIMEOUT))?;
+    let mut line = String::new();
+    let read = reader
+        .read_line(&mut line)
+        .map_err(|error| match error.kind() {
+            // A read that timed out is `WouldBlock` on Unix and `TimedOut` on Windows.
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the tool did not welcome the program in time",
+            ),
+            _ => error,
+        })?;
+    if read == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "the tool closed the connection without welcoming the program: is the secret wrong?",
+        ));
+    }
+    match serde_json::from_str(&line) {
+        Ok(FromTool::Welcome) => {}
+        Err(error) => return Err(io::Error::new(io::ErrorKind::InvalidData, error)),
+    }
+    // The reading thread waits for requests with no time limit.
+    stream.set_read_timeout(None)
 }
 
 /// Reads the tool's requests and queues them. Raises `raise` with each one, and lowers
@@ -238,6 +271,63 @@ mod tests {
             script: "mod".to_owned(),
             message: n.to_string(),
         }
+    }
+
+    /// The tool's end of a handshake: accepts the program and reads its greeting, and holds
+    /// the connection until it chooses to answer.
+    fn accept_greeting(listener: &TcpListener) -> TcpStream {
+        let (stream, _) = listener.accept().expect("accept");
+        let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read the greeting");
+        assert!(matches!(
+            serde_json::from_str(&line),
+            Ok(FromProgram::Hello { .. })
+        ));
+        stream
+    }
+
+    #[test]
+    fn connect_returns_only_once_the_tool_welcomed_the_program() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listen");
+        let address = listener.local_addr().expect("address").to_string();
+        let (returned, connecting) = mpsc::channel();
+        let program = thread::spawn(move || {
+            let link = Link::connect(&address, "secret");
+            returned.send(()).expect("test is waiting");
+            link
+        });
+
+        // A slow tool: it has read the greeting and answers later. Until it does, the
+        // program must not go on, or it could end and reset the connection before the tool
+        // had read anything: on Windows the tool then loses the greeting.
+        let mut stream = accept_greeting(&listener);
+        assert!(
+            connecting.recv_timeout(Duration::from_millis(300)).is_err(),
+            "connect returned before the tool welcomed the program"
+        );
+
+        let welcome = serde_json::to_string(&FromTool::Welcome).expect("encode the welcome");
+        writeln!(stream, "{welcome}").expect("welcome");
+        connecting
+            .recv_timeout(Duration::from_secs(5))
+            .expect("connect returns once welcomed");
+        assert!(program.join().expect("program thread").is_ok());
+    }
+
+    #[test]
+    fn connect_fails_when_the_tool_closes_without_a_welcome() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listen");
+        let address = listener.local_addr().expect("address").to_string();
+        let program = thread::spawn(move || Link::connect(&address, "wrong").map(|_| ()));
+
+        drop(accept_greeting(&listener));
+
+        let error = program
+            .join()
+            .expect("program thread")
+            .expect_err("a tool that drops the program has not welcomed it");
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
     }
 
     #[test]

@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 
 pub(crate) use link::Link;
 pub use wire::{
-    Command, FromProgram, PACKAGES_ENV, PROTOCOL_ENV, PackageSummary, Reply, Request, TOKEN_ENV,
+    Command, FromProgram, FromTool, PACKAGES_ENV, PROTOCOL_ENV, PackageSummary, Reply, Request,
+    TOKEN_ENV,
 };
 
 use crate::contract::HostContractKind;
@@ -63,9 +64,10 @@ impl Engine {
     /// 1. A request for the SDK (what `export_sdk_if_requested` reads) writes it and
     ///    sets [`Setup::exported`].
     /// 2. When [`PROTOCOL_ENV`] names the tool, connects to it, showing the secret of
-    ///    [`TOKEN_ENV`]. The connection starts one thread, which only reads requests
-    ///    and queues them; they run on the engine's thread in
-    ///    [`poll_protocol`](Self::poll_protocol).
+    ///    [`TOKEN_ENV`], and waits for the tool's welcome (at most 5 s): once it returns,
+    ///    the tool has read the greeting, even if the program ends right after. The
+    ///    connection starts one thread, which only reads requests and queues them; they
+    ///    run on the engine's thread in [`poll_protocol`](Self::poll_protocol).
     /// 3. When [`PACKAGES_ENV`] lists directories, loads their packages with
     ///    [`load_packages`](Self::load_packages) and tells the tool what loaded.
     ///
@@ -74,8 +76,9 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Fails when the SDK cannot be written, the tool cannot be reached, or the packages
-    /// cannot be loaded together (the tool is told first).
+    /// Fails when the SDK cannot be written, the tool cannot be reached or does not
+    /// welcome the program (a wrong secret, or no answer in time), or the packages cannot
+    /// be loaded together (the tool is told first).
     pub fn setup_protocol(&mut self) -> Result<Setup, EngineError> {
         if export_sdk_if_requested(self.registry())? {
             return Ok(Setup {

@@ -8,7 +8,7 @@ use std::net::TcpListener;
 use std::time::{Duration, Instant};
 
 use manivelle::protocol::{
-    Command, FromProgram, PACKAGES_ENV, PROTOCOL_ENV, Reply, Request, TOKEN_ENV,
+    Command, FromProgram, FromTool, PACKAGES_ENV, PROTOCOL_ENV, Reply, Request, TOKEN_ENV,
 };
 use manivelle::{Engine, EngineOptions};
 
@@ -38,17 +38,30 @@ fn the_program_follows_the_tool() {
         std::env::set_var(PACKAGES_ENV, packages.path());
     }
 
+    // The program waits for the tool's welcome inside `setup_protocol`, so the stand-in
+    // answers from a thread of its own.
+    let greeting = std::thread::spawn(move || {
+        let (stream, _) = tool.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let FromProgram::Hello { token, pid, .. } = read(&mut reader) else {
+            panic!("the program starts with hello");
+        };
+        writeln!(
+            &stream,
+            "{}",
+            serde_json::to_string(&FromTool::Welcome).unwrap()
+        )
+        .unwrap();
+        (stream, reader, token, pid)
+    });
+
     let mut engine = Engine::new(&EngineOptions::default()).unwrap();
     let setup = engine.setup_protocol().unwrap();
     assert!(setup.attached && !setup.exported);
     assert_eq!(setup.packages.loaded[0].name, "hello");
 
-    let (stream, _) = tool.accept().unwrap();
-    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let (stream, mut reader, token, pid) = greeting.join().unwrap();
     let mut writer = stream;
-    let FromProgram::Hello { token, pid, .. } = read(&mut reader) else {
-        panic!("the program starts with hello");
-    };
     assert_eq!((token.as_str(), pid), ("secret", std::process::id()));
     let FromProgram::Packages { loaded, failed } = read(&mut reader) else {
         panic!("then reports its packages");

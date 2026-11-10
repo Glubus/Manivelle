@@ -99,6 +99,14 @@
   fails. `--no-packages --target` no longer hides a broken manifest. `check --fix` replaces
   the manifest atomically (symlinks are replaced, not followed) and handles non-ASCII
   manifests.
+- On Windows, `manivelle run` could still report that the target exited before connecting
+  when the target ended right after `Engine::setup_protocol`, for instance with
+  `std::process::exit`: the connection is reset when the program ends, and the tool loses
+  the greeting it had not read yet. The tool now answers the greeting with a `welcome` line
+  (`FromTool::Welcome`) and `setup_protocol` returns only once it has it, so a target that
+  returned has been heard. `setup_protocol` fails when the tool closes the connection
+  without it or does not answer within 5 s, which also reports a wrong secret; a tool older
+  than this one does not answer, so use the tool and the program of the same version.
 - Docs: install instructions point to 0.2, Getting Started names `getting_started.ts`, and
   `manivelle_bevy` documents the derive feature.
 

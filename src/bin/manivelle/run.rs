@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use clap::Args;
 use manivelle::protocol::{
-    Command, FromProgram, PACKAGES_ENV, PROTOCOL_ENV, Reply, Request, TOKEN_ENV,
+    Command, FromProgram, FromTool, PACKAGES_ENV, PROTOCOL_ENV, Reply, Request, TOKEN_ENV,
 };
 use manivelle::{MANIFEST_FILE, PackageManifest};
 
@@ -242,8 +242,10 @@ fn await_target(
     Ok(None)
 }
 
-/// The connection of `stream` when it opens with the right `hello`.
-fn greeted(stream: TcpStream, token: &str) -> Option<Connection> {
+/// The connection of `stream` when it opens with the right `hello`. The target is welcomed
+/// before anything else: it waits for that line, so it cannot end before the tool has read
+/// its greeting.
+fn greeted(mut stream: TcpStream, token: &str) -> Option<Connection> {
     stream.set_nonblocking(false).ok()?;
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
     let mut reader = BufReader::new(stream.try_clone().ok()?);
@@ -251,6 +253,8 @@ fn greeted(stream: TcpStream, token: &str) -> Option<Connection> {
     reader.read_line(&mut line).ok()?;
     match serde_json::from_str(&line) {
         Ok(FromProgram::Hello { token: shown, .. }) if shown == token => {
+            let welcome = serde_json::to_string(&FromTool::Welcome).ok()?;
+            writeln!(stream, "{welcome}").ok()?;
             stream.set_read_timeout(None).ok()?;
             Some(Connection {
                 reader,
