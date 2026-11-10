@@ -15,9 +15,9 @@ use crate::contract::validation::{
 };
 use crate::contract::{
     Caller, HostCallback, HostCallbackDescriptor, HostContext, HostContractAbi,
-    HostContractDescriptor, HostContractKind, HostFunction, HostFunctionDescriptor,
-    HostFunctionSignature, HostImportBinding, HostMetadata, HostRequest, HostResolver, JsDecode,
-    JsEncode, Schema, ScriptExport, TsArgs, TsSchema,
+    HostContractDescriptor, HostContractKind, HostFunctionDescriptor, HostFunctionSignature,
+    HostImportBinding, HostMetadata, HostRequest, HostResolver, JsDecode, JsEncode,
+    RegisterHostFunction, Schema, ScriptExport, TsArgs, TsSchema,
 };
 use crate::error::{Direction, EngineError};
 use crate::packages::PermissionSet;
@@ -61,8 +61,9 @@ impl InMemoryHostContractRegistry {
         }
     }
 
-    /// Registers one host function, implemented by its static [`HostFunction::call`], and
-    /// returns the registry for chaining.
+    /// Registers one host function with its handler, and returns the registry for
+    /// chaining. This is the one way to register a function declared with `#[host_fn]`,
+    /// `#[host_fn_with_ctx]` or `#[host_fn_async]`, or a `HostFunction` written by hand.
     ///
     /// The schemas come from `TsSchema` of the input and output types. Calls from
     /// scripts convert the input and output natively through [`JsDecode`] and
@@ -74,14 +75,9 @@ impl InMemoryHostContractRegistry {
     /// or function name. A name already taken is [`EngineError::DuplicateContract`].
     pub fn function<T>(&self) -> Result<&Self, EngineError>
     where
-        T: HostFunction + 'static,
-        T::Input: TsSchema + JsDecode,
-        T::Output: TsSchema + JsEncode,
+        T: RegisterHostFunction,
     {
-        self.insert_descriptor(function_descriptor::<T>(false), |bindings| {
-            bindings.insert_plain::<T>(T::call)
-        })?;
-        Ok(self)
+        T::register_in(self)
     }
 
     /// Registers contract `C` implemented by `handler`, a closure that can hold state,

@@ -1,6 +1,6 @@
 [package]
 name = "manivelle_bevy"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.96"
 description = "Bevy integration for Manivelle: run an Engine inside a Bevy app and hand the World to host functions"
@@ -11,7 +11,7 @@ keywords = ["bevy", "typescript", "scripting", "gamedev", "quickjs"]
 categories = ["game-development"]
 
 [dependencies]
-manivelle = { version = "0.2.1", path = ".." }
+manivelle = { version = "0.3.0", path = ".." }
 bevy_app = "0.20.0"
 bevy_ecs = "0.20.0"
 bevy_log = "0.20.0"

@@ -28,7 +28,7 @@ Enable the `derive` feature of `manivelle` for `#[host_fn_with_ctx]`; this crate
 forward it:
 
 ```toml
-manivelle = { version = "0.2", features = ["derive"] }
+manivelle = { version = "0.3", features = ["derive"] }
 ```
 
 ```rust
@@ -36,7 +36,7 @@ use manivelle::{Engine, EngineOptions};
 use manivelle_bevy::AppManivelleExt;
 
 let mut engine = Engine::new(&EngineOptions::default())?;
-AddScore::register(engine.registry())?;
+engine.registry().function::<AddScore>()?;
 engine.load_script("rules", "export function bonus() { return game.add_score(10); }")?;
 
 app.init_resource::<Score>().add_manivelle(engine);
@@ -77,4 +77,4 @@ It returns `None` when the world holds no engine, or when called inside another
   catch.
 - Scripts run on the thread that runs exclusive systems, one at a time. This crate does not
   schedule them in parallel with other systems.
-- This crate needs `manivelle` 0.2.1 or newer, the first release with `Engine::with_state`.
+- This crate needs `manivelle` 0.3.0 or newer (`Engine::with_state` arrived in 0.2.1).

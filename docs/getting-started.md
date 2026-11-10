@@ -25,7 +25,7 @@ cd manivelle-hello
 Add dependencies:
 
 ```text
-cargo add manivelle@0.2 --features derive
+cargo add manivelle@0.3 --features derive
 cargo add serde --features derive
 cargo add serde_json
 ```

@@ -23,7 +23,7 @@ pub use caller::Caller;
 pub use codec::{CodecError, JsArgs, JsDecode, JsEncode, MapKey, PathSegment};
 pub use codec::{derive, expect_array_len, expect_object};
 pub use context::HostContext;
-pub use function::{HostFunction, HostFunctionSignature};
+pub use function::{HostFunction, HostFunctionSignature, RegisterHostFunction};
 pub use host_resolver::HostResolver;
 pub use metadata::{
     HostCallbackDescriptor, HostContractAbi, HostContractDescriptor, HostContractKind,

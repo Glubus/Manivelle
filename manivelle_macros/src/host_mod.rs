@@ -1,17 +1,19 @@
 //! Expansion of `#[host_mod]`: prefixes the `#[host_fn]` and `#[host_event]` names of one
-//! module.
+//! module, and optionally makes them importable from one module name.
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::{Attribute, Error, Item, ItemMod, LitStr, Meta, spanned::Spanned};
+use syn::{Attribute, Error, Ident, Item, ItemMod, LitStr, Meta, spanned::Spanned};
 
 use crate::args::{parse_args, take_value};
-use crate::host_fn::HostFnArgs;
+use crate::host_fn::{HostFnArgs, MOD_IMPORT_KEY, check_import};
 
 /// Rewrites every direct `#[host_fn]` and `#[host_event]` of the inline module to carry
-/// its full contract name, `namespace.name`, which the attribute then expands as usual.
+/// its full contract name, `namespace.name`, and the module's `import` when it has one;
+/// the attribute then expands as usual.
 pub(crate) fn expand_host_mod(args: TokenStream, mut module: ItemMod) -> syn::Result<TokenStream> {
-    let namespace = parse_namespace(args)?.unwrap_or_else(|| module.ident.to_string());
+    let args = ModArgs::parse(args)?;
+    let namespace = args.namespace.unwrap_or_else(|| module.ident.to_string());
     let Some((_, items)) = module.content.as_mut() else {
         return Err(Error::new(
             module.ident.span(),
@@ -24,32 +26,64 @@ pub(crate) fn expand_host_mod(args: TokenStream, mut module: ItemMod) -> syn::Re
             Item::Fn(function) => {
                 let fn_name = function.sig.ident.to_string();
                 let fn_name = fn_name.trim_start_matches("r#");
-                prefix_attributes(&mut function.attrs, Some(fn_name), &namespace)?;
+                prefix_attributes(
+                    &mut function.attrs,
+                    Some(fn_name),
+                    &namespace,
+                    args.import.as_ref(),
+                )?;
             }
             // An event has no function to take a default name from.
-            Item::Struct(item) => prefix_attributes(&mut item.attrs, None, &namespace)?,
-            Item::Enum(item) => prefix_attributes(&mut item.attrs, None, &namespace)?,
+            Item::Struct(item) => {
+                prefix_attributes(&mut item.attrs, None, &namespace, args.import.as_ref())?;
+            }
+            Item::Enum(item) => {
+                prefix_attributes(&mut item.attrs, None, &namespace, args.import.as_ref())?;
+            }
             _ => {}
         }
     }
     Ok(quote!(#module))
 }
 
-/// Reads `namespace = "..."`, the only argument.
-fn parse_namespace(args: TokenStream) -> syn::Result<Option<String>> {
-    let mut namespace: Option<LitStr> = None;
-    parse_args(args, "expected `namespace = \"name\"`", |meta| {
-        take_value(meta, "namespace", &mut namespace)
-    })?;
-    Ok(namespace.map(|namespace| namespace.value()))
+/// The arguments of `#[host_mod]`.
+struct ModArgs {
+    namespace: Option<String>,
+    /// The module scripts import the contracts from.
+    import: Option<LitStr>,
 }
 
-/// Gives each contract attribute in `attrs` its full name. `default_name` is the name a
-/// bare `#[host_fn]` takes, the function's; an event must give its own.
+impl ModArgs {
+    /// Reads `namespace = "..."` and `import = "..."`.
+    fn parse(args: TokenStream) -> syn::Result<Self> {
+        let mut namespace: Option<LitStr> = None;
+        let mut import: Option<LitStr> = None;
+        parse_args(
+            args,
+            "expected `namespace = \"name\"` and, optionally, `import = \"module\"`",
+            |meta| {
+                Ok(take_value(meta, "namespace", &mut namespace)?
+                    || take_value(meta, "import", &mut import)?)
+            },
+        )?;
+        if let Some(import) = &import {
+            check_import(import)?;
+        }
+        Ok(Self {
+            namespace: namespace.map(|namespace| namespace.value()),
+            import,
+        })
+    }
+}
+
+/// Gives each contract attribute in `attrs` its full name, and the module's `import` unless
+/// it has its own. `default_name` is the name a bare `#[host_fn]` takes, the function's;
+/// an event must give its own.
 fn prefix_attributes(
     attrs: &mut [Attribute],
     default_name: Option<&str>,
     namespace: &str,
+    import: Option<&LitStr>,
 ) -> syn::Result<()> {
     for attr in attrs {
         if !is_contract_attribute(attr) {
@@ -80,10 +114,10 @@ fn prefix_attributes(
             }
         };
         let path = attr.path();
-        *attr = match args.reply {
-            Some(reply) => syn::parse_quote!(#[#path(name = #full, reply = #reply)]),
-            None => syn::parse_quote!(#[#path(name = #full)]),
-        };
+        let reply = args.reply.map(|reply| quote!(, reply = #reply));
+        let key = Ident::new(MOD_IMPORT_KEY, Span::call_site());
+        let import = import.map(|import| quote!(, #key = #import));
+        *attr = syn::parse_quote!(#[#path(name = #full #reply #import)]);
     }
     Ok(())
 }

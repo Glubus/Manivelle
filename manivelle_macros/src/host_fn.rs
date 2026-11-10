@@ -60,7 +60,8 @@ struct Signature {
 
 /// Expands the attribute: keeps the function and adds the marker type implementing
 /// `HostContract` and `HostFunctionSignature` for it, plus `HostFunction` for a static
-/// function or a `register` function for the others.
+/// function or `RegisterHostFunction` for the others (a static function gets it from
+/// the blanket impl over `HostFunction`).
 pub(crate) fn expand_host_fn(
     args: TokenStream,
     function: &ItemFn,
@@ -90,9 +91,10 @@ pub(crate) fn expand_host_fn(
     );
     let docs = doc_text(&function.attrs);
     let docs_const = (!docs.is_empty()).then(|| quote!(const DOCS: &'static str = #docs;));
+    let import_consts = import_consts(parsed.import.as_ref(), &name);
     let implementation = match kind {
         Kind::Static => static_impl(&marker, &signature),
-        Kind::WithCtx | Kind::Async => register_impl(&marker, vis, &signature, kind),
+        Kind::WithCtx | Kind::Async => register_impl(&marker, &signature, kind),
     };
 
     Ok(quote! {
@@ -104,6 +106,7 @@ pub(crate) fn expand_host_fn(
         impl ::manivelle::HostContract for #marker {
             const NAME: &'static str = #name;
             #docs_const
+            #import_consts
 
             fn kind() -> ::manivelle::HostContractKind {
                 ::manivelle::HostContractKind::Function
@@ -160,13 +163,8 @@ fn static_impl(marker: &Ident, signature: &Signature) -> TokenStream {
     }
 }
 
-/// `Marker::register(&registry)`, which registers the function with its handler.
-fn register_impl(
-    marker: &Ident,
-    vis: &syn::Visibility,
-    signature: &Signature,
-    kind: Kind,
-) -> TokenStream {
+/// `impl RegisterHostFunction for Marker`, which registers the function with its handler.
+fn register_impl(marker: &Ident, signature: &Signature, kind: Kind) -> TokenStream {
     let call = &signature.call;
     let params = &signature.params;
     let method = match (kind, signature.with_ctx) {
@@ -175,9 +173,8 @@ fn register_impl(
         _ => quote!(function_with_caller),
     };
     quote! {
-        impl #marker {
-            /// Registers this host function, with its handler, in `registry`.
-            #vis fn register(
+        impl ::manivelle::RegisterHostFunction for #marker {
+            fn register_in(
                 registry: &::manivelle::InMemoryHostContractRegistry,
             ) -> ::core::result::Result<
                 &::manivelle::InMemoryHostContractRegistry,
@@ -290,6 +287,10 @@ fn resolver_output(ty: &Type) -> syn::Result<Type> {
     }
 }
 
+/// The argument under which `#[host_mod(import = "...")]` hands its import module to the
+/// attributes it rewrites. Reserved: only the module writes it.
+pub(crate) const MOD_IMPORT_KEY: &str = "__host_mod_import";
+
 /// Arguments of the host function attributes: `name = "..."` and the `no_namespace` flag.
 #[derive(Default)]
 pub(crate) struct HostFnArgs {
@@ -299,6 +300,9 @@ pub(crate) struct HostFnArgs {
     pub(crate) no_namespace: bool,
     /// The `reply` type of a `#[host_event]` that is a request.
     pub(crate) reply: Option<Type>,
+    /// The import module `#[host_mod(import = "...")]` gives its contracts, read from
+    /// [`MOD_IMPORT_KEY`].
+    pub(crate) import: Option<LitStr>,
 }
 
 impl HostFnArgs {
@@ -309,13 +313,43 @@ impl HostFnArgs {
             "expected `name = \"contract.name\"`, and optionally `no_namespace` \
              or, for an event, `reply = Type`",
             |meta| {
+                if meta.path.is_ident("import") {
+                    return Err(meta.error(
+                        "`import` belongs to the module: write `#[host_mod(import = \"module\")]`",
+                    ));
+                }
                 Ok(take_value(meta, "name", &mut parsed.name)?
                     || take_flag(meta, "no_namespace", &mut parsed.no_namespace)
-                    || take_value(meta, "reply", &mut parsed.reply)?)
+                    || take_value(meta, "reply", &mut parsed.reply)?
+                    || take_value(meta, MOD_IMPORT_KEY, &mut parsed.import)?)
             },
         )?;
         Ok(parsed)
     }
+}
+
+/// An import module with no name would leave the contract unimportable without saying so.
+pub(crate) fn check_import(import: &LitStr) -> syn::Result<()> {
+    if import.value().is_empty() {
+        return Err(Error::new(
+            import.span(),
+            "`import` needs the name of the module scripts import from",
+        ));
+    }
+    Ok(())
+}
+
+/// `IMPORT_MODULE` and `EXPORT_PATH` of a contract imported from `import`: scripts reach
+/// it at the path of its name, as they do under the global namespace (`math.add` is
+/// `import { math } from "app"; math.add(...)`).
+pub(crate) fn import_consts(import: Option<&LitStr>, name: &LitStr) -> Option<TokenStream> {
+    let module = import?;
+    let path = name.value();
+    let segments = path.split('.');
+    Some(quote! {
+        const IMPORT_MODULE: &'static str = #module;
+        const EXPORT_PATH: &'static [&'static str] = &[#(#segments),*];
+    })
 }
 
 fn check_shape(function: &ItemFn, kind: Kind) -> syn::Result<()> {

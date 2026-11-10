@@ -20,7 +20,7 @@ fn add(ctx: &Caller<'_>, amount: u32) -> Result<u32, EngineError> {
 
 fn engine_with_script(source: &str) -> Engine {
     let mut engine = Engine::new(&EngineOptions::default()).unwrap();
-    Add::register(engine.registry()).unwrap();
+    engine.registry().function::<Add>().unwrap();
     engine.load_script("rules", source).unwrap();
     engine
 }

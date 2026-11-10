@@ -8,6 +8,7 @@ mod names;
 
 pub(crate) use import_modules::HostModuleStyle;
 mod memory;
+mod module_declarations;
 mod sdk;
 mod tree;
 

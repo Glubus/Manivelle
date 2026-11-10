@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 ### Security
 
@@ -30,6 +30,15 @@
   `#[manivelle(encode_only)]` or `#[manivelle(decode_only)]`.
 - `#[host_fn]`, `#[host_fn_with_ctx]` and `#[host_fn_async]` require `EngineError` as the
   error type.
+- Every host function declared with a macro registers the same way, with
+  `registry.function::<Marker>()`: `#[host_fn]`, `#[host_fn_with_ctx]` and `#[host_fn_async]` all
+  generate a marker that implements the new `RegisterHostFunction` trait, and `function` takes
+  that trait, so hand-written `HostFunction` contracts register unchanged. The
+  `Marker::register(&registry)` function that `#[host_fn_with_ctx]` and `#[host_fn_async]`
+  generated is removed: replace `FindUser::register(engine.registry())?` with
+  `engine.registry().function::<FindUser>()?`. The marker is named after the function in
+  `UpperCamelCase` (`find_user` becomes `FindUser`); a type of that name in the same module is a
+  compile error.
 
 ### Changed
 
@@ -39,6 +48,22 @@
 - `getrandom` is an optional dependency, enabled by the `cli` feature.
 - `manivelle_bevy`: `with_engine` panics with the real `with_state` error, and the crate
   ships its `LICENSE`.
+
+### Added
+
+- `#[host_mod(namespace = "math", import = "app")]` makes every `#[host_fn]`,
+  `#[host_fn_with_ctx]`, `#[host_fn_async]` and `#[host_event]` of the module importable: it sets
+  `IMPORT_MODULE` and `EXPORT_PATH`, so a script, including one in a context group, writes
+  `import { math } from "app"; math.add(..)`. `import` on `#[host_fn]` or `#[host_event]`
+  directly is a compile error pointing to `#[host_mod]`.
+- The generated declarations type import modules: every `IMPORT_MODULE` becomes a
+  `declare module "..."` block (functions, nested objects, callbacks as handler-registering
+  functions), so `import { math } from "app"` type-checks from `manivelle.d.ts` alone, with no SDK
+  file or `paths` mapping; `manivelle init` projects get it with no extra setup.
+- `examples/game_loop` loads its scripts from `examples/game_loop/*.ts`, typed by a checked-in
+  generated `manivelle.d.ts`; it uses `#[host_mod]`, `#[host_fn_async]` and `#[host_event]`
+  (including a typed `status` request), reloads the project from disk with `reload_changed`, fails
+  when the checked-in declarations are stale, and `tsc` checks the scripts in the test suite.
 
 ### Fixed
 

@@ -88,14 +88,22 @@ pub fn derive_ts_schema(input: TokenStream) -> TokenStream {
 /// fn find_user(input: FindUserInput) -> Result<FindUserOutput, EngineError> {
 ///     Ok(FindUserOutput { display_name: format!("user {}", input.user_id) })
 /// }
+///
+/// engine.registry().function::<FindUser>()?;
 /// ```
 ///
-/// Keeps the function and generates a marker type named after it in `PascalCase`
-/// (`FindUser`) with the same visibility. The marker implements `HostContract` (the
-/// given `name`), `HostFunctionSignature` (`Input` is the parameter type, `()` without
-/// parameter; `Output` is the `T` of `Result<T, EngineError>`, or the plain return type
-/// of a function that cannot fail) and `HostFunction`, so it registers with
-/// `registry.function::<FindUser>()`.
+/// Keeps the function and generates a marker type, a unit struct with the function's
+/// visibility. Its name is the function's in `UpperCamelCase`: each `_`-separated word
+/// is capitalised and the underscores dropped (`find_user` → `FindUser`, `add` → `Add`).
+/// A type of the same name in the same module is a compile error ("the name `FindUser`
+/// is defined multiple times", reported on the attribute): rename the function or the type.
+///
+/// The marker implements `HostContract` (the given `name`), `HostFunctionSignature`
+/// (`Input` is the parameter type, `()` without parameter; `Output` is the `T` of
+/// `Result<T, EngineError>`, or the plain return type of a function that cannot fail) and
+/// `HostFunction`. Every host function attribute registers the same way, with
+/// `registry.function::<Marker>()`: the marker implements `RegisterHostFunction`, which
+/// `HostFunction` gives it here.
 ///
 /// The function must not be `async` or generic, and takes at most one parameter. To
 /// receive the calling script, see [`macro@host_fn_with_ctx`]; for a function settled
@@ -113,13 +121,14 @@ pub fn host_fn(args: TokenStream, item: TokenStream) -> TokenStream {
 ///     Ok(FindUserOutput { display_name: format!("{} asks {}", ctx.script_id(), input.user_id) })
 /// }
 ///
-/// FindUser::register(engine.registry())?;
+/// engine.registry().function::<FindUser>()?;
 /// ```
 ///
-/// Like [`macro@host_fn`], it generates the marker (`FindUser`) with `HostContract` and
-/// `HostFunctionSignature`. A static `HostFunction` cannot know its caller, so the
-/// marker gets a `register(&registry)` function instead, which registers the function
-/// with `function_with_caller`. The input is optional (`fn(ctx)`).
+/// Like [`macro@host_fn`], it generates the marker (`FindUser`, named the same way) with
+/// `HostContract` and `HostFunctionSignature`. A static `HostFunction` cannot know its
+/// caller, so the marker implements `RegisterHostFunction` itself, with a handler that
+/// calls the function through `function_with_caller`; `registry.function::<FindUser>()`
+/// is still how it is registered. The input is optional (`fn(ctx)`).
 #[proc_macro_attribute]
 pub fn host_fn_with_ctx(args: TokenStream, item: TokenStream) -> TokenStream {
     expand_host_function(args, item, host_fn::Kind::WithCtx)
@@ -135,13 +144,15 @@ pub fn host_fn_with_ctx(args: TokenStream, item: TokenStream) -> TokenStream {
 ///     Ok(())
 /// }
 ///
-/// LookupScore::register(engine.registry())?;
+/// engine.registry().function::<LookupScore>()?;
 /// ```
 ///
-/// The parameters are `[ctx: &Caller<'_>,] input, resolver: HostResolver<Output>`; the
-/// `Output` is the resolver's type parameter. The marker gets a `register(&registry)`
-/// function that uses `async_function_with` (or `async_function_with_caller` with a
-/// `ctx`). The function returns `Result<(), EngineError>` or nothing.
+/// The marker (`LookupScore`, named like that of [`macro@host_fn`]) is registered with
+/// `registry.function::<LookupScore>()` too. The parameters are
+/// `[ctx: &Caller<'_>,] input, resolver: HostResolver<Output>`; the `Output` is the
+/// resolver's type parameter. The generated `RegisterHostFunction` impl uses
+/// `async_function_with` (or `async_function_with_caller` with a `ctx`). The function
+/// returns `Result<(), EngineError>` or nothing.
 #[proc_macro_attribute]
 pub fn host_fn_async(args: TokenStream, item: TokenStream) -> TokenStream {
     expand_host_function(args, item, host_fn::Kind::Async)
@@ -200,7 +211,7 @@ pub fn script_export(args: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Prefixes the contract names of the `#[host_fn]` functions and `#[host_event]` types of
-/// an inline module.
+/// an inline module, and with `import` makes them importable from a module.
 ///
 /// ```ignore
 /// #[host_mod(namespace = "math")] // or `#[host_mod]`: the module's name
@@ -219,6 +230,20 @@ pub fn script_export(args: TokenStream, item: TokenStream) -> TokenStream {
 /// The module must be inline, since a macro cannot read `mod name;`. Marker types stay
 /// in the module and follow the function's visibility, so use `pub fn` to register
 /// them from outside (`math::Add`).
+///
+/// `import = "app"` also sets, on every contract of the module, the `IMPORT_MODULE` and
+/// `EXPORT_PATH` a hand-written contract sets by hand: scripts then reach `math.add` with
+/// `import { math } from "app"; math.add(...)`, the path being the full contract name. A
+/// script in a context group has no host globals, so the import is how it reaches the
+/// function.
+///
+/// ```ignore
+/// #[host_mod(namespace = "math", import = "app")]
+/// mod math {
+///     #[host_fn]
+///     pub fn add(input: AddInput) -> Result<AddOutput, EngineError> { /* ... */ }
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn host_mod(args: TokenStream, item: TokenStream) -> TokenStream {
     let module = parse_macro_input!(item as syn::ItemMod);

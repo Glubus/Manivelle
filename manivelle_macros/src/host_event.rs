@@ -4,7 +4,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Error, Item, spanned::Spanned};
 
-use crate::host_fn::{HostFnArgs, doc_text};
+use crate::host_fn::{HostFnArgs, doc_text, import_consts};
 
 /// Keeps the struct or enum and makes it the contract of an event whose payload it is:
 /// `HostContract`, `HostCallback` and, with `reply = Type`, `HostRequest`.
@@ -33,6 +33,7 @@ pub(crate) fn expand_host_event(args: TokenStream, item: &Item) -> syn::Result<T
 
     let docs = doc_text(attrs);
     let docs_const = (!docs.is_empty()).then(|| quote!(const DOCS: &'static str = #docs;));
+    let import_consts = import_consts(parsed.import.as_ref(), &name);
     let request = parsed.reply.map(|reply| {
         quote! {
             impl ::manivelle::HostRequest for #ident {
@@ -47,6 +48,7 @@ pub(crate) fn expand_host_event(args: TokenStream, item: &Item) -> syn::Result<T
         impl ::manivelle::HostContract for #ident {
             const NAME: &'static str = #name;
             #docs_const
+            #import_consts
 
             fn kind() -> ::manivelle::HostContractKind {
                 ::manivelle::HostContractKind::Callback

@@ -82,6 +82,10 @@ that registers a handler (`user.found(handler)` for
 that should be exported from the same module. Contexts are not exported: they
 are declarative metadata.
 
+`#[host_mod(namespace = "user", import = "my_sdk")]` sets both for every
+`#[host_fn]`, `#[host_fn_with_ctx]`, `#[host_fn_async]` and `#[host_event]` of an inline
+module, with the contract name as the export path (`user.find` is `["user", "find"]`).
+
 ## What The Declaration File Contains
 
 The declaration file contains the public TypeScript API:
@@ -91,8 +95,38 @@ The declaration file contains the public TypeScript API:
 - the `ctx` global: `ctx.hot` always (see
   [Keep State Across Reloads](engine.md#keep-state-across-reloads)), and
   `ctx.on(...)` once a callback is registered
-- generated namespaces such as `user.find(...)`
+- generated namespaces such as `user.find(...)`: the globals of a script outside any
+  context group
+- a `declare module "<IMPORT_MODULE>"` block for every import module, for the scripts
+  that import (a grouped script has no globals)
 - event maps for typed callback subscriptions
+
+The `declare module` blocks mirror the virtual module `Engine` builds, so
+`import { user } from "my_sdk"` type-checks from the declaration file alone, with no
+SDK file and no `paths` mapping. For `#[host_mod(namespace = "math", import = "app")]`
+and a documented `add` function:
+
+```ts
+declare namespace math {
+  /** Adds two numbers. */
+  export function add(input: AddInput): AddOutput;
+}
+
+declare module "app" {
+  export const math: {
+    /** Adds two numbers. */
+    add(input: AddInput): AddOutput;
+  };
+}
+```
+
+An `EXPORT_PATH` of one segment is an exported function (`export function find(...)`),
+a longer path an exported object holding its functions, and a callback is the function
+that registers a handler (`onFound(handler: HostEventHandler<"user.found">): void`).
+Modules and their members come out in name order. A contract with an `IMPORT_MODULE`
+appears in both forms, because a script of a context of its own has the global as well
+as the import; a contract without one is a global only, and a script in a group cannot
+reach it.
 
 Use it from a `tsconfig.json` with `include` or `typeRoots`, depending on how
 your application packages scripts.

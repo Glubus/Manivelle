@@ -5,6 +5,7 @@ use crate::contract::{
     TsRecordKey, TsType,
 };
 
+use super::module_declarations::ImportModules;
 use super::names::{indent, is_identifier_name};
 
 const DEFAULT_ENUM_TAG: &str = "type";
@@ -23,6 +24,7 @@ pub(crate) fn render_typescript_declarations(descriptors: &[HostContractDescript
 
     for descriptor in descriptors {
         push_descriptor(&mut declarations, descriptor);
+        declarations.import_modules.push(descriptor);
     }
 
     declarations.finish()
@@ -137,6 +139,7 @@ struct DeclarationBuffer {
     host_replies: Vec<String>,
     script_exports: Vec<String>,
     schemas: SchemaEmitter,
+    import_modules: ImportModules,
 }
 
 impl DeclarationBuffer {
@@ -205,6 +208,8 @@ impl DescriptorSink for DeclarationBuffer {
 
 impl DeclarationBuffer {
     fn finish(mut self) -> String {
+        let modules = self.import_modules.render();
+        self.sections.extend(modules);
         self.push_host_events();
         self.push_script_exports();
         self.push_ctx();

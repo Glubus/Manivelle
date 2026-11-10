@@ -101,6 +101,51 @@ export function run(): number {
     );
 }
 
+/// The program's contract is importable (`import { math } from "app"`): the project `init`
+/// writes resolves that import from the declarations it wrote, with no setup of the author's.
+#[test]
+fn an_import_of_the_programs_module_type_checks_in_a_fresh_project() {
+    let dir = TestCacheDir::new("cli-init-import");
+    let project = dir.path().join("my-mod");
+    let output = init(&project, &[], &[]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let types = fs::read_to_string(project.join("manivelle/manivelle.d.ts")).expect("types");
+    assert!(types.contains("declare module \"app\" {"), "{types}");
+    let main = project.join("src/main.ts");
+    fs::write(
+        &main,
+        r#"import { math } from "app";
+
+export function run(): number {
+    return math.add({ left: 20, right: 22 }).value;
+}
+"#,
+    )
+    .expect("write script");
+
+    let Some(output) = support::run_tsc_project(&project) else {
+        return;
+    };
+    assert!(
+        output.status.success(),
+        "tsc rejected the import\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::write(
+        &main,
+        "import { math } from \"app\";\nexport const run: string = math.add({ left: 1, right: 2 }).value;\n",
+    )
+    .expect("write a wrong script");
+    let output = support::run_tsc_project(&project).expect("tsc is installed");
+    assert!(
+        !output.status.success() && String::from_utf8_lossy(&output.stdout).contains("TS2322"),
+        "tsc must reject a wrong use of the import:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
 #[test]
 fn running_init_again_updates_the_declarations_and_keeps_the_authors_files() {
     let dir = TestCacheDir::new("cli-init-again");

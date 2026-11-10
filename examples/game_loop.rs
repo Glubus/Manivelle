@@ -2,95 +2,61 @@
 //! events, requests, an async host function answered from another thread, and a hot
 //! reload that keeps the script's state.
 //!
+//! The scripts are real files in `examples/game_loop/`, type-checked by `tsc` against
+//! `manivelle.d.ts` alone: it is generated from the contracts below (the `game` module,
+//! the `frame` and `status` events) and checked in, and the program fails when it is
+//! stale. After changing a contract, refresh it with
+//! `cargo run --example game_loop --features derive -- --update-types`.
+//!
 //! Run: `cargo run --example game_loop --features derive`
 
 use std::error::Error;
-use std::sync::mpsc;
+use std::fs;
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
 use manivelle::{
-    Engine, EngineOptions, HostContract, HostContractKind, HostFunctionSignature, HostResolver,
-    PendingCall, ScriptId, TsSchema,
+    Engine, EngineOptions, HostContract, PendingCall, ScriptId, TsSchema, host_event, host_mod,
 };
 
-/// The per-frame event payload, encoded natively into a JavaScript object.
+/// The per-frame event payload, encoded natively into a JavaScript object. `#[host_event]`
+/// names the event, so `emit` takes `Frame::NAME` instead of a string that could be misspelled,
+/// and the `frame` handler of `hud.ts` gets its parameter typed from this struct.
 #[derive(TsSchema)]
+#[host_event(name = "frame")]
 struct Frame {
     dt: f64,
     tick: u32,
 }
 
-/// `import { highScore } from "game"`: an async host function, answered by the storage
-/// thread.
-struct HighScore;
+/// The `status` request: every script replies with a line of text.
+#[derive(TsSchema)]
+#[host_event(name = "status", reply = String)]
+struct Status;
 
-impl HostContract for HighScore {
-    const NAME: &'static str = "game.highScore";
-    // A grouped script has no host globals: it reaches host functions through imports.
-    const IMPORT_MODULE: &'static str = "game";
-    const EXPORT_PATH: &'static [&'static str] = &["highScore"];
+/// `import { game } from "game"`: the host functions of the scripts. A grouped script has
+/// no host globals, so it reaches them through this import.
+#[host_mod(namespace = "game", import = "game")]
+mod game {
+    use std::thread;
+    use std::time::Duration;
 
-    fn kind() -> HostContractKind {
-        HostContractKind::Function
+    use manivelle::{EngineError, HostResolver, host_fn_async};
+
+    /// The best score on record, answered by another thread.
+    #[host_fn_async(name = "highScore")]
+    pub fn high_score(_input: (), resolver: HostResolver<f64>) -> Result<(), EngineError> {
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(5)); // pretend to read a save file
+            resolver.resolve(1200.0).expect("resolve high score");
+        });
+        Ok(())
     }
 }
 
-impl HostFunctionSignature for HighScore {
-    type Input = ();
-    type Output = f64;
-}
-
-/// Spawns a wave every second of game time, keeps its wave count across reloads, and
-/// adds the stored high score to it.
-fn spawner(version: u32) -> String {
-    format!(
-        r#"
-        import {{ ctx, setTimeout }} from "manivelle:env";
-        import {{ highScore }} from "game";
-
-        let waves = (ctx.hot.data as {{ waves: number }} | undefined)?.waves ?? 0;
-        ctx.hot.save(() => ({{ waves }}));
-
-        function scheduleWave(): void {{
-            setTimeout(() => {{ waves += 1; scheduleWave(); }}, 1000);
-        }}
-        scheduleWave();
-
-        // A group shares one global object: the HUD reads this.
-        (globalThis as any).gameTitle = "Asteroids";
-
-        ctx.on("status", () => `spawner v{version}: waves=${{waves}}`);
-
-        export function version(): number {{ return {version}; }}
-        export function wavesSpawned(): number {{ return waves; }}
-        export async function bestScore(): Promise<number> {{
-            return (await highScore()) + waves * 100;
-        }}
-        "#
-    )
-}
-
-/// Counts frames, shows a "get ready" banner for half a second, and answers the
-/// `status` request.
-const HUD: &str = r#"
-import { ctx, setTimeout } from "manivelle:env";
-
-let frameCount = 0;
-let lastTick = -1;
-let banner = "get ready";
-setTimeout(() => { banner = "playing"; }, 500);
-
-ctx.on("frame", (frame: { dt: number; tick: number }) => {
-    frameCount += 1;
-    lastTick = frame.tick;
-});
-ctx.on("status", () =>
-    `hud: ${(globalThis as any).gameTitle} ${banner} frames=${frameCount} tick=${lastTick}`);
-
-export function frames(): number { return frameCount; }
-export function bannerText(): string { return banner; }
-"#;
+/// The project: `spawner.ts`, `hud.ts`, their `tsconfig.json` and the generated declarations.
+const PROJECT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/game_loop");
 
 /// 50 frames per second of game time. A timer set from a timer callback counts from
 /// the clock at that moment, so a frame that divides the period keeps waves on time.
@@ -98,24 +64,40 @@ const FRAME: Duration = Duration::from_millis(20);
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut engine = Engine::new(&EngineOptions::default())?;
-
-    // The handler only hands the resolver over; the storage thread answers it.
-    let (requests, storage_inbox) = mpsc::channel::<HostResolver<f64>>();
-    let storage = thread::spawn(move || {
-        for resolver in storage_inbox {
-            thread::sleep(Duration::from_millis(5)); // pretend to read a save file
-            resolver.resolve(1200.0).expect("resolve high score");
-        }
-    });
     engine
         .registry()
-        .async_function_with::<HighScore>(move |(), resolver| {
-            requests.send(resolver).expect("storage thread is running");
-            Ok(())
-        })?;
+        .function::<game::HighScore>()?
+        .callback::<Frame>()?
+        .request::<Status>()?;
 
-    engine.load_script_in("game", "spawner", &spawner(1))?;
-    engine.load_script_in("game", "hud", HUD)?;
+    // The scripts' types come from the contracts above: the checked-in declarations must
+    // be what the registry generates now.
+    let generated = engine.registry().dts()?;
+    let path = Path::new(PROJECT).join("manivelle.d.ts");
+    if std::env::args().any(|argument| argument == "--update-types") {
+        fs::write(&path, &generated)?;
+        println!("wrote {}", path.display());
+        return Ok(());
+    }
+    // Git may check the file out with CRLF line endings.
+    let checked_in = fs::read_to_string(&path)?.replace("\r\n", "\n");
+    assert!(
+        checked_in == generated,
+        "{} is stale: run `cargo run --example game_loop --features derive -- --update-types`",
+        path.display()
+    );
+
+    // Work on a copy of the project, so the reload below can edit a script.
+    let scratch = tempfile::Builder::new()
+        .prefix("manivelle-game-loop-")
+        .tempdir()?;
+    for entry in fs::read_dir(PROJECT)? {
+        let entry = entry?;
+        fs::copy(entry.path(), scratch.path().join(entry.file_name()))?;
+    }
+    let spawner = scratch.path().join("spawner.ts");
+    engine.load_project_in("game", "spawner", &spawner)?;
+    engine.load_project_in("game", "hud", scratch.path().join("hud.ts"))?;
 
     // 25 frames: the banner timer (500 ms) has fired, no wave yet.
     let mut tick = 0;
@@ -138,15 +120,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     assert_eq!((waves, frames), (2.0, 100.0));
 
-    // Reload the spawner with a new version: `ctx.hot` hands the wave count over.
-    engine.load_script_in("game", "spawner", &spawner(2))?;
+    // Edit the spawner on disk (version 1 -> 2) and reload what changed: `ctx.hot` hands
+    // the wave count over. The edit changes the file's size, so the change is seen
+    // whatever the clock resolution of the file system.
+    let source = fs::read_to_string(&spawner)?;
+    let edited = source.replace("const VERSION = 1;", "const VERSION = 2; // edited");
+    assert_ne!(source, edited, "spawner.ts no longer declares version 1");
+    fs::write(&spawner, edited)?;
+    let report = engine.reload_changed();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(report.reloaded, [ScriptId::from("spawner")]);
     let version: f64 = engine.call("spawner", "version", ())?;
     let waves: f64 = engine.call("spawner", "wavesSpawned", ())?;
     println!("reloaded spawner: version={version} waves={waves}");
     assert_eq!((version, waves), (2.0, 2.0));
 
     run_frames(&engine, &mut tick, 50)?; // one more second: the new version's timer
-    let status: Vec<(ScriptId, String)> = engine.request("status", &())?;
+    let status: Vec<(ScriptId, String)> = engine.request(Status::NAME, &Status)?;
     for (script, reply) in &status {
         println!("status from {script}: {reply}");
     }
@@ -167,7 +157,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut waited = 0;
     while !best.is_finished() {
         thread::sleep(Duration::from_millis(1));
-        engine.pump()?; // resume the script once the storage thread has answered
+        engine.pump()?; // resume the script once the other thread has answered
         waited += 1;
         assert!(waited < 5_000, "the storage thread never answered");
     }
@@ -175,8 +165,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("best score: {best} (after {waited} pumps)");
     assert_eq!(best, 1500.0);
 
-    drop(engine); // drops the registry's sender: the storage thread ends
-    storage.join().expect("storage thread");
     Ok(())
 }
 
@@ -185,7 +173,7 @@ fn run_frames(engine: &Engine, tick: &mut u32, count: u32) -> Result<(), Box<dyn
     for _ in 0..count {
         engine.advance_timers(FRAME)?;
         engine.emit(
-            "frame",
+            Frame::NAME,
             &Frame {
                 dt: FRAME.as_secs_f64(),
                 tick: *tick,

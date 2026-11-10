@@ -27,40 +27,82 @@ It is a scripting layer, not a server runtime.
 The Rust side declares what scripts may call (`cargo add manivelle --features derive`):
 
 ```rust
-use manivelle::{Engine, EngineError, EngineOptions, TsSchema, host_fn};
+use manivelle::{Engine, EngineError, EngineOptions, TsSchema, host_mod};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, TsSchema)]
-struct AddInput { left: i32, right: i32 }
+pub struct AddInput { left: i32, right: i32 }
 
-#[derive(Serialize, TsSchema)]
-struct AddOutput { value: i32 }
+#[derive(Deserialize, Serialize, TsSchema)]
+pub struct AddOutput { value: i32 }
 
-/// Adds two numbers.
-#[host_fn(name = "math.add")]
-fn add(input: AddInput) -> Result<AddOutput, EngineError> {
-    Ok(AddOutput { value: input.left + input.right })
+#[host_mod(namespace = "math", import = "app")]
+mod math {
+    use super::{AddInput, AddOutput};
+    use manivelle::{EngineError, host_fn};
+
+    // The macro keeps `add` and generates the marker type `Add` that registers it.
+    /// Adds two numbers.
+    #[host_fn]
+    pub fn add(input: AddInput) -> Result<AddOutput, EngineError> {
+        Ok(AddOutput { value: input.left + input.right })
+    }
 }
 
 fn main() -> Result<(), EngineError> {
     let mut engine = Engine::new(&EngineOptions::default())?;
-    engine.registry().function::<Add>()?;
+    engine.registry().function::<math::Add>()?;
 
-    engine.load_script("rules", "export function run() { return math.add({ left: 20, right: 22 }); }")?;
-    let result: serde_json::Value = engine.call("rules", "run", ())?;
-    println!("{result}"); // {"value":42}
+    engine.load_script("rules", r#"
+        import { math } from "app";
+        export function run() { return math.add({ left: 20, right: 22 }); }
+    "#)?;
+    let result: AddOutput = engine.call("rules", "run", ())?;
+    println!("{}", result.value); // 42
     Ok(())
 }
 ```
 
-The script calls `math.add(...)` as if it were TypeScript, and the declarations Manivelle
-generates for it (`declare namespace math { export function add(input: AddInput): AddOutput; }`,
-with the `///` comment as JSDoc) come from the same Rust function.
+Manivelle generates these declarations for the script, from the same Rust function, with the
+`///` comment as JSDoc:
+
+```ts
+declare namespace math {
+  /** Adds two numbers. */
+  export function add(input: AddInput): AddOutput;
+}
+
+declare module "app" {
+  export const math: {
+    /** Adds two numbers. */
+    add(input: AddInput): AddOutput;
+  };
+}
+```
+
+The second block types `import { math } from "app"`, which works in every script; both come from
+the same `manivelle.d.ts`, with no SDK file or `paths` mapping. The first block is the global
+`math.add(...)`: a script outside any context group gets every host function as a global as well,
+and a grouped script gets none, so the import is the form to use. A function the script's
+permissions do not allow is refused at the call rather than hidden.
 
 The example above uses the macros. [`examples/getting_started.rs`](examples/getting_started.rs)
-is the same contract written by hand, with the `HostContract` traits and no macro. Input
+is the same function written by hand, with the `HostContract` traits, as a global. Input
 validation is off by default; set `ContractValidation::InputsAndOutputs` before you run mods
 you do not trust (see [Untrusted Mods](docs/guides/untrusted-mods.md)).
+
+A host function that needs the calling script or the host's state takes `ctx: &Caller<'_>`
+with `#[host_fn_with_ctx]`, one that answers later takes a `HostResolver` with `#[host_fn_async]`,
+and every kind registers the same way, `registry().function::<Marker>()`. A closure that captures
+state (a channel, a handle) registers with `function_with` instead. A hand-written contract sets
+`IMPORT_MODULE` and `EXPORT_PATH` itself; see
+[Import Modules](docs/guides/generate-sdk-files.md#import-modules).
+
+For a complete game loop (timers on the host clock, events, a typed `status` request, an async
+host function answered from another thread, and a hot reload that keeps script state through
+`ctx.hot`), see [`examples/game_loop`](examples/game_loop.rs): its `.ts` scripts are type-checked
+against declarations generated from the Rust contracts, and the example fails when the checked-in
+declarations are stale.
 
 ## Use It As A Library: No Tool Needed
 

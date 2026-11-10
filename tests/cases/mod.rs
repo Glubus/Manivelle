@@ -36,6 +36,8 @@ mod engine_projects_reload;
 mod engine_projects_resolution;
 mod engine_scripts;
 mod error_reports;
+#[cfg(feature = "derive")]
+mod example_game_loop;
 mod fault_isolation;
 #[cfg(feature = "derive")]
 mod host_fn_attr;
@@ -46,6 +48,7 @@ mod host_registry_api;
 mod hostile_scripts;
 mod hot_reload;
 mod hot_state;
+mod import_module_declarations;
 mod interrupt;
 mod package_permissions;
 mod package_reload_permissions;

@@ -686,7 +686,7 @@ QuickJS keeps about 250 internal assertions on, even in a release build. The
 `disable-assertions` feature builds it without them:
 
 ```toml
-manivelle = { version = "0.2", features = ["disable-assertions"] }
+manivelle = { version = "0.3", features = ["disable-assertions"] }
 ```
 
 On a loaded development machine it made a call-heavy script (`fib(20)`) about 23 %

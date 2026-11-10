@@ -387,7 +387,7 @@ fn dts_renders_nested_namespaces_and_complex_schema_types() {
     assert_eq!(
         declarations,
         format!(
-            "type CreateInvoiceInput = {{ status: \"draft\" | \"paid\"; metadata?: Record<string, unknown>; lines: [string, number][]; paymentMethod: \"card\" | \"wire\"; }};\n\ntype CreateInvoiceOutput = {{ id: string | null; state: {{ kind: \"created\"; }} | {{ kind: \"failed\"; reason: string; }}; }};\n\ndeclare namespace billing {{\n  namespace invoice {{\n    export function create(input: CreateInvoiceInput): CreateInvoiceOutput;\n  }}\n}}\n\n{}",
+            "type CreateInvoiceInput = {{ status: \"draft\" | \"paid\"; metadata?: Record<string, unknown>; lines: [string, number][]; paymentMethod: \"card\" | \"wire\"; }};\n\ntype CreateInvoiceOutput = {{ id: string | null; state: {{ kind: \"created\"; }} | {{ kind: \"failed\"; reason: string; }}; }};\n\ndeclare namespace billing {{\n  namespace invoice {{\n    export function create(input: CreateInvoiceInput): CreateInvoiceOutput;\n  }}\n}}\n\ndeclare module \"test\" {{\n  export const billing: {{\n    invoice: {{\n      create(input: CreateInvoiceInput): CreateInvoiceOutput;\n    }};\n  }};\n}}\n\n{}",
             ctx_declaration()
         )
     );

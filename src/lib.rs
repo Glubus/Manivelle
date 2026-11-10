@@ -34,7 +34,7 @@ pub use analysis::{
 pub use config::{ContractValidation, EngineOptions, ScriptBuiltins, UnknownFieldValidation};
 pub use contract::{
     Caller, CodecError, HostFunctionSignature, HostRequest, HostResolver, JsArgs, JsDecode,
-    JsEncode, PathSegment, ScriptExport, TsArgs,
+    JsEncode, PathSegment, RegisterHostFunction, ScriptExport, TsArgs,
 };
 pub use contract::{
     HostCallback, HostCallbackDescriptor, HostContext, HostContract, HostContractAbi,

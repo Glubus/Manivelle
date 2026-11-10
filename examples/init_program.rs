@@ -30,6 +30,9 @@ struct Add;
 
 impl HostContract for Add {
     const NAME: &'static str = "math.add";
+    // Importable too: `import { math } from "app"`.
+    const IMPORT_MODULE: &'static str = "app";
+    const EXPORT_PATH: &'static [&'static str] = &["math", "add"];
 
     fn kind() -> HostContractKind {
         HostContractKind::Function

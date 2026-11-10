@@ -1,0 +1,13 @@
+error: expected string literal
+ --> tests/ui/host_fn/import_not_a_string.rs:3:41
+  |
+3 | #[host_mod(namespace = "math", import = app)]
+  |                                         ^^^
+
+warning: unused imports: `EngineError` and `host_fn`
+ --> tests/ui/host_fn/import_not_a_string.rs:1:17
+  |
+1 | use manivelle::{EngineError, host_fn, host_mod};
+  |                 ^^^^^^^^^^^  ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

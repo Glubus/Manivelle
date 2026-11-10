@@ -149,8 +149,8 @@ fn greet(ctx: &Caller<'_>, input: String) -> Result<String, EngineError> {
 #[test]
 fn ctx_functions_see_which_script_called() {
     let mut engine = Engine::new(&EngineOptions::default()).unwrap();
-    Whoami::register(engine.registry()).unwrap();
-    Greet::register(engine.registry()).unwrap();
+    engine.registry().function::<Whoami>().unwrap();
+    engine.registry().function::<Greet>().unwrap();
     for id in ["alpha", "beta"] {
         engine
             .load_script(
@@ -184,8 +184,8 @@ fn score_owner(
 #[test]
 fn async_functions_settle_through_their_resolver() {
     let mut engine = Engine::new(&EngineOptions::default()).unwrap();
-    LookupScore::register(engine.registry()).unwrap();
-    ScoreOwner::register(engine.registry()).unwrap();
+    engine.registry().function::<LookupScore>().unwrap();
+    engine.registry().function::<ScoreOwner>().unwrap();
     engine
         .load_script(
             "game",
@@ -315,4 +315,73 @@ fn script_exports_are_declared_with_an_attribute() {
 
     assert_eq!(engine.call_typed::<Double>("s", (21.0,)).unwrap(), 42.0);
     engine.call_typed::<Reset>("s", ()).unwrap();
+}
+
+#[host_mod(namespace = "shop", import = "app")]
+mod shop {
+    use manivelle::{Caller, HostResolver, host_event, host_fn, host_fn_async, host_fn_with_ctx};
+    use manivelle::{EngineError, TsSchema};
+    use serde::Serialize;
+
+    #[host_fn]
+    pub fn price(sku: String) -> f64 {
+        sku.len() as f64
+    }
+
+    #[host_fn_with_ctx]
+    pub fn buyer(ctx: &Caller<'_>) -> String {
+        ctx.script_id().to_owned()
+    }
+
+    #[host_fn_async]
+    pub fn stock(_sku: String, resolver: HostResolver<u32>) -> Result<(), EngineError> {
+        resolver.resolve(7)
+    }
+
+    #[derive(Serialize, TsSchema)]
+    #[host_event(name = "sold")]
+    pub struct Sold {
+        sku: String,
+    }
+}
+
+#[test]
+fn a_module_with_import_makes_its_contracts_importable_from_a_group() {
+    assert_eq!(shop::Price::IMPORT_MODULE, "app");
+    assert_eq!(shop::Price::EXPORT_PATH, ["shop", "price"]);
+    assert_eq!(shop::Sold::IMPORT_MODULE, "app");
+    assert_eq!(shop::Sold::EXPORT_PATH, ["shop", "sold"]);
+    assert_eq!(
+        math::Add::IMPORT_MODULE,
+        "",
+        "a module without `import` keeps the contract global-only"
+    );
+
+    let mut engine = Engine::new(&EngineOptions::default()).unwrap();
+    engine
+        .registry()
+        .function::<shop::Price>()
+        .and_then(|registry| registry.function::<shop::Buyer>())
+        .and_then(|registry| registry.function::<shop::Stock>())
+        .and_then(|registry| registry.callback::<shop::Sold>())
+        .unwrap();
+    for id in ["first", "second"] {
+        engine
+            .load_script_in(
+                "pack",
+                id,
+                r#"
+                import { shop } from "app";
+                export function run() { return [shop.price("abc"), shop.buyer()]; }
+                export async function left() { return await shop.stock("abc"); }
+                "#,
+            )
+            .unwrap();
+    }
+
+    let out: serde_json::Value = engine.call("second", "run", ()).unwrap();
+    assert_eq!(out, serde_json::json!([3, "second"]));
+    let pending = engine.call_deferred::<u32>("first", "left", ()).unwrap();
+    engine.pump().unwrap();
+    assert_eq!(pending.take().expect("finished").unwrap(), 7);
 }

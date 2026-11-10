@@ -14,7 +14,7 @@ This guide shows the normal flow:
 
 ```toml
 [dependencies]
-manivelle = { version = "0.2", features = ["derive"] }
+manivelle = { version = "0.3", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -103,7 +103,12 @@ TypeScript shape.
 ### Shortcut: `#[host_fn]`
 
 With the `derive` feature, the three impls above reduce to the function itself.
-The marker type is named after the function in `PascalCase` (`find_user` → `FindUser`):
+The marker type is named after the function in `UpperCamelCase`: the underscores go and
+each word is capitalised (`find_user` → `FindUser`). A type already called `FindUser`
+in the same module is a compile error (`the name FindUser is defined multiple times`,
+reported on the attribute), so rename one
+of the two. All three macros of this section register the same way, with
+`registry.function::<Marker>()`:
 
 ```rust
 use manivelle::{EngineError, host_fn};
@@ -113,7 +118,7 @@ fn find_user(input: FindUserInput) -> Result<FindUserOutput, EngineError> {
     Ok(FindUserOutput { user_id: input.user_id, display_name: format!("user-{}", input.user_id), active: true, roles: vec![] })
 }
 
-// registry.function::<FindUser>()?;
+engine.registry().function::<FindUser>()?;
 ```
 
 The function takes zero or one parameter (`Input` is `()` without one), and cannot be
@@ -144,17 +149,29 @@ mod math {
     pub fn log(input: LogInput) -> Result<(), EngineError> { /* ... */ }
 }
 
-// registry.function::<math::Add>()?;
+engine.registry().function::<math::Add>()?;
 ```
 
 Use `pub fn` to register the marker from outside the module. Only the module's own
 functions are rewritten: a nested module needs its own `#[host_mod]`. `mod name;` in
 another file is not supported, because a macro cannot read it.
 
+Add `import = "app"` to make every function and event of the module importable, which is
+what a script in a context group needs (it has no host globals):
+
+```rust
+#[host_mod(namespace = "math", import = "app")]
+mod math { /* the same functions */ }
+```
+
+Scripts then write `import { math } from "app"; math.add(...)`: the import path is the
+full contract name, as under the global namespace. It sets the contract's `IMPORT_MODULE`
+and `EXPORT_PATH` for you; see [Import Modules](generate-sdk-files.md#import-modules).
+
 ### Receive The Calling Script: `#[host_fn_with_ctx]`
 
 A static `HostFunction` cannot know which script called it. A function whose first
-parameter is the `Caller` is declared with `#[host_fn_with_ctx]` and registers itself:
+parameter is the `Caller` is declared with `#[host_fn_with_ctx]`:
 
 ```rust
 use manivelle::{Caller, EngineError, host_fn_with_ctx};
@@ -164,11 +181,13 @@ fn find_user(ctx: &Caller<'_>, input: FindUserInput) -> Result<FindUserOutput, E
     Ok(FindUserOutput { display_name: format!("{} asks {}", ctx.script_id(), input.user_id) })
 }
 
-FindUser::register(engine.registry())?;
+engine.registry().function::<FindUser>()?;
 ```
 
-The marker has `HostContract` and `HostFunctionSignature` but no `HostFunction`; its
-`register` calls `function_with_caller`. The input is optional (`fn(ctx)`).
+The marker has `HostContract` and `HostFunctionSignature` but no `HostFunction`; it
+implements `RegisterHostFunction` itself, which is what `function::<FindUser>()`
+needs, and its handler is called through `function_with_caller`. The input is optional
+(`fn(ctx)`).
 
 ### Settle Later: `#[host_fn_async]`
 
@@ -183,11 +202,11 @@ fn lookup_score(player: String, resolver: HostResolver<u32>) {
     queue().push((player, resolver));
 }
 
-LookupScore::register(engine.registry())?;
+engine.registry().function::<LookupScore>()?;
 ```
 
-`register` uses `async_function_with`, or `async_function_with_caller` with a `ctx`.
-Both macros also work inside `#[host_mod]`.
+The generated `RegisterHostFunction` impl uses `async_function_with`, or
+`async_function_with_caller` with a `ctx`. Both macros also work inside `#[host_mod]`.
 
 ## Implement A Host Function With A Closure
 

@@ -23,7 +23,7 @@ fn add(ctx: &Caller<'_>, amount: u32) -> Result<u32, EngineError> {
 
 fn engine() -> Engine {
     let engine = Engine::new(&EngineOptions::default()).unwrap();
-    Add::register(engine.registry()).unwrap();
+    engine.registry().function::<Add>().unwrap();
     engine
 }
 

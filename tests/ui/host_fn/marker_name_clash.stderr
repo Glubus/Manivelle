@@ -1,0 +1,11 @@
+error[E0428]: the name `Add` is defined multiple times
+ --> tests/ui/host_fn/marker_name_clash.rs:5:1
+  |
+3 | struct Add;
+  | ----------- previous definition of the type `Add` here
+4 |
+5 | #[host_fn(name = "math.add")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Add` redefined here
+  |
+  = note: `Add` must be defined only once in the type namespace of this module
+  = note: this error originates in the attribute macro `host_fn` (in Nightly builds, run with -Z macro-backtrace for more info)
