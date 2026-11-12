@@ -17,7 +17,7 @@ pub(crate) mod state;
 pub(crate) mod validation;
 
 pub use base::HostContract;
-pub(crate) use bridge::{js_to_json, js_to_snapshot, json_to_js};
+pub(crate) use bridge::{JsView, js_to_json, json_to_js};
 pub use callback::{HostCallback, HostRequest};
 pub use caller::Caller;
 pub use codec::{CodecError, JsArgs, JsDecode, JsEncode, MapKey, PathSegment};

@@ -1,7 +1,11 @@
 //! Runtime validation for host contract schemas.
+//!
+//! A value is read where it lives, through [`Inspect`]: a JSON value or a QuickJS value
+//! is walked as far as the schema describes it, and nothing is copied out of it first.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::fmt;
 
 use serde_json::Value;
@@ -9,82 +13,157 @@ use serde_json::Value;
 use super::codec::is_canonical_integer;
 use super::{Schema, TsEnumVariant, TsField, TsLiteral, TsRecordKey, TsType};
 
-/// A value to validate, owned and shaped the way validation reads it. A JSON value converts
-/// with `From<&Value>`; a QuickJS value converts in `bridge.rs`, which keeps a byte buffer as
-/// its bytes rather than one value per byte.
-#[derive(Clone, Debug)]
-pub(crate) enum Snapshot {
+/// The kinds of value validation tells apart.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Kind {
     Null,
-    Bool(bool),
-    /// A JavaScript number, non-finite ones included.
-    Number(f64),
-    String(String),
-    Array(Vec<Snapshot>),
-    /// Entries in insertion order.
-    Object(Vec<(String, Snapshot)>),
-    /// The bytes of a `Uint8Array` or `ArrayBuffer`, validated as an array of numbers.
-    Bytes(Box<[u8]>),
+    Boolean,
+    Number,
+    String,
+    /// An array, or a byte buffer, which reads as an array of numbers.
+    Array,
+    Object,
+    /// A value no schema describes, by its name: a symbol, a BigInt.
+    Other(&'static str),
 }
 
-impl Snapshot {
-    /// The kind `expected` messages name this value by.
-    fn kind(&self) -> &'static str {
+impl Kind {
+    /// The name `expected` messages give this kind.
+    fn label(self) -> &'static str {
         match self {
             Self::Null => "null",
-            Self::Bool(_) => "boolean",
-            Self::Number(_) => "number",
-            Self::String(_) => "string",
-            Self::Array(_) | Self::Bytes(_) => "array",
-            Self::Object(_) => "object",
-        }
-    }
-
-    fn as_object(&self) -> Option<&[(String, Snapshot)]> {
-        match self {
-            Self::Object(entries) => Some(entries),
-            _ => None,
-        }
-    }
-
-    /// The elements of an array-like value. A byte buffer yields its bytes as numbers.
-    fn elements(&self) -> Option<Box<dyn ExactSizeIterator<Item = Cow<'_, Snapshot>> + '_>> {
-        match self {
-            Self::Array(items) => Some(Box::new(items.iter().map(Cow::Borrowed))),
-            Self::Bytes(bytes) => Some(Box::new(
-                bytes
-                    .iter()
-                    .map(|byte| Cow::Owned(Self::Number(f64::from(*byte)))),
-            )),
-            _ => None,
+            Self::Boolean => "boolean",
+            Self::Number => "number",
+            Self::String => "string",
+            Self::Array => "array",
+            Self::Object => "object",
+            Self::Other(name) => name,
         }
     }
 }
 
-impl From<&Value> for Snapshot {
-    fn from(value: &Value) -> Self {
-        match value {
-            Value::Null => Self::Null,
-            Value::Bool(value) => Self::Bool(*value),
-            // `as_f64` fails only for arbitrary-precision numbers beyond the `f64` range.
-            Value::Number(number) => Self::Number(number.as_f64().unwrap_or(f64::NAN)),
-            Value::String(value) => Self::String(value.clone()),
-            Value::Array(items) => Self::Array(items.iter().map(Self::from).collect()),
-            Value::Object(entries) => Self::Object(
-                entries
-                    .iter()
-                    .map(|(key, value)| (key.clone(), Self::from(value)))
-                    .collect(),
-            ),
+/// What validation reads of a value, in place. A JSON value never fails to be read; a
+/// QuickJS value can, when reading it runs script code that throws.
+pub(crate) trait Inspect: Sized {
+    /// Why a value could not be read.
+    type Error;
+
+    fn kind(&self) -> Kind;
+
+    fn boolean(&self) -> Option<bool>;
+
+    fn number(&self) -> Option<f64>;
+
+    /// The text of a string, `None` for any other kind. Asked only where a schema names
+    /// the text it expects (a literal, an enum variant), so a plain `string` copies nothing.
+    fn text(&self) -> Result<Option<Cow<'_, str>>, Self::Error>;
+
+    /// Whether the value is a byte buffer: every item of it is a number.
+    fn is_bytes(&self) -> bool;
+
+    /// How many items an array or a byte buffer holds, `None` for any other kind.
+    fn len(&self) -> Result<Option<usize>, Self::Error>;
+
+    /// The item at `index` of an array or a byte buffer.
+    fn item(&self, index: usize) -> Result<Self, Self::Error>;
+
+    /// The value of the object's own property `name`, `None` when it has none.
+    fn field(&self, name: &str) -> Result<Option<Self>, Self::Error>;
+
+    /// Hands each own property of the object to `visit`, in insertion order, until one
+    /// fails.
+    fn entries(&self, visit: &mut Visit<'_, Self>) -> Result<(), Invalid<Self::Error>>;
+}
+
+/// What [`Inspect::entries`] hands each property to: its key and its value.
+pub(crate) type Visit<'a, V> =
+    dyn FnMut(&str, V) -> Result<(), Invalid<<V as Inspect>::Error>> + 'a;
+
+/// Why a validation did not pass.
+#[derive(Debug)]
+pub(crate) enum Invalid<E> {
+    /// The value does not match the schema: the path and the reason.
+    Mismatch(String),
+    /// The value could not be read.
+    Read(E),
+}
+
+impl<E> From<E> for Invalid<E> {
+    fn from(error: E) -> Self {
+        Self::Read(error)
+    }
+}
+
+impl Invalid<Infallible> {
+    /// The mismatch: a value that is always readable fails for no other reason.
+    pub(crate) fn into_mismatch(self) -> String {
+        match self {
+            Self::Mismatch(details) => details,
+            Self::Read(never) => match never {},
         }
     }
 }
 
-pub(crate) fn validate_schema_with_options(
+static JSON_NULL: Value = Value::Null;
+
+impl Inspect for &Value {
+    type Error = Infallible;
+
+    fn kind(&self) -> Kind {
+        match self {
+            Value::Null => Kind::Null,
+            Value::Bool(_) => Kind::Boolean,
+            Value::Number(_) => Kind::Number,
+            Value::String(_) => Kind::String,
+            Value::Array(_) => Kind::Array,
+            Value::Object(_) => Kind::Object,
+        }
+    }
+
+    fn boolean(&self) -> Option<bool> {
+        self.as_bool()
+    }
+
+    fn number(&self) -> Option<f64> {
+        // `as_f64` fails only for arbitrary-precision numbers beyond the `f64` range.
+        self.as_number()
+            .map(|number| number.as_f64().unwrap_or(f64::NAN))
+    }
+
+    fn text(&self) -> Result<Option<Cow<'_, str>>, Infallible> {
+        Ok(self.as_str().map(Cow::Borrowed))
+    }
+
+    fn is_bytes(&self) -> bool {
+        false
+    }
+
+    fn len(&self) -> Result<Option<usize>, Infallible> {
+        Ok(self.as_array().map(Vec::len))
+    }
+
+    fn item(&self, index: usize) -> Result<Self, Infallible> {
+        Ok((*self).get(index).unwrap_or(&JSON_NULL))
+    }
+
+    fn field(&self, name: &str) -> Result<Option<Self>, Infallible> {
+        Ok((*self).as_object().and_then(|entries| entries.get(name)))
+    }
+
+    fn entries(&self, visit: &mut Visit<'_, Self>) -> Result<(), Invalid<Infallible>> {
+        for (key, value) in (*self).as_object().into_iter().flatten() {
+            visit(key, value)?;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn validate_schema_with_options<V: Inspect>(
     schema: &Schema,
-    value: &Snapshot,
+    value: &V,
     options: SchemaValidationOptions,
-) -> Result<(), String> {
-    let mut context = ValidationContext::new(schema)?;
+) -> Result<(), Invalid<V::Error>> {
+    let mut context = ValidationContext::new(schema).map_err(Invalid::Mismatch)?;
     validate_type(&schema.ts_type, value, &Path::Root, options, &mut context)
 }
 
@@ -121,7 +200,9 @@ struct Dependency<'a> {
 struct ValidationContext<'a> {
     /// The first dependency with each name, in depth-first order.
     dependencies: HashMap<&'a str, Dependency<'a>>,
-    /// The dependencies being validated, so that a recursive reference stops.
+    /// The dependencies being validated, so that a recursive reference stops. It also
+    /// bounds the walk: a value is followed only as deep as the schema goes, however
+    /// deep or cyclic the value itself is.
     resolving: Vec<usize>,
 }
 
@@ -163,25 +244,23 @@ fn collect_dependencies<'a>(
     Ok(())
 }
 
-fn validate_type(
+fn validate_type<V: Inspect>(
     ty: &TsType,
-    value: &Snapshot,
+    value: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
+) -> Result<(), Invalid<V::Error>> {
     match ty {
         TsType::Unknown | TsType::Json => Ok(()),
         TsType::TypeRef(name) => validate_type_ref(name, value, path, options, context),
-        TsType::Void | TsType::Null => validate_null(value, path),
-        TsType::Boolean => validate_bool(value, path),
-        TsType::Number => validate_number(value, path),
-        TsType::String => validate_string(value, path),
-        TsType::Uint8Array => match value {
-            // Every item of a byte buffer is a number already: nothing to look at.
-            Snapshot::Bytes(_) => Ok(()),
-            _ => validate_array(&TsType::Number, value, path, options, context),
-        },
+        TsType::Void | TsType::Null => expect_kind(value, Kind::Null, path),
+        TsType::Boolean => expect_kind(value, Kind::Boolean, path),
+        TsType::Number => expect_kind(value, Kind::Number, path),
+        TsType::String => expect_kind(value, Kind::String, path),
+        // Every item of a byte buffer is a number already: nothing to look at.
+        TsType::Uint8Array if value.is_bytes() => Ok(()),
+        TsType::Uint8Array => validate_array(&TsType::Number, value, path, options, context),
         TsType::Literal(literal) => validate_literal(literal, value, path),
         TsType::Object(fields) => {
             validate_object(ObjectShape::new(fields), value, path, options, context)
@@ -208,13 +287,13 @@ fn validate_type(
     }
 }
 
-fn validate_type_ref(
+fn validate_type_ref<V: Inspect>(
     name: &str,
-    value: &Snapshot,
+    value: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
+) -> Result<(), Invalid<V::Error>> {
     let Some(&Dependency { id, schema }) = context.dependencies.get(name) else {
         return Ok(());
     };
@@ -228,42 +307,38 @@ fn validate_type_ref(
     result
 }
 
-fn validate_null(value: &Snapshot, path: &Path<'_>) -> Result<(), String> {
-    matches!(value, Snapshot::Null)
-        .then_some(())
-        .ok_or_else(|| expected(path, "null", value))
+fn expect_kind<V: Inspect>(
+    value: &V,
+    kind: Kind,
+    path: &Path<'_>,
+) -> Result<(), Invalid<V::Error>> {
+    if value.kind() == kind {
+        Ok(())
+    } else {
+        Err(expected(path, kind.label(), value))
+    }
 }
 
-fn validate_bool(value: &Snapshot, path: &Path<'_>) -> Result<(), String> {
-    matches!(value, Snapshot::Bool(_))
-        .then_some(())
-        .ok_or_else(|| expected(path, "boolean", value))
-}
-
-fn validate_number(value: &Snapshot, path: &Path<'_>) -> Result<(), String> {
-    matches!(value, Snapshot::Number(_))
-        .then_some(())
-        .ok_or_else(|| expected(path, "number", value))
-}
-
-fn validate_string(value: &Snapshot, path: &Path<'_>) -> Result<(), String> {
-    matches!(value, Snapshot::String(_))
-        .then_some(())
-        .ok_or_else(|| expected(path, "string", value))
-}
-
-fn validate_literal(literal: &TsLiteral, value: &Snapshot, path: &Path<'_>) -> Result<(), String> {
-    let valid = match (literal, value) {
-        (TsLiteral::String(expected), Snapshot::String(value)) => value == expected,
-        (TsLiteral::Number(expected), Snapshot::Number(value)) => {
-            literal_number_matches(expected, *value)
-        }
-        (TsLiteral::Boolean(expected), Snapshot::Bool(value)) => value == expected,
-        _ => false,
+fn validate_literal<V: Inspect>(
+    literal: &TsLiteral,
+    value: &V,
+    path: &Path<'_>,
+) -> Result<(), Invalid<V::Error>> {
+    let valid = match literal {
+        TsLiteral::String(expected) => value.text()?.is_some_and(|text| text == expected.as_str()),
+        TsLiteral::Number(expected) => value
+            .number()
+            .is_some_and(|number| literal_number_matches(expected, number)),
+        TsLiteral::Boolean(expected) => value.boolean() == Some(*expected),
     };
-    valid
-        .then_some(())
-        .ok_or_else(|| format!("{path}: expected literal {}", literal_label(literal)))
+    if valid {
+        Ok(())
+    } else {
+        Err(Invalid::Mismatch(format!(
+            "{path}: expected literal {}",
+            literal_label(literal)
+        )))
+    }
 }
 
 fn literal_number_matches(expected: &str, number: f64) -> bool {
@@ -316,177 +391,181 @@ impl<'a> ObjectShape<'a> {
     }
 }
 
-fn validate_object(
+fn validate_object<V: Inspect>(
     shape: ObjectShape<'_>,
-    value: &Snapshot,
+    value: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
-    let Some(entries) = value.as_object() else {
+) -> Result<(), Invalid<V::Error>> {
+    if value.kind() != Kind::Object {
         return Err(expected(path, "object", value));
-    };
+    }
 
     if shape.rest.is_none() && options.reject_unknown_fields {
-        reject_unknown_object_fields(shape, entries, path)?;
+        reject_unknown_object_fields(shape, value, path)?;
     }
-    validate_declared_fields(shape.fields, entries, path, options, context)?;
+    validate_declared_fields(shape.fields, value, path, options, context)?;
     match shape.rest {
-        Some(rest) => validate_rest_fields(shape, rest, entries, path, options, context),
+        Some(rest) => validate_rest_fields(shape, rest, value, path, options, context),
         None => Ok(()),
     }
 }
 
-fn validate_declared_fields(
+fn validate_declared_fields<V: Inspect>(
     fields: &[TsField],
-    entries: &[(String, Snapshot)],
+    object: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
+) -> Result<(), Invalid<V::Error>> {
     for field in fields {
         let field_path = Path::Field(path, field.name.as_str());
-        match field_value(entries, &field.name) {
-            Some(value) => validate_type(&field.ty, value, &field_path, options, context)?,
+        match object.field(&field.name)? {
+            Some(value) => validate_type(&field.ty, &value, &field_path, options, context)?,
             None if field.optional => {}
-            None => return Err(format!("{field_path}: missing required field")),
+            None => {
+                return Err(Invalid::Mismatch(format!(
+                    "{field_path}: missing required field"
+                )));
+            }
         }
     }
     Ok(())
 }
 
 /// Validates every undeclared key of an open object against its `rest` type.
-fn validate_rest_fields(
+fn validate_rest_fields<V: Inspect>(
     shape: ObjectShape<'_>,
     rest: &TsType,
-    entries: &[(String, Snapshot)],
+    object: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
-    for (key, item) in entries.iter().filter(|(key, _)| shape.is_undeclared(key)) {
-        validate_type(
-            rest,
-            item,
-            &Path::Field(path, key.as_str()),
-            options,
-            context,
-        )?;
-    }
-    Ok(())
+) -> Result<(), Invalid<V::Error>> {
+    object.entries(&mut |key, item| {
+        if shape.is_undeclared(key) {
+            validate_type(rest, &item, &Path::Field(path, key), options, context)?;
+        }
+        Ok(())
+    })
 }
 
-fn reject_unknown_object_fields(
+fn reject_unknown_object_fields<V: Inspect>(
     shape: ObjectShape<'_>,
-    entries: &[(String, Snapshot)],
+    object: &V,
     path: &Path<'_>,
-) -> Result<(), String> {
-    match entries.iter().find(|(key, _)| shape.is_undeclared(key)) {
-        Some((key, _)) => Err(format!(
-            "{}: unknown field",
-            Path::Field(path, key.as_str())
-        )),
-        None => Ok(()),
-    }
+) -> Result<(), Invalid<V::Error>> {
+    object.entries(&mut |key, _| {
+        if shape.is_undeclared(key) {
+            return Err(Invalid::Mismatch(format!(
+                "{}: unknown field",
+                Path::Field(path, key)
+            )));
+        }
+        Ok(())
+    })
 }
 
-fn field_value<'e>(entries: &'e [(String, Snapshot)], name: &str) -> Option<&'e Snapshot> {
-    entries
-        .iter()
-        .find(|(key, _)| key.as_str() == name)
-        .map(|(_, value)| value)
-}
-
-fn validate_array(
+fn validate_array<V: Inspect>(
     item: &TsType,
-    value: &Snapshot,
+    value: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
-    let Some(elements) = value.elements() else {
+) -> Result<(), Invalid<V::Error>> {
+    let Some(len) = value.len()? else {
         return Err(expected(path, "array", value));
     };
 
-    for (index, element) in elements.enumerate() {
+    for index in 0..len {
+        let element = value.item(index)?;
         validate_type(item, &element, &Path::Index(path, index), options, context)?;
     }
     Ok(())
 }
 
-fn validate_tuple(
+fn validate_tuple<V: Inspect>(
     items: &[TsType],
-    value: &Snapshot,
+    value: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
-    let Some(elements) = value.elements() else {
+) -> Result<(), Invalid<V::Error>> {
+    let Some(len) = value.len()? else {
         return Err(expected(path, "tuple array", value));
     };
-    if elements.len() != items.len() {
-        return Err(format!(
-            "{path}: expected tuple length {}, got {}",
-            items.len(),
-            elements.len()
-        ));
+    if len != items.len() {
+        return Err(Invalid::Mismatch(format!(
+            "{path}: expected tuple length {}, got {len}",
+            items.len()
+        )));
     }
 
-    for (index, (ty, element)) in items.iter().zip(elements).enumerate() {
+    for (index, ty) in items.iter().enumerate() {
+        let element = value.item(index)?;
         validate_type(ty, &element, &Path::Index(path, index), options, context)?;
     }
     Ok(())
 }
 
-fn validate_enum(
+fn validate_enum<V: Inspect>(
     tag: Option<&str>,
     variants: &[TsEnumVariant],
-    value: &Snapshot,
+    value: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
+) -> Result<(), Invalid<V::Error>> {
     match tag {
         Some(tag) => validate_tagged_enum(tag, variants, value, path, options, context),
         None => validate_unit_enum(variants, value, path),
     }
 }
 
-fn validate_unit_enum(
+fn validate_unit_enum<V: Inspect>(
     variants: &[TsEnumVariant],
-    value: &Snapshot,
+    value: &V,
     path: &Path<'_>,
-) -> Result<(), String> {
-    let Snapshot::String(name) = value else {
+) -> Result<(), Invalid<V::Error>> {
+    let Some(name) = value.text()? else {
         return Err(expected(path, "enum string literal", value));
     };
-    variants
-        .iter()
-        .any(|variant| variant.name == *name)
-        .then_some(())
-        .ok_or_else(|| format!("{path}: unknown enum variant {name:?}"))
+    if variants.iter().any(|variant| variant.name == *name) {
+        Ok(())
+    } else {
+        Err(Invalid::Mismatch(format!(
+            "{path}: unknown enum variant {name:?}"
+        )))
+    }
 }
 
-fn validate_tagged_enum(
+fn validate_tagged_enum<V: Inspect>(
     tag: &str,
     variants: &[TsEnumVariant],
-    value: &Snapshot,
+    value: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
-    let Some(entries) = value.as_object() else {
+) -> Result<(), Invalid<V::Error>> {
+    if value.kind() != Kind::Object {
         return Err(expected(path, "tagged enum object", value));
-    };
+    }
     let tag_path = Path::Field(path, tag);
-    let Some(Snapshot::String(tag_value)) = field_value(entries, tag) else {
-        return Err(format!("{tag_path}: missing enum tag string"));
+    let tag_field = value.field(tag)?;
+    let tag_text = match &tag_field {
+        Some(field) => field.text()?,
+        None => None,
     };
-    let Some(variant) = variants
-        .iter()
-        .find(|variant| variant.name == tag_value.as_str())
-    else {
-        return Err(format!("{tag_path}: unknown enum variant {tag_value:?}"));
+    let Some(tag_value) = tag_text else {
+        return Err(Invalid::Mismatch(format!(
+            "{tag_path}: missing enum tag string"
+        )));
+    };
+    let Some(variant) = variants.iter().find(|variant| variant.name == *tag_value) else {
+        return Err(Invalid::Mismatch(format!(
+            "{tag_path}: unknown enum variant {tag_value:?}"
+        )));
     };
 
     let allowed_extra_fields = [tag];
@@ -496,83 +575,82 @@ fn validate_tagged_enum(
     validate_object(shape, value, path, options, context)
 }
 
-fn validate_record(
+fn validate_record<V: Inspect>(
     key: TsRecordKey,
     item: &TsType,
-    value: &Snapshot,
+    value: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
-    let Some(entries) = value.as_object() else {
+) -> Result<(), Invalid<V::Error>> {
+    if value.kind() != Kind::Object {
         return Err(expected(path, "record object", value));
-    };
+    }
 
-    for (field, field_value) in entries {
-        validate_record_key(key, field, path)?;
+    value.entries(&mut |field, field_value| {
+        validate_record_key(key, field, path).map_err(Invalid::Mismatch)?;
         validate_type(
             item,
-            field_value,
-            &Path::Field(path, field.as_str()),
+            &field_value,
+            &Path::Field(path, field),
             options,
             context,
-        )?;
-    }
-    Ok(())
+        )
+    })
 }
 
 fn validate_record_key(key: TsRecordKey, field: &str, path: &Path<'_>) -> Result<(), String> {
     match key {
         TsRecordKey::String => Ok(()),
-        TsRecordKey::Number => validate_numeric_record_key(field)
+        TsRecordKey::Number => is_canonical_integer(field)
             .then_some(())
             .ok_or_else(|| format!("{path}: expected numeric record key, got {field:?}")),
     }
 }
 
-fn validate_numeric_record_key(field: &str) -> bool {
-    is_canonical_integer(field)
-}
-
 /// Accepts a value that some member accepts. Otherwise the message keeps every member's
 /// own error, so the mismatch is visible.
-fn validate_union(
+fn validate_union<V: Inspect>(
     types: &[TsType],
-    value: &Snapshot,
+    value: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
+) -> Result<(), Invalid<V::Error>> {
     let mut member_errors = Vec::with_capacity(types.len());
     for ty in types {
         match validate_type(ty, value, path, options, context) {
             Ok(()) => return Ok(()),
-            Err(error) => member_errors.push(error),
+            Err(Invalid::Mismatch(error)) => member_errors.push(error),
+            Err(unreadable) => return Err(unreadable),
         }
     }
 
-    Err(format!(
+    Err(Invalid::Mismatch(format!(
         "{path}: value did not match any union member ({})",
         member_errors.join("; ")
-    ))
+    )))
 }
 
 /// Accepts `null` for an optional or nullable type, and validates anything else as `inner`.
-fn validate_nullish(
+fn validate_nullish<V: Inspect>(
     inner: &TsType,
-    value: &Snapshot,
+    value: &V,
     path: &Path<'_>,
     options: SchemaValidationOptions,
     context: &mut ValidationContext<'_>,
-) -> Result<(), String> {
-    if matches!(value, Snapshot::Null) {
+) -> Result<(), Invalid<V::Error>> {
+    if value.kind() == Kind::Null {
         return Ok(());
     }
     validate_type(inner, value, path, options, context)
 }
 
-fn expected(path: &Path<'_>, expected: &str, value: &Snapshot) -> String {
-    format!("{path}: expected {expected}, got {}", value.kind())
+fn expected<V: Inspect>(path: &Path<'_>, expected: &str, value: &V) -> Invalid<V::Error> {
+    Invalid::Mismatch(format!(
+        "{path}: expected {expected}, got {}",
+        value.kind().label()
+    ))
 }
 
 #[cfg(test)]
@@ -580,6 +658,15 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// Validates a JSON value, which is always readable: the error is the mismatch.
+    fn validate(
+        schema: &Schema,
+        value: &Value,
+        options: SchemaValidationOptions,
+    ) -> Result<(), String> {
+        validate_schema_with_options(schema, &value, options).map_err(Invalid::into_mismatch)
+    }
 
     #[test]
     fn validates_nested_object_shape() {
@@ -590,31 +677,11 @@ mod tests {
                 TsField::optional("tag", TsType::String),
             ]),
         );
+        let options = SchemaValidationOptions::default();
 
-        assert!(
-            validate_schema_with_options(
-                &schema,
-                &Snapshot::from(&json!({ "id": 1 })),
-                SchemaValidationOptions::default(),
-            )
-            .is_ok()
-        );
-        assert!(
-            validate_schema_with_options(
-                &schema,
-                &Snapshot::from(&json!({ "tag": "x" })),
-                SchemaValidationOptions::default(),
-            )
-            .is_err()
-        );
-        assert!(
-            validate_schema_with_options(
-                &schema,
-                &Snapshot::from(&json!({ "id": "1" })),
-                SchemaValidationOptions::default(),
-            )
-            .is_err()
-        );
+        assert!(validate(&schema, &json!({ "id": 1 }), options).is_ok());
+        assert!(validate(&schema, &json!({ "tag": "x" }), options).is_err());
+        assert!(validate(&schema, &json!({ "id": "1" }), options).is_err());
     }
 
     #[test]
@@ -633,15 +700,15 @@ mod tests {
             reject_unknown_fields: true,
         };
 
-        let error = validate_schema_with_options(
+        let error = validate(
             &schema,
-            &Snapshot::from(&json!({
+            &json!({
                 "id": 1,
                 "profile": {
                     "name": "Ada",
                     "role": "admin"
                 }
-            })),
+            }),
             options,
         )
         .expect_err("unknown nested field should fail");
@@ -665,18 +732,11 @@ mod tests {
             reject_unknown_fields: true,
         };
 
+        assert!(validate(&schema, &json!({ "type": "damage", "amount": 12 }), options).is_ok());
         assert!(
-            validate_schema_with_options(
+            validate(
                 &schema,
-                &Snapshot::from(&json!({ "type": "damage", "amount": 12 })),
-                options,
-            )
-            .is_ok()
-        );
-        assert!(
-            validate_schema_with_options(
-                &schema,
-                &Snapshot::from(&json!({ "type": "damage", "amount": 12, "debug": true })),
+                &json!({ "type": "damage", "amount": 12, "debug": true }),
                 options,
             )
             .is_err()
@@ -692,39 +752,12 @@ mod tests {
                 TsType::Nullable(Box::new(TsType::Number)),
             ]),
         );
+        let options = SchemaValidationOptions::default();
 
-        assert!(
-            validate_schema_with_options(
-                &schema,
-                &Snapshot::from(&json!("ok")),
-                SchemaValidationOptions::default()
-            )
-            .is_ok()
-        );
-        assert!(
-            validate_schema_with_options(
-                &schema,
-                &Snapshot::from(&json!(42)),
-                SchemaValidationOptions::default()
-            )
-            .is_ok()
-        );
-        assert!(
-            validate_schema_with_options(
-                &schema,
-                &Snapshot::Null,
-                SchemaValidationOptions::default()
-            )
-            .is_ok()
-        );
-        assert!(
-            validate_schema_with_options(
-                &schema,
-                &Snapshot::from(&json!(true)),
-                SchemaValidationOptions::default()
-            )
-            .is_err()
-        );
+        assert!(validate(&schema, &json!("ok"), options).is_ok());
+        assert!(validate(&schema, &json!(42), options).is_ok());
+        assert!(validate(&schema, &Value::Null, options).is_ok());
+        assert!(validate(&schema, &json!(true), options).is_err());
     }
 
     #[test]
@@ -734,12 +767,8 @@ mod tests {
             TsType::Union(vec![TsType::String, TsType::Boolean]),
         );
 
-        let error = validate_schema_with_options(
-            &schema,
-            &Snapshot::Number(1.0),
-            SchemaValidationOptions::default(),
-        )
-        .expect_err("a number matches neither member");
+        let error = validate(&schema, &json!(1.0), SchemaValidationOptions::default())
+            .expect_err("a number matches neither member");
 
         assert_eq!(
             error,
@@ -748,26 +777,15 @@ mod tests {
     }
 
     #[test]
-    fn uint8_array_validates_byte_buffers_as_numbers() {
+    fn uint8_array_accepts_an_array_of_numbers_and_names_the_item_that_is_not_one() {
         let bytes = Schema::typed("Bytes", TsType::Uint8Array);
-        assert!(
-            validate_schema_with_options(
-                &bytes,
-                &Snapshot::Bytes(Box::from(&[1u8, 2][..])),
-                SchemaValidationOptions::default(),
-            )
-            .is_ok()
-        );
+        let options = SchemaValidationOptions::default();
 
-        let strings = Schema::typed("Strings", TsType::Array(Box::new(TsType::String)));
-        let error = validate_schema_with_options(
-            &strings,
-            &Snapshot::Bytes(Box::from(&[1u8][..])),
-            SchemaValidationOptions::default(),
-        )
-        .expect_err("bytes are numbers, not strings");
+        assert!(validate(&bytes, &json!([1, 2]), options).is_ok());
 
-        assert_eq!(error, "$[0]: expected string, got number");
+        let error =
+            validate(&bytes, &json!([1, "2"]), options).expect_err("a string is not a byte");
+        assert_eq!(error, "$[1]: expected number, got string");
     }
 
     #[test]
@@ -779,24 +797,21 @@ mod tests {
                 value: Box::new(TsType::String),
             },
         );
+        let options = SchemaValidationOptions::default();
 
         assert!(
-            validate_schema_with_options(
+            validate(
                 &schema,
-                &Snapshot::from(&json!({ "42": "ok", "-7": "ok", "0": "ok" })),
-                SchemaValidationOptions::default(),
+                &json!({ "42": "ok", "-7": "ok", "0": "ok" }),
+                options
             )
             .is_ok()
         );
 
         // The decoder reads these keys as integers and refuses each of them.
         for key in ["NaN", "1.5", "1e3", "+42", "-0", "007"] {
-            let error = validate_schema_with_options(
-                &schema,
-                &Snapshot::from(&json!({ key: "bad" })),
-                SchemaValidationOptions::default(),
-            )
-            .expect_err("a key the decoder refuses should fail");
+            let error = validate(&schema, &json!({ key: "bad" }), options)
+                .expect_err("a key the decoder refuses should fail");
 
             assert_eq!(
                 error,
@@ -811,17 +826,12 @@ mod tests {
         let root = |dependencies| {
             Schema::typed("Root", TsType::Object(Vec::new())).with_dependencies(dependencies)
         };
-        let validate = |schema: &Schema| {
-            validate_schema_with_options(
-                schema,
-                &Snapshot::from(&json!({})),
-                SchemaValidationOptions::default(),
-            )
-        };
+        let check =
+            |schema: &Schema| validate(schema, &json!({}), SchemaValidationOptions::default());
 
-        assert!(validate(&root(vec![item(TsType::Number), item(TsType::Number)])).is_ok());
+        assert!(check(&root(vec![item(TsType::Number), item(TsType::Number)])).is_ok());
 
-        let error = validate(&root(vec![item(TsType::Number), item(TsType::String)]))
+        let error = check(&root(vec![item(TsType::Number), item(TsType::String)]))
             .expect_err("two shapes cannot share a name");
         assert_eq!(
             error,
@@ -839,22 +849,12 @@ mod tests {
             )]),
         )
         .with_dependencies(vec![Schema::typed("UserId", TsType::Number)]);
+        let options = SchemaValidationOptions::default();
 
-        assert!(
-            validate_schema_with_options(
-                &schema,
-                &Snapshot::from(&json!({ "user_id": 42 })),
-                SchemaValidationOptions::default(),
-            )
-            .is_ok()
-        );
+        assert!(validate(&schema, &json!({ "user_id": 42 }), options).is_ok());
 
-        let error = validate_schema_with_options(
-            &schema,
-            &Snapshot::from(&json!({ "user_id": "42" })),
-            SchemaValidationOptions::default(),
-        )
-        .expect_err("resolved TypeRef should validate against its dependency");
+        let error = validate(&schema, &json!({ "user_id": "42" }), options)
+            .expect_err("resolved TypeRef should validate against its dependency");
 
         assert_eq!(error, "$.user_id: expected number, got string");
     }
@@ -864,9 +864,9 @@ mod tests {
         let schema = Schema::typed("Input", TsType::TypeRef(String::from("ExternalAlias")));
 
         assert!(
-            validate_schema_with_options(
+            validate(
                 &schema,
-                &Snapshot::from(&json!({ "anything": true })),
+                &json!({ "anything": true }),
                 SchemaValidationOptions::default(),
             )
             .is_ok()
@@ -881,9 +881,9 @@ mod tests {
             ]);
 
         assert!(
-            validate_schema_with_options(
+            validate(
                 &schema,
-                &Snapshot::from(&json!("anything")),
+                &json!("anything"),
                 SchemaValidationOptions::default()
             )
             .is_ok()
@@ -902,9 +902,9 @@ mod tests {
             )]);
 
         assert!(
-            validate_schema_with_options(
+            validate(
                 &schema,
-                &Snapshot::from(&json!({ "child": { "child": "not validated recursively" } })),
+                &json!({ "child": { "child": "not validated recursively" } }),
                 SchemaValidationOptions::default(),
             )
             .is_ok()

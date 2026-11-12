@@ -36,6 +36,7 @@ use rquickjs::{Array, Ctx, Error as JsError, Object, Result as JsResult, Value a
 
 pub(crate) use bytes::with_engine_bytes;
 pub use error::{CodecError, PathSegment};
+pub(crate) use field_atoms::own_property;
 pub use maps::MapKey;
 pub(crate) use maps::is_canonical_integer;
 pub(crate) use number::exact_integer;

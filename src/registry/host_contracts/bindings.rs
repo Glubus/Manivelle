@@ -6,9 +6,8 @@ use std::sync::{Arc, Mutex};
 use rquickjs::{Ctx, Exception, Object, Result as JsResult, Value as JsValue};
 
 use crate::contract::state::StateSlot;
-use crate::contract::validation::Snapshot;
 use crate::contract::{
-    Caller, HostFunctionSignature, HostResolver, JsDecode, JsEncode, js_to_snapshot,
+    Caller, CodecError, HostFunctionSignature, HostResolver, JsDecode, JsEncode,
 };
 use crate::error::EngineError;
 use crate::packages::PermissionSet;
@@ -73,48 +72,64 @@ pub(super) trait AsyncFunctionBinding: Send + Sync {
     ) -> JsResult<()>;
 }
 
-/// Checks the values of one contract as the registry's validation policy asks. It sees
-/// a JSON snapshot of each value, never the Rust type.
+/// Checks the values of one contract as the registry's validation policy asks. It reads
+/// each value where it is, against the contract's schema, never the Rust type.
 pub(super) trait ContractValidator: Send + Sync {
-    /// Whether inputs are checked at all, so the snapshot is only taken when needed.
+    /// Whether inputs are checked at all.
     fn checks_input(&self) -> bool;
 
     /// Whether outputs are checked at all.
     fn checks_output(&self) -> bool;
 
     /// Checks a call's input before the handler runs.
-    fn validate_input(&self, input: &Snapshot) -> Result<(), EngineError>;
+    fn validate_input(&self, input: &JsValue<'_>) -> Result<(), Refusal>;
 
     /// Checks a handler's output before the script receives it.
-    fn validate_output(&self, output: &Snapshot) -> Result<(), EngineError>;
+    fn validate_output(&self, output: &JsValue<'_>) -> Result<(), Refusal>;
+}
+
+/// Why a value did not pass its contract's check.
+pub(super) enum Refusal {
+    /// It does not match the contract, or the contract could not be consulted.
+    Contract(EngineError),
+    /// It could not be read: reading it ran script code that threw.
+    Unreadable(CodecError),
+}
+
+impl From<EngineError> for Refusal {
+    fn from(error: EngineError) -> Self {
+        Self::Contract(error)
+    }
+}
+
+impl Refusal {
+    /// The refusal as the error of the call, a contract mismatch worded by `mismatch`.
+    fn into_js(self, mismatch: impl FnOnce(EngineError) -> rquickjs::Error) -> rquickjs::Error {
+        match self {
+            Self::Contract(error) => mismatch(error),
+            Self::Unreadable(error) => error.into(),
+        }
+    }
 }
 
 /// Checks the JavaScript `input` of a call against `validator`, if it checks inputs.
-fn check_input<'js>(
-    ctx: &Ctx<'js>,
-    validator: Option<&dyn ContractValidator>,
-    input: &JsValue<'js>,
-) -> JsResult<()> {
+fn check_input(validator: Option<&dyn ContractValidator>, input: &JsValue<'_>) -> JsResult<()> {
     let Some(validator) = validator.filter(|validator| validator.checks_input()) else {
         return Ok(());
     };
     validator
-        .validate_input(&js_to_snapshot(ctx, input.clone())?)
-        .map_err(js_host_error)
+        .validate_input(input)
+        .map_err(|refusal| refusal.into_js(js_host_error))
 }
 
 /// Checks the JavaScript `output` of a call against `validator`, if it checks outputs.
-fn check_output<'js>(
-    ctx: &Ctx<'js>,
-    validator: Option<&dyn ContractValidator>,
-    output: &JsValue<'js>,
-) -> JsResult<()> {
+fn check_output(validator: Option<&dyn ContractValidator>, output: &JsValue<'_>) -> JsResult<()> {
     let Some(validator) = validator.filter(|validator| validator.checks_output()) else {
         return Ok(());
     };
     validator
-        .validate_output(&js_to_snapshot(ctx, output.clone())?)
-        .map_err(js_host_error)
+        .validate_output(output)
+        .map_err(|refusal| refusal.into_js(js_host_error))
 }
 
 /// Converts the call's input, runs `handler` on it and converts its output back, both
@@ -131,10 +146,10 @@ where
     C::Input: JsDecode,
     C::Output: JsEncode,
 {
-    check_input(ctx, validator, &input)?;
+    check_input(validator, &input)?;
     let input = C::Input::decode_js(ctx, input)?;
     let output = handler(input).map_err(js_host_error)?.encode_js(ctx)?;
-    check_output(ctx, validator, &output)?;
+    check_output(validator, &output)?;
     Ok(output)
 }
 
@@ -157,10 +172,9 @@ struct ValidatedReply<T> {
 impl<T: JsEncode + Send> ReplyValue for ValidatedReply<T> {
     fn into_js<'js>(self: Box<Self>, ctx: &Ctx<'js>) -> JsResult<JsValue<'js>> {
         let output = self.output.encode_js(ctx)?;
-        let snapshot = js_to_snapshot(ctx, output.clone())?;
-        self.validator
-            .validate_output(&snapshot)
-            .map_err(|error| Exception::throw_message(ctx, &error.to_string()))?;
+        self.validator.validate_output(&output).map_err(|refusal| {
+            refusal.into_js(|error| Exception::throw_message(ctx, &error.to_string()))
+        })?;
         Ok(output)
     }
 }
@@ -284,7 +298,7 @@ where
                 C::NAME,
                 &encode,
                 || {
-                    check_input(ctx, validator.as_deref(), &input)?;
+                    check_input(validator.as_deref(), &input)?;
                     C::Input::decode_js(ctx, input).map_err(rquickjs::Error::from)
                 },
                 |input, resolver| (self.handler)(&caller, input, resolver),

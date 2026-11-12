@@ -57,13 +57,7 @@ impl Schema {
     /// Returns a human-readable validation path and reason when the value does
     /// not match this schema.
     pub fn validate_json(&self, value: &serde_json::Value) -> Result<(), String> {
-        super::validation::validate_schema_with_options(
-            self,
-            &super::validation::Snapshot::from(value),
-            super::validation::SchemaValidationOptions {
-                reject_unknown_fields: false,
-            },
-        )
+        self.validate_json_with(value, false)
     }
 
     /// Validates one JSON value against this schema and rejects unknown object fields.
@@ -73,13 +67,20 @@ impl Schema {
     /// Returns a human-readable validation path and reason when the value does
     /// not match this schema or contains undeclared object fields.
     pub fn validate_json_strict(&self, value: &serde_json::Value) -> Result<(), String> {
-        super::validation::validate_schema_with_options(
-            self,
-            &super::validation::Snapshot::from(value),
-            super::validation::SchemaValidationOptions {
-                reject_unknown_fields: true,
-            },
-        )
+        self.validate_json_with(value, true)
+    }
+
+    fn validate_json_with(
+        &self,
+        value: &serde_json::Value,
+        reject_unknown_fields: bool,
+    ) -> Result<(), String> {
+        use super::validation::{Invalid, SchemaValidationOptions, validate_schema_with_options};
+
+        let options = SchemaValidationOptions {
+            reject_unknown_fields,
+        };
+        validate_schema_with_options(self, &value, options).map_err(Invalid::into_mismatch)
     }
 }
 

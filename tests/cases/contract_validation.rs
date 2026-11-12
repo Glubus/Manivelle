@@ -204,6 +204,33 @@ fn an_input_inside_the_schema_passes_through_unchanged() {
     assert_eq!(result.expect("valid call"), json!({ "id": 7 }));
 }
 
+/// The check reads the value where it is, which runs the getter: script code that reaches
+/// the registry again must find it free.
+#[test]
+fn a_getter_that_calls_a_host_function_while_its_object_is_checked_gets_its_answer() {
+    let mut engine = engine(ContractValidation::InputsAndOutputs);
+    engine
+        .registry()
+        .function::<Echo>()
+        .expect("register contract");
+    engine
+        .load_script(
+            "nested",
+            r#"
+            import { validation } from "test";
+            export function run() {
+                const input = { get id() { return validation.echo({ id: 7 }).id; } };
+                return validation.echo(input as any);
+            }
+            "#,
+        )
+        .expect("load script");
+
+    let result = engine.call::<Value>("nested", "run", ());
+
+    assert_eq!(result.expect("the nested call answers"), json!({ "id": 7 }));
+}
+
 #[test]
 fn a_named_type_a_schema_refers_to_is_resolved_before_checking() {
     let engine = loaded(ContractValidation::Inputs);

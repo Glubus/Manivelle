@@ -59,9 +59,32 @@ pub(super) fn own_field<'js>(
     object: &Object<'js>,
     name: &'static str,
 ) -> JsResult<Option<JsValue<'js>>> {
-    let atom = field_atom(ctx, name)?;
+    read_own(ctx, object, field_atom(ctx, name)?, name)
+}
+
+/// [`own_field`] for a name known only at run time, such as a schema's: its atom is
+/// looked up for this one read and released after it.
+pub(crate) fn own_property<'js>(
+    ctx: &Ctx<'js>,
+    object: &Object<'js>,
+    name: &str,
+) -> JsResult<Option<JsValue<'js>>> {
+    let atom = new_atom(ctx, name)?;
+    let read = read_own(ctx, object, atom, name);
+    // SAFETY: `atom` was created just above on this live context and is released once.
+    unsafe { qjs::JS_FreeAtom(ctx.as_raw().as_ptr(), atom) };
+    read
+}
+
+/// Reads the own enumerable property of `object` that `atom`, the atom of `name`, names.
+fn read_own<'js>(
+    ctx: &Ctx<'js>,
+    object: &Object<'js>,
+    atom: qjs::JSAtom,
+    name: &str,
+) -> JsResult<Option<JsValue<'js>>> {
     let mut descriptor = std::mem::MaybeUninit::<qjs::JSPropertyDescriptor>::uninit();
-    // SAFETY: `object` belongs to `ctx` and `atom` is kept alive by the cache;
+    // SAFETY: `object` belongs to `ctx` and the caller keeps `atom` alive for the call;
     // `JS_GetOwnProperty` only borrows them and fills `descriptor` when it returns 1.
     let found = unsafe {
         qjs::JS_GetOwnProperty(

@@ -1,18 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use rquickjs::{Object, Result as JsResult};
+use rquickjs::{Object, Result as JsResult, Value as JsValue};
 
-use super::bindings::{ContractValidator, FunctionBindingStore, NativeContext, duplicate_contract};
+use super::bindings::{
+    ContractValidator, FunctionBindingStore, NativeContext, Refusal, duplicate_contract,
+};
 use super::declarations::render_typescript_declarations;
 use super::import_modules::{HostModuleStyle, render_host_import_modules};
 use super::names::is_binding_name;
 use super::sdk::render_typescript_sdk;
 use crate::config::{ContractValidation, UnknownFieldValidation};
-use crate::contract::validation::{
-    SchemaValidationOptions, Snapshot, validate_schema_with_options,
-};
+use crate::contract::JsView;
+use crate::contract::validation::{Invalid, SchemaValidationOptions, validate_schema_with_options};
 use crate::contract::{
     Caller, HostCallback, HostCallbackDescriptor, HostContext, HostContractAbi,
     HostContractDescriptor, HostContractKind, HostFunctionDescriptor, HostFunctionSignature,
@@ -314,6 +315,7 @@ impl InMemoryHostContractRegistry {
         Arc::new(RegisteredContract {
             registry: Arc::clone(self),
             name: name.to_owned(),
+            schemas: OnceLock::new(),
         })
     }
 
@@ -378,60 +380,26 @@ impl InMemoryHostContractRegistry {
         Ok(())
     }
 
-    /// Runs `check` on the descriptor registered under `name` without cloning it; `Ok`
-    /// when there is none. Holds the registry lock for the check, which runs no handler.
-    fn with_descriptor(
+    /// Checks `value` against `schema`, one side of contract `name`.
+    fn check(
         &self,
         name: &str,
-        check: impl FnOnce(&HostContractDescriptor) -> Result<(), EngineError>,
-    ) -> Result<(), EngineError> {
-        let guard = self.lock_descriptors()?;
-        guard.get(name).map_or(Ok(()), check)
-    }
-
-    fn validate_function_input(
-        &self,
-        descriptor: &HostContractDescriptor,
-        input: &Snapshot,
-    ) -> Result<(), EngineError> {
-        if !self.validation.validates_inputs() {
-            return Ok(());
-        }
-        let Some(function) = &descriptor.function else {
-            return Ok(());
-        };
+        direction: Direction,
+        schema: &Schema,
+        value: &JsValue<'_>,
+    ) -> Result<(), Refusal> {
         validate_schema_with_options(
-            &function.input_schema,
-            input,
+            schema,
+            &JsView::of(value),
             validation_options(self.unknown_field_validation),
         )
-        .map_err(|details| EngineError::ContractValidation {
-            contract_name: descriptor.name.clone(),
-            direction: Direction::Input,
-            details,
-        })
-    }
-
-    fn validate_function_output(
-        &self,
-        descriptor: &HostContractDescriptor,
-        output: &Snapshot,
-    ) -> Result<(), EngineError> {
-        if !self.validation.validates_outputs() {
-            return Ok(());
-        }
-        let Some(function) = &descriptor.function else {
-            return Ok(());
-        };
-        validate_schema_with_options(
-            &function.output_schema,
-            output,
-            validation_options(self.unknown_field_validation),
-        )
-        .map_err(|details| EngineError::ContractValidation {
-            contract_name: descriptor.name.clone(),
-            direction: Direction::Output,
-            details,
+        .map_err(|invalid| match invalid {
+            Invalid::Mismatch(details) => Refusal::Contract(EngineError::ContractValidation {
+                contract_name: name.to_owned(),
+                direction,
+                details,
+            }),
+            Invalid::Read(error) => Refusal::Unreadable(error),
         })
     }
 }
@@ -511,11 +479,41 @@ fn collect_named<'a>(schema: &'a Schema, out: &mut Vec<&'a Schema>) {
     }
 }
 
-/// Validates one contract's values against the descriptor registered under its name
-/// each time a value crosses.
+/// Validates one contract's values against the schemas of the descriptor registered under
+/// its name.
 struct RegisteredContract {
     registry: Arc<InMemoryHostContractRegistry>,
     name: String,
+    /// The contract's schemas, copied out of the registry the first time a value is
+    /// checked. A descriptor never changes once registered, and reading a value can run
+    /// script code (a getter, a proxy) that calls back into the registry: no check may
+    /// run under its lock.
+    schemas: OnceLock<FunctionSchemas>,
+}
+
+struct FunctionSchemas {
+    input: Schema,
+    output: Schema,
+}
+
+impl RegisteredContract {
+    /// The schemas of the contract, or `None` while it is not a registered function.
+    fn schemas(&self) -> Result<Option<&FunctionSchemas>, EngineError> {
+        if let Some(schemas) = self.schemas.get() {
+            return Ok(Some(schemas));
+        }
+        let found = {
+            let descriptors = self.registry.lock_descriptors()?;
+            let function = descriptors
+                .get(&self.name)
+                .and_then(|descriptor| descriptor.function.as_ref());
+            function.map(|function| FunctionSchemas {
+                input: function.input_schema.clone(),
+                output: function.output_schema.clone(),
+            })
+        };
+        Ok(found.map(|found| self.schemas.get_or_init(|| found)))
+    }
 }
 
 impl ContractValidator for RegisteredContract {
@@ -527,16 +525,24 @@ impl ContractValidator for RegisteredContract {
         self.registry.validation.validates_outputs()
     }
 
-    fn validate_input(&self, input: &Snapshot) -> Result<(), EngineError> {
-        self.registry.with_descriptor(&self.name, |descriptor| {
-            self.registry.validate_function_input(descriptor, input)
-        })
+    fn validate_input(&self, input: &JsValue<'_>) -> Result<(), Refusal> {
+        match self.schemas()? {
+            Some(schemas) => {
+                self.registry
+                    .check(&self.name, Direction::Input, &schemas.input, input)
+            }
+            None => Ok(()),
+        }
     }
 
-    fn validate_output(&self, output: &Snapshot) -> Result<(), EngineError> {
-        self.registry.with_descriptor(&self.name, |descriptor| {
-            self.registry.validate_function_output(descriptor, output)
-        })
+    fn validate_output(&self, output: &JsValue<'_>) -> Result<(), Refusal> {
+        match self.schemas()? {
+            Some(schemas) => {
+                self.registry
+                    .check(&self.name, Direction::Output, &schemas.output, output)
+            }
+            None => Ok(()),
+        }
     }
 }
 

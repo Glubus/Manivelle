@@ -1,6 +1,8 @@
 //! Structural conversion between QuickJS values and `serde_json` values, without JSON
 //! text. Untyped host boundaries use it directly; `serde_json::Value` codecs wrap it.
 
+use std::borrow::Cow;
+
 use rquickjs::atom::PredefinedAtom;
 use rquickjs::{Array, Ctx, Filter, FromJs, IntoJs, Object, String as JsString, Value as JsValue};
 use serde_json::{Map, Number, Value};
@@ -8,9 +10,9 @@ use serde_json::{Map, Number, Value};
 use super::JsEncode;
 use super::codec::{
     CodecError, PathSegment, array_length, cautious_capacity, define_property, exact_integer,
-    is_dropped_by_json, with_engine_bytes,
+    is_dropped_by_json, own_property, with_engine_bytes,
 };
-use super::validation::Snapshot;
+use super::validation::{Inspect, Invalid, Kind, Visit};
 
 /// How deeply arrays and objects may nest in a value that crosses into Rust as JSON: the
 /// limit `serde_json` puts on parsing. A script controls its values, and this walk
@@ -24,18 +26,6 @@ const MAX_JSON_DEPTH: usize = 128;
 /// `JSON.stringify` followed by `serde_json` would produce. Non-finite numbers fail.
 pub(crate) fn js_to_json<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<Value, CodecError> {
     json_value(ctx, value, 0)
-}
-
-/// Converts one QuickJS value into the snapshot contract validation checks.
-///
-/// Unlike [`js_to_json`], it follows what the native codecs accept rather than what
-/// `JSON.stringify` writes: a `Uint8Array` or `ArrayBuffer` becomes its bytes, as
-/// `NativeBytes` reads them, and `NaN` or `±Infinity` stay numbers.
-pub(crate) fn js_to_snapshot<'js>(
-    ctx: &Ctx<'js>,
-    value: JsValue<'js>,
-) -> Result<Snapshot, CodecError> {
-    snapshot_value(ctx, value, 0)
 }
 
 fn too_deep(value: &JsValue<'_>) -> CodecError {
@@ -158,82 +148,146 @@ fn float_to_json(value: f64) -> Result<Value, CodecError> {
         .ok_or_else(|| CodecError::from_js("number", "json", "non-finite number"))
 }
 
-fn snapshot_value<'js>(
-    ctx: &Ctx<'js>,
-    value: JsValue<'js>,
-    depth: usize,
-) -> Result<Snapshot, CodecError> {
-    if value.is_null() || value.is_undefined() {
-        return Ok(Snapshot::Null);
-    }
-    if let Some(value) = value.as_bool() {
-        return Ok(Snapshot::Bool(value));
-    }
-    if let Some(value) = value.as_int() {
-        return Ok(Snapshot::Number(f64::from(value)));
-    }
-    if let Some(value) = value.as_float() {
-        return Ok(Snapshot::Number(value));
-    }
-    if value.is_string() {
-        return Ok(Snapshot::String(String::from_js(ctx, value)?));
-    }
-    if value.is_array() {
-        if depth >= MAX_JSON_DEPTH {
-            return Err(too_deep(&value));
-        }
-        return snapshot_array(ctx, &Array::from_js(ctx, value)?, depth + 1);
-    }
-    if value.is_object() {
-        if depth >= MAX_JSON_DEPTH {
-            return Err(too_deep(&value));
-        }
-        let object = Object::from_js(ctx, value)?;
-        // A detached buffer has no bytes, as decoding reports it.
-        if let Some(bytes) = with_engine_bytes(&object, |bytes| Box::<[u8]>::from(bytes)) {
-            return Ok(Snapshot::Bytes(bytes.unwrap_or_default()));
-        }
-        return snapshot_object(ctx, &object, depth + 1);
-    }
-    Err(unsupported(&value))
+/// A QuickJS value as contract validation reads it, in place.
+///
+/// Unlike [`js_to_json`], it follows what the native codecs accept rather than what
+/// `JSON.stringify` writes: a `Uint8Array` or `ArrayBuffer` is an array of its bytes, as
+/// `NativeBytes` reads them, and `NaN` or `±Infinity` are numbers. Like both, it sees only
+/// own enumerable properties, and what JSON drops (`undefined`, a function, a symbol) is
+/// an absent property or a `null` item.
+pub(crate) enum JsView<'js> {
+    Value(JsValue<'js>),
+    /// One byte of a buffer, read as the number it is.
+    Byte(u8),
+    /// An array item JSON writes as `null`.
+    Null,
 }
 
-fn snapshot_array<'js>(
-    ctx: &Ctx<'js>,
-    array: &Array<'js>,
-    depth: usize,
-) -> Result<Snapshot, CodecError> {
-    let len = array_length(array, "json")?;
-    let mut items = Vec::with_capacity(cautious_capacity::<Snapshot>(len));
-    for index in 0..len {
-        let item: JsValue<'js> = array.get(index)?;
-        let item = if is_dropped_by_json(&item) {
-            Snapshot::Null
-        } else {
-            snapshot_value(ctx, item, depth).map_err(|error| error.at(index))?
+impl<'js> JsView<'js> {
+    pub(crate) fn of(value: &JsValue<'js>) -> Self {
+        Self::Value(value.clone())
+    }
+
+    fn value(&self) -> Option<&JsValue<'js>> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Byte(_) | Self::Null => None,
+        }
+    }
+
+    /// The value as a `Uint8Array` or `ArrayBuffer`, when it is one.
+    fn byte_buffer(&self) -> Option<&Object<'js>> {
+        self.value()?
+            .as_object()
+            .filter(|object| with_engine_bytes(object, |_| ()).is_some())
+    }
+}
+
+impl<'js> Inspect for JsView<'js> {
+    type Error = CodecError;
+
+    fn kind(&self) -> Kind {
+        let value = match self {
+            Self::Value(value) => value,
+            Self::Byte(_) => return Kind::Number,
+            Self::Null => return Kind::Null,
         };
-        items.push(item);
-    }
-    Ok(Snapshot::Array(items))
-}
-
-fn snapshot_object<'js>(
-    ctx: &Ctx<'js>,
-    object: &Object<'js>,
-    depth: usize,
-) -> Result<Snapshot, CodecError> {
-    let mut entries = Vec::new();
-    for property in object.own_props::<JsString<'js>, JsValue<'js>>(Filter::default()) {
-        let (key, value) = property?;
-        if is_dropped_by_json(&value) {
-            continue;
+        if value.is_null() || value.is_undefined() {
+            Kind::Null
+        } else if value.is_bool() {
+            Kind::Boolean
+        } else if value.is_int() || value.is_float() {
+            Kind::Number
+        } else if value.is_string() {
+            Kind::String
+        } else if value.is_array() || self.is_bytes() {
+            Kind::Array
+        } else if value.is_object() {
+            Kind::Object
+        } else {
+            Kind::Other(value.type_name())
         }
-        let key = key.to_string()?;
-        let value = snapshot_value(ctx, value, depth)
-            .map_err(|error| error.at(PathSegment::Key(key.clone())))?;
-        entries.push((key, value));
     }
-    Ok(Snapshot::Object(entries))
+
+    fn boolean(&self) -> Option<bool> {
+        self.value()?.as_bool()
+    }
+
+    fn number(&self) -> Option<f64> {
+        match self {
+            Self::Value(value) => value.as_int().map(f64::from).or_else(|| value.as_float()),
+            Self::Byte(byte) => Some(f64::from(*byte)),
+            Self::Null => None,
+        }
+    }
+
+    fn text(&self) -> Result<Option<Cow<'_, str>>, CodecError> {
+        let Some(text) = self.value().and_then(JsValue::as_string) else {
+            return Ok(None);
+        };
+        Ok(Some(Cow::Owned(text.to_string()?)))
+    }
+
+    fn is_bytes(&self) -> bool {
+        self.byte_buffer().is_some()
+    }
+
+    fn len(&self) -> Result<Option<usize>, CodecError> {
+        if let Some(array) = self.value().and_then(JsValue::as_array) {
+            return array_length(array, "json").map(Some);
+        }
+        // A detached buffer has no bytes, as decoding reports it.
+        Ok(self.byte_buffer().map(|buffer| {
+            with_engine_bytes(buffer, <[u8]>::len)
+                .flatten()
+                .unwrap_or(0)
+        }))
+    }
+
+    fn item(&self, index: usize) -> Result<Self, CodecError> {
+        if let Some(array) = self.value().and_then(JsValue::as_array) {
+            let item: JsValue<'js> = array.get(index)?;
+            return Ok(if is_dropped_by_json(&item) {
+                Self::Null
+            } else {
+                Self::Value(item)
+            });
+        }
+        let byte = self
+            .byte_buffer()
+            .and_then(|buffer| with_engine_bytes(buffer, |bytes| bytes.get(index).copied()))
+            .flatten()
+            .flatten();
+        Ok(byte.map_or(Self::Null, Self::Byte))
+    }
+
+    fn field(&self, name: &str) -> Result<Option<Self>, CodecError> {
+        let Some(value) = self.value() else {
+            return Ok(None);
+        };
+        let Some(object) = value.as_object() else {
+            return Ok(None);
+        };
+        let field = own_property(value.ctx(), object, name)?;
+        Ok(field
+            .filter(|field| !is_dropped_by_json(field))
+            .map(Self::Value))
+    }
+
+    fn entries(&self, visit: &mut Visit<'_, Self>) -> Result<(), Invalid<CodecError>> {
+        let Some(object) = self.value().and_then(JsValue::as_object) else {
+            return Ok(());
+        };
+        for property in object.own_props::<JsString<'js>, JsValue<'js>>(Filter::default()) {
+            let (key, value) = property.map_err(CodecError::from)?;
+            if is_dropped_by_json(&value) {
+                continue;
+            }
+            let key = key.to_string().map_err(CodecError::from)?;
+            visit(&key, Self::Value(value))?;
+        }
+        Ok(())
+    }
 }
 
 /// Converts one JSON value into a QuickJS value. Object keys become own data

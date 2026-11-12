@@ -63,10 +63,20 @@
 - The crate no longer builds oxc's minifier, mangler and declaration emitter: it runs the
   parse, transform and print steps itself instead of enabling oxc's `full` feature (6
   crates fewer). The JavaScript produced is the same.
-- Contract validation accepts a `Uint8Array` or `ArrayBuffer` for a byte type without
-  checking each byte as a number. In one `cargo bench --bench native_bridge` run with
-  `ContractValidation::InputsAndOutputs`, a host function returning 1 MiB of
-  `NativeBytes` went from 14.2 ms to 177 µs (27 µs with validation off).
+- Contract validation reads the value where it is instead of copying it first: a string
+  is checked without being copied, a declared field is read by its name, and a
+  `Uint8Array` or `ArrayBuffer` passes a byte type without a look at each byte. With
+  `ContractValidation::InputsAndOutputs`, in `cargo bench --bench native_bridge`:
+  returning 1 MiB of `NativeBytes` went from 14.2 ms to about 33 µs, a call with a small
+  untyped struct from about 2.6 µs to 1.4 µs, and a 1024-item array from about 62 µs to
+  41 µs (the last three figures alternate the two builds over three rounds; the machine
+  moved by up to 30 % between rounds). Calls with derived structs show no difference
+  beyond that noise. `Schema::validate_json` no longer copies the JSON value either.
+- What validation refuses, and where, changes in two cases. A value the schema leaves
+  open (`unknown`, a `serde_json::Value`) is no longer walked by validation, so a cycle
+  or a `Date` inside it is refused by decoding, with decoding's message. A symbol or a
+  BigInt is reported as `expected <type>, got symbol` rather than `unsupported host
+  bridge value`.
 - `manivelle_bevy`: `with_engine` panics with the real `with_state` error, and the crate
   ships its `LICENSE`.
 
