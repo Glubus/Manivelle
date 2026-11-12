@@ -63,7 +63,7 @@ impl InMemoryHostContractRegistry {
 
     /// Registers one host function with its handler, and returns the registry for
     /// chaining. This is the one way to register a function declared with `#[host_fn]`,
-    /// `#[host_fn_with_ctx]` or `#[host_fn_async]`, or a `HostFunction` written by hand.
+    /// or a `HostFunction` written by hand.
     ///
     /// The schemas come from `TsSchema` of the input and output types. Calls from
     /// scripts convert the input and output natively through [`JsDecode`] and

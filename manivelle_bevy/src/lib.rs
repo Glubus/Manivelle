@@ -2,11 +2,11 @@
 //! Bevy app, and let the host functions of its scripts read and change the [`World`].
 //!
 //! The crate adds no script function of its own. A game declares the functions its scripts
-//! may call, with Manivelle's `#[host_fn_with_ctx]`, and each one reaches the world through
+//! may call, with Manivelle's `#[host_fn]`, and each one reaches the world through
 //! `Caller::with_state::<World, _>`:
 //!
 //! ```ignore
-//! #[host_fn_with_ctx(name = "game.add_score")]
+//! #[host_fn(name = "game.add_score")]
 //! fn add_score(ctx: &Caller<'_>, amount: u32) -> Result<u32, EngineError> {
 //!     ctx.with_state(|world: &mut World| {
 //!         let mut score = world.resource_mut::<Score>();
@@ -18,11 +18,11 @@
 //! app.add_manivelle(engine);
 //! ```
 //!
-//! Enable the `derive` feature of `manivelle` for `#[host_fn_with_ctx]`; this crate does not
+//! Enable the `derive` feature of `manivelle` for `#[host_fn]`; this crate does not
 //! forward it:
 //!
 //! ```toml
-//! manivelle = { version = "0.2", features = ["derive"] }
+//! manivelle = { version = "0.3", features = ["derive"] }
 //! ```
 //!
 //! [`AppManivelleExt::add_manivelle`] stores the engine and adds the system that drives it

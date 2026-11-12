@@ -8,12 +8,13 @@ use std::time::Duration;
 use clap::Args;
 use manivelle::{
     HostContractDescriptor, HostContractKind, MANIFEST_FILE, PackageManifest, PackageReport,
-    Severity, add_permissions, check_package, resolve_packages,
+    SdkFileNames, Severity, add_permissions, check_package, resolve_packages,
 };
 
 use super::Failure;
 use super::export::{read_descriptors, run_program};
 use super::files::replace_file;
+use super::init::GENERATED_DIR;
 use super::roots::canonical_roots;
 
 #[derive(Args)]
@@ -50,7 +51,7 @@ pub fn check(args: CheckArgs) -> Result<(), Failure> {
     let roots =
         canonical_roots(iter::once(directory.clone()).chain(args.package_dirs.iter().cloned()))?;
     let packages = resolve_packages(&roots)?;
-    let descriptors = contracts(&args)?;
+    let (descriptors, declarations) = contracts(&args)?;
     if args.fix && descriptors.is_none() {
         return Err("--fix needs --from <program> or --descriptors <file>".into());
     }
@@ -60,6 +61,11 @@ pub fn check(args: CheckArgs) -> Result<(), Failure> {
         let mut report = report_of(package, descriptors.as_deref())?;
         if args.fix && package.root == directory && !report.missing_permissions.is_empty() {
             report = fix(package, descriptors.as_deref().unwrap_or_default(), &report)?;
+        }
+        if let Some(declarations) = &declarations {
+            report
+                .findings
+                .extend(stale_declarations(package, declarations));
         }
         errors += print(package, &report);
     }
@@ -139,8 +145,32 @@ fn print(package: &PackageManifest, report: &PackageReport) -> usize {
     errors
 }
 
-/// The contracts of the program, when `--from` or `--descriptors` says where to read them.
-fn contracts(args: &CheckArgs) -> Result<Option<Vec<HostContractDescriptor>>, Failure> {
+/// An error when the declarations `manivelle init` wrote in `package` are no longer the
+/// ones the program exports: the scripts would be type-checked against an API the program
+/// does not have anymore. A package without that file (it was not set up by `init`, or
+/// names its files otherwise) is not compared.
+fn stale_declarations(package: &PackageManifest, exported: &str) -> Option<manivelle::Finding> {
+    let path = package
+        .root
+        .join(GENERATED_DIR)
+        .join(SdkFileNames::default().types);
+    let written = fs::read_to_string(&path).ok()?;
+    // A checkout may have turned the line ends of the file into CRLF.
+    (written.replace("\r\n", "\n") != exported.replace("\r\n", "\n")).then(|| manivelle::Finding {
+        severity: Severity::Error,
+        message: format!(
+            "{} is not what the program exports now: run `manivelle init --from <program>` \
+             in the package to refresh it",
+            path.display()
+        ),
+    })
+}
+
+/// The contracts of the program, when `--from` or `--descriptors` says where to read them,
+/// and the declarations it exported with them when it was run.
+type Contracts = (Option<Vec<HostContractDescriptor>>, Option<String>);
+
+fn contracts(args: &CheckArgs) -> Result<Contracts, Failure> {
     Ok(match (&args.from, &args.descriptors) {
         (Some(program), _) => {
             let program = fs::canonicalize(program)
@@ -152,12 +182,13 @@ fn contracts(args: &CheckArgs) -> Result<Option<Vec<HostContractDescriptor>>, Fa
                 exported.path(),
                 Duration::from_secs(args.timeout),
             )?;
-            Some(read_descriptors(
-                &exported.path().join(manivelle::DESCRIPTORS_FILE),
-            )?)
+            let descriptors = read_descriptors(&exported.path().join(manivelle::DESCRIPTORS_FILE))?;
+            let declarations =
+                fs::read_to_string(exported.path().join(SdkFileNames::default().types))?;
+            (Some(descriptors), Some(declarations))
         }
-        (None, Some(file)) => Some(read_descriptors(file)?),
-        (None, None) => None,
+        (None, Some(file)) => (Some(read_descriptors(file)?), None),
+        (None, None) => (None, None),
     })
 }
 

@@ -9,12 +9,12 @@ Manivelle lends it:
 
 ```rust
 use bevy_ecs::prelude::{Resource, World};
-use manivelle::{Caller, EngineError, host_fn_with_ctx};
+use manivelle::{Caller, EngineError, host_fn};
 
 #[derive(Resource, Default)]
 struct Score(u32);
 
-#[host_fn_with_ctx(name = "game.add_score")]
+#[host_fn(name = "game.add_score")]
 fn add_score(ctx: &Caller<'_>, amount: u32) -> Result<u32, EngineError> {
     ctx.with_state(|world: &mut World| {
         let mut score = world.resource_mut::<Score>();
@@ -24,7 +24,7 @@ fn add_score(ctx: &Caller<'_>, amount: u32) -> Result<u32, EngineError> {
 }
 ```
 
-Enable the `derive` feature of `manivelle` for `#[host_fn_with_ctx]`; this crate does not
+Enable the `derive` feature of `manivelle` for `#[host_fn]`; this crate does not
 forward it:
 
 ```toml

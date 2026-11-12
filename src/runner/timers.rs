@@ -22,6 +22,11 @@ impl TimerClock {
         self.0.set(now);
         now
     }
+
+    /// The engine time now.
+    pub(super) fn now(&self) -> f64 {
+        self.0.get()
+    }
 }
 
 /// Due time of a context's earliest timer, so the engine enters only contexts with a

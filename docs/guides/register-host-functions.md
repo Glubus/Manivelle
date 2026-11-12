@@ -168,15 +168,15 @@ Scripts then write `import { math } from "app"; math.add(...)`: the import path 
 full contract name, as under the global namespace. It sets the contract's `IMPORT_MODULE`
 and `EXPORT_PATH` for you; see [Import Modules](generate-sdk-files.md#import-modules).
 
-### Receive The Calling Script: `#[host_fn_with_ctx]`
+### Receive The Calling Script: `ctx: &Caller<'_>`
 
-A static `HostFunction` cannot know which script called it. A function whose first
-parameter is the `Caller` is declared with `#[host_fn_with_ctx]`:
+A static `HostFunction` cannot know which script called it. Give the function the
+`Caller` as its first parameter and `#[host_fn]` hands it over:
 
 ```rust
-use manivelle::{Caller, EngineError, host_fn_with_ctx};
+use manivelle::{Caller, EngineError, host_fn};
 
-#[host_fn_with_ctx(name = "user.find")]
+#[host_fn(name = "user.find")]
 fn find_user(ctx: &Caller<'_>, input: FindUserInput) -> Result<FindUserOutput, EngineError> {
     Ok(FindUserOutput { display_name: format!("{} asks {}", ctx.script_id(), input.user_id) })
 }
@@ -189,15 +189,15 @@ implements `RegisterHostFunction` itself, which is what `function::<FindUser>()`
 needs, and its handler is called through `function_with_caller`. The input is optional
 (`fn(ctx)`).
 
-### Settle Later: `#[host_fn_async]`
+### Settle Later: `resolver: HostResolver<Output>`
 
-An async contract takes a `HostResolver<Output>` as its last parameter, and the `Caller`
-first if it wants it. Keep the resolver where the game can settle it:
+A function that answers later takes a `HostResolver<Output>` as its last parameter, and
+the `Caller` first if it wants it. Keep the resolver where the game can settle it:
 
 ```rust
-use manivelle::{HostResolver, host_fn_async};
+use manivelle::{HostResolver, host_fn};
 
-#[host_fn_async(name = "scores.lookup")]
+#[host_fn(name = "scores.lookup")]
 fn lookup_score(player: String, resolver: HostResolver<u32>) {
     queue().push((player, resolver));
 }
@@ -206,7 +206,12 @@ engine.registry().function::<LookupScore>()?;
 ```
 
 The generated `RegisterHostFunction` impl uses `async_function_with`, or
-`async_function_with_caller` with a `ctx`. Both macros also work inside `#[host_mod]`.
+`async_function_with_caller` with a `ctx`. The input is optional here too
+(`fn(resolver)`).
+
+`#[host_fn]` tells the two parameters by the last name of their types, `Caller` behind
+a reference and `HostResolver`: an input type of your own must not be named like
+either. All of this also works inside `#[host_mod]`.
 
 ## Implement A Host Function With A Closure
 

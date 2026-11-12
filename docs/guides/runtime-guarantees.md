@@ -42,7 +42,7 @@ that never returns costs one timeout and the scripts after it still run. Suspend
 time between host operations does not consume a budget.
 
 QuickJS's interrupt handler stops JavaScript still running when the budget
-expires; the operation fails with `EngineError::Execution` and the engine stays
+expires; the operation fails with `EngineError::BudgetExceeded` and the engine stays
 usable. Limits are cooperative, not real-time scheduling guarantees. A Rust host
 function cannot be preempted: it must return, have its own I/O timeouts, and avoid
 unbounded blocking. For hostile native extensions, use a separate process.

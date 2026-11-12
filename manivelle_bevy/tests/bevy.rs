@@ -6,13 +6,13 @@ use std::time::Duration;
 use bevy_app::App;
 use bevy_ecs::prelude::{Resource, World};
 use bevy_time::Time;
-use manivelle::{Caller, Engine, EngineError, EngineOptions, host_fn_with_ctx};
+use manivelle::{Caller, Engine, EngineError, EngineOptions, host_fn};
 use manivelle_bevy::{AppManivelleExt, ManivelleSettings, with_engine};
 
 #[derive(Resource, Default)]
 struct Score(u32);
 
-#[host_fn_with_ctx(name = "game.add")]
+#[host_fn(name = "game.add")]
 fn add(ctx: &Caller<'_>, amount: u32) -> Result<u32, EngineError> {
     ctx.with_state(|world: &mut World| {
         let mut score = world.resource_mut::<Score>();

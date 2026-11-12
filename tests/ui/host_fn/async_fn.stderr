@@ -1,4 +1,4 @@
-error: a host function cannot be `async fn`; use `#[host_fn_async]` with a `HostResolver`
+error: a host function cannot be `async fn`; take a `resolver: HostResolver<Output>` as the last parameter to answer later
  --> tests/ui/host_fn/async_fn.rs:4:1
   |
 4 | async fn one() -> Result<f64, EngineError> {

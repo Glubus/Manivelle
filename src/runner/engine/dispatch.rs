@@ -32,7 +32,7 @@ impl Engine {
         function: &str,
         args: impl JsArgs,
     ) -> Result<R, EngineError> {
-        let script = self.script(script_id)?;
+        let (script_id, script) = self.script_entry(script_id)?;
         self.run_in_script(script, |ctx| {
             let result = self.call_export(&ctx, script, script_id, function, &args);
             self.explain_quota(
@@ -230,7 +230,7 @@ impl Engine {
         let _charge = self.charge_to(script);
         let _budget = self.budget();
         let result = script.context.with(body);
-        self.attribute_interrupt(self.settle(result))
+        self.attribute_stop(self.settle(result))
     }
 
     /// Runs every job left in the queue, for all scripts, then reports in order: the
@@ -254,9 +254,8 @@ impl Engine {
         self.harvest_tasks();
         let unhandled = self.rejections.take();
         if self.execution.budget_expired() {
-            job_error.get_or_insert_with(|| EngineError::Execution {
-                details: "execution budget exceeded".to_owned(),
-            });
+            // Whatever a job threw, it was stopped: the budget is what the host must hear.
+            job_error = Some(self.budget_exceeded());
         }
         // A host function that panicked cannot unwind through QuickJS: the panic waited,
         // beyond reach of a script's `catch`, for the operation to end.
@@ -318,32 +317,34 @@ impl Engine {
             .set(active.saturating_sub(count));
     }
 
-    /// An error as the host sees it: TypeScript locations, and an out of memory, however
-    /// QuickJS or rquickjs described it, said as such with the limit to raise.
+    /// An error as the host sees it: TypeScript locations, and an out of memory QuickJS
+    /// could not word (it threw nothing, or `null`) said as such.
     pub(super) fn reported(&self, error: EngineError) -> EngineError {
-        match in_typescript(error, &self.module_store) {
-            EngineError::Execution { details } if self.is_out_of_memory(&details) => {
-                let stats = self.memory_stats();
-                EngineError::Execution {
-                    details: format!(
-                        "out of memory: {} of {} bytes allocated, the limit \
-                         `EngineOptions::memory_limit_bytes`; raise it or load fewer scripts",
-                        stats.malloc_size_bytes, stats.malloc_limit_bytes
-                    ),
-                }
-            }
-            error => error,
+        if self.is_silent_out_of_memory(&error) {
+            return EngineError::OutOfMemory;
+        }
+        in_typescript(error, &self.module_store)
+    }
+
+    fn budget_exceeded(&self) -> EngineError {
+        EngineError::BudgetExceeded {
+            timeout: self.execution_timeout,
         }
     }
 
-    /// Reports an operation that failed after an [`InterruptHandle`] request as
-    /// [`EngineError::Interrupted`] rather than as the QuickJS interrupt exception.
-    pub(super) fn attribute_interrupt<T>(
+    /// Reports an operation that failed because it was stopped as the stop: after an
+    /// [`InterruptHandle`] request, [`EngineError::Interrupted`]; when an interrupt check
+    /// found its budget used up, [`EngineError::BudgetExceeded`], rather than the QuickJS
+    /// interrupt exception either way. A [`EngineError::Fault`] already says whose budget.
+    pub(super) fn attribute_stop<T>(
         &self,
         result: Result<T, EngineError>,
     ) -> Result<T, EngineError> {
         match result {
             Err(_) if self.execution.interrupt_requested() => Err(EngineError::Interrupted),
+            Err(EngineError::Execution { .. }) if self.execution.slice_expired() => {
+                Err(self.budget_exceeded())
+            }
             result => result,
         }
     }

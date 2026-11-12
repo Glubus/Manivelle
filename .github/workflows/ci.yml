@@ -17,14 +17,23 @@ jobs:
           cache: npm
       - run: npm ci
       - run: rustup show
+      - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       # Every feature but `disable-assertions`: tests run with QuickJS assertions on.
       - run: cargo clippy --workspace --features derive,uuid,chrono,glam,cli --all-targets --locked -- -D warnings
       - run: cargo test --workspace --features derive,uuid,chrono,glam,cli --locked
       - run: cargo test --workspace --no-default-features --locked
       - run: cargo check --workspace --all-features --all-targets --locked
+      # Each optional half alone: a warning that needs `derive` without `cli`, or the
+      # reverse, does not show when both are on.
+      - run: cargo clippy --features derive --all-targets --locked -- -D warnings
+      - run: cargo clippy --features cli --all-targets --locked -- -D warnings
       - run: cargo run --example getting_started --features derive --locked
       - run: cargo run --example game_loop --features derive --locked
+      - run: cargo run --example host_state --features derive --locked
+      - run: cargo run --example packages --features derive --locked
+      # Each benchmark runs once, unmeasured: the README quotes them, so they must run.
+      - run: cargo bench --profile dev --features derive --bench runtime --bench native_bridge --bench vs_lua --bench native_roundtrip --locked -- --test
       - run: cargo package -p manivelle_macros --locked
       - run: cargo package -p manivelle --locked
       - run: cargo package -p manivelle_bevy --locked

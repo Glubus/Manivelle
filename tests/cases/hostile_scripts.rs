@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use manivelle::{Engine, EngineError, EngineOptions};
+use manivelle::{Engine, EngineError, EngineOptions, FaultStanding, ScriptFault};
 use serde_json::{Value, json};
 
 fn engine_with(options: EngineOptions) -> Engine {
@@ -196,11 +196,18 @@ fn a_loop_hidden_in_a_promise_job_faults_the_script_that_queued_it() {
     let third = engine.emit("tick", &json!({}));
 
     assert!(
-        matches!(&first, Err(EngineError::Execution { details }) if details.contains("script `sneaky`")),
+        matches!(&first, Err(EngineError::Fault { script_id, fault: ScriptFault::Budget { .. }, .. })
+            if script_id == "sneaky"),
         "{first:?}"
     );
     assert!(
-        matches!(&second, Err(EngineError::Execution { details }) if details.contains("quarantined")),
+        matches!(
+            &second,
+            Err(EngineError::Fault {
+                standing: FaultStanding::Quarantined { .. },
+                ..
+            })
+        ),
         "{second:?}"
     );
     assert_eq!(third.expect("the quarantined script is not visited"), 1);
@@ -265,8 +272,8 @@ fn only_the_first_script_to_run_out_of_memory_in_an_operation_is_counted() {
     let result = engine.emit("tick", &json!({}));
 
     assert!(
-        matches!(&result, Err(EngineError::Execution { details })
-            if details.contains("script `v1`") && details.contains("ran out of memory")),
+        matches!(&result, Err(EngineError::Fault { script_id, fault: ScriptFault::Memory, .. })
+            if script_id == "v1"),
         "{result:?}"
     );
     assert_eq!(
@@ -307,10 +314,10 @@ fn running_out_of_memory_inside_a_context_group_is_judged_without_a_second_runti
     for (index, _) in sources.iter().enumerate() {
         let result = engine.emit("tick", &json!({}));
 
-        let name = format!("script `hog-{index}`");
+        let name = format!("hog-{index}");
         assert!(
-            matches!(&result, Err(EngineError::Execution { details })
-                if details.contains(&name) && details.contains("ran out of memory")),
+            matches!(&result, Err(EngineError::Fault { script_id, fault: ScriptFault::Memory, .. })
+                if script_id.as_str() == name),
             "{result:?}"
         );
     }

@@ -27,6 +27,36 @@ fn deferred_call_waits_for_a_host_clock_then_returns_its_value() {
 }
 
 #[test]
+fn the_engine_reports_the_open_call_and_when_its_timer_is_due() {
+    let mut engine = Engine::new(&EngineOptions::default()).expect("engine");
+    engine
+        .load_script(
+            "song",
+            "export async function beat(): Promise<number> { await new Promise(resolve => setTimeout(resolve, 25)); return 42; }",
+        )
+        .expect("load");
+    assert_eq!(engine.pending_work().deferred, 0);
+    assert_eq!(engine.next_timer_due(), None);
+
+    let result = engine
+        .call_deferred::<f64>("song", "beat", ())
+        .expect("call");
+
+    assert_eq!(engine.pending_work().deferred, 1);
+    assert_eq!(engine.next_timer_due(), Some(Duration::from_millis(25)));
+    engine
+        .advance_timers(Duration::from_millis(24))
+        .expect("before timer");
+    assert_eq!(engine.next_timer_due(), Some(Duration::from_millis(1)));
+    engine
+        .advance_timers(Duration::from_millis(40))
+        .expect("timer fires");
+    assert!(result.is_finished());
+    assert_eq!(engine.pending_work().deferred, 0);
+    assert_eq!(engine.next_timer_due(), None);
+}
+
+#[test]
 fn deferred_rejection_is_delivered_only_to_its_handle() {
     let mut engine = Engine::new(&EngineOptions::default()).expect("engine");
     engine

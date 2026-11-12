@@ -1,7 +1,7 @@
 //! A per-script memory quota inside the engine's shared pool: the script that goes over
 //! it fails, and the others keep their share.
 
-use manivelle::{Engine, EngineError, EngineOptions};
+use manivelle::{Engine, EngineError, EngineOptions, FaultStanding, ScriptFault};
 
 const MIB: usize = 1024 * 1024;
 
@@ -45,8 +45,12 @@ fn a_script_over_its_quota_fails_and_its_neighbour_does_not() {
     let hog = engine.call::<f64>("hog", "grab", (500,));
 
     assert!(
-        matches!(hog, Err(EngineError::Execution { ref details })
-            if details.contains("`hog`") && details.contains("memory quota")),
+        matches!(hog, Err(EngineError::Fault {
+            ref script_id,
+            fault: ScriptFault::Quota { .. },
+            standing: FaultStanding::Unlimited,
+            ..
+        }) if script_id == "hog"),
         "{hog:?}"
     );
     // 100 arrays are about 1.6 MiB: more than the hog could add, within the quota, and far
@@ -103,8 +107,13 @@ fn faults_over_the_quota_are_attributed_and_quarantine_the_script() {
         assert_eq!(failed, ["hog"], "round {round}");
         let (_, error) = &report.failures[0];
         assert!(
-            matches!(error, EngineError::Execution { details }
-                if details.contains("memory quota") && details.contains("fault")),
+            matches!(
+                error,
+                EngineError::Fault {
+                    fault: ScriptFault::Quota { .. },
+                    ..
+                }
+            ),
             "{error:?}"
         );
     }

@@ -123,10 +123,8 @@ fn prefix_attributes(
 }
 
 fn is_contract_attribute(attr: &Attribute) -> bool {
-    attr.path().segments.last().is_some_and(|segment| {
-        segment.ident == "host_fn"
-            || segment.ident == "host_fn_with_ctx"
-            || segment.ident == "host_fn_async"
-            || segment.ident == "host_event"
-    })
+    attr.path()
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "host_fn" || segment.ident == "host_event")
 }

@@ -1,6 +1,8 @@
 //! Error types exposed by the engine.
 
+use std::fmt;
 use std::io;
+use std::time::Duration;
 
 use thiserror::Error;
 
@@ -110,6 +112,40 @@ pub enum EngineError {
         /// line and column.
         details: String,
     },
+    /// An operation ran longer than
+    /// [`EngineOptions::execution_timeout`](crate::EngineOptions::execution_timeout) and
+    /// was stopped: a call, a load, a `ctx.hot` callback, or the Promise jobs an
+    /// operation left to settle. A script that runs out of its time while an event, a
+    /// timer or a host answer is delivered to it is a [`EngineError::Fault`] instead,
+    /// which names it.
+    #[error("execution budget exceeded ({timeout:?}, `EngineOptions::execution_timeout`)")]
+    BudgetExceeded {
+        /// The budget the operation had.
+        timeout: Duration,
+    },
+    /// QuickJS could not allocate: the engine reached
+    /// [`EngineOptions::memory_limit_bytes`](crate::EngineOptions::memory_limit_bytes).
+    /// [`Engine::memory_stats`](crate::Engine::memory_stats) has the numbers. A script's
+    /// own `throw new Error("out of memory")` is an [`EngineError::Execution`].
+    #[error(
+        "out of memory: the engine reached `EngineOptions::memory_limit_bytes`; raise it or load fewer scripts"
+    )]
+    OutOfMemory,
+    /// A script ran out of its time or memory. While an event, a timer or a host answer
+    /// is delivered, the fault is counted against the script, and `standing` says how
+    /// close it is to quarantine; a call that goes over the script's memory quota is
+    /// reported the same way and not counted.
+    #[error("{what} of script `{script_id}` {fault}{standing}")]
+    Fault {
+        /// The script at fault.
+        script_id: ScriptId,
+        /// What ran when it faulted, such as ``a `tick` handler`` or `a timer`.
+        what: String,
+        /// What it ran out of.
+        fault: ScriptFault,
+        /// Where the script stands now.
+        standing: FaultStanding,
+    },
     /// A package called a host function, or listened to an event, that its `permissions`
     /// do not list.
     #[error(
@@ -135,6 +171,79 @@ pub enum EngineError {
     Io(#[from] io::Error),
 }
 
+/// What a script ran out of, in an [`EngineError::Fault`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScriptFault {
+    /// Its time: the slice of the operation it had to itself.
+    Budget {
+        /// The budget it had
+        /// ([`EngineOptions::execution_timeout`](crate::EngineOptions::execution_timeout)).
+        timeout: Duration,
+    },
+    /// The engine's memory, which it was the first to fail to allocate from.
+    Memory,
+    /// Its own memory quota.
+    Quota {
+        /// The quota, in bytes
+        /// ([`EngineOptions::script_memory_limit_bytes`](crate::EngineOptions::script_memory_limit_bytes)).
+        limit_bytes: usize,
+    },
+}
+
+impl fmt::Display for ScriptFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Budget { timeout } => {
+                write!(f, "ran out of its execution budget ({timeout:?})")
+            }
+            Self::Memory => f.write_str("ran out of memory"),
+            Self::Quota { limit_bytes } => write!(
+                f,
+                "went over its memory quota ({limit_bytes} bytes, `EngineOptions::script_memory_limit_bytes`)"
+            ),
+        }
+    }
+}
+
+/// Where a script stands after an [`EngineError::Fault`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FaultStanding {
+    /// No quarantine follows: `EngineOptions::max_script_faults` is 0, or the fault
+    /// happened in a call, which is not counted.
+    Unlimited,
+    /// It has `faults` of the `allowed` ones.
+    Warned {
+        /// The faults counted against it so far.
+        faults: u32,
+        /// The count at which it is quarantined.
+        allowed: u32,
+    },
+    /// It reached the limit and is quarantined: its handlers and timers no longer run
+    /// until it is reloaded.
+    Quarantined {
+        /// The faults counted against it.
+        faults: u32,
+    },
+}
+
+impl fmt::Display for FaultStanding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unlimited => Ok(()),
+            Self::Warned { faults, allowed } => {
+                write!(f, "; fault {faults} of {allowed} before it is quarantined")
+            }
+            Self::Quarantined { faults } => write!(
+                f,
+                "; it faulted {faults} times and is quarantined: its handlers and timers no \
+                 longer run until it is reloaded (unload it to free its memory)"
+            ),
+        }
+    }
+}
+
 /// The direction in which a value crosses the host bridge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Direction {
@@ -144,8 +253,8 @@ pub enum Direction {
     Output,
 }
 
-impl std::fmt::Display for Direction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Direction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Input => "input",
             Self::Output => "output",

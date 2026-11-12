@@ -404,16 +404,46 @@ check or a Rust host function, so time spent in host functions counts against it
 a handler that reaches neither (a short one) never reads the clock; suspended
 time between host calls does not count. QuickJS
 checks about every ten thousand interpreter steps: JavaScript still running at
-the first check after expiry is interrupted with `EngineError::Execution`. The
+the first check after expiry is interrupted, and the call or load fails with
+`EngineError::BudgetExceeded`. The
 budget is cooperative: it cannot preempt a blocked Rust function, and JavaScript
 that finishes before the next check is not stopped. A synchronous loop cannot
 be paused and resumed: interruption aborts it.
 
 A script that runs out of its time or memory while an event, a timer or a host answer
-is delivered to it is faulting: the error names it, the other scripts carry on, and
-after `EngineOptions::max_script_faults` faults (3 by default) it is quarantined: its
-handlers and timers stop running until it is reloaded, and
-`Engine::quarantined_scripts()` lists it.
+is delivered to it is faulting: the other scripts carry on, and the error is an
+`EngineError::Fault` to match on rather than a message to read:
+
+```rust
+use manivelle::{EngineError, FaultStanding, ScriptFault};
+
+for (script_id, error) in engine.emit_report("tick", &frame).failures {
+    match error {
+        EngineError::Fault { fault: ScriptFault::Budget { .. }, standing, .. } => {
+            if matches!(standing, FaultStanding::Quarantined { .. }) {
+                ui.warn(format!("{script_id} was too slow and is now off"));
+            }
+        }
+        other => log::error!("{script_id}: {other}"),
+    }
+}
+```
+
+`fault` is `Budget`, `Memory` (the engine's pool) or `Quota` (the script's own share),
+and `standing` says how many faults it has. After `EngineOptions::max_script_faults`
+faults (3 by default) it is quarantined: its handlers and timers stop running until it
+is reloaded, and `Engine::quarantined_scripts()` lists it. Faults never expire on
+their own; `Engine::clear_faults(script_id)` forgets those of a script that is not
+quarantined yet, where the host decides a slow frame long ago no longer counts.
+
+### What The Scripts Wait For
+
+A host loop that forgets `pump` or `advance_timers` fails without a sound: a
+`PendingCall` just never finishes. `Engine::pending_work()` counts what is open, the
+deferred results (`deferred`) and the async host calls not settled yet (`host_calls`),
+so a test or a debug overlay can see a count that never goes down.
+`Engine::next_timer_due()` is how long until the earliest timer is due, `None` without
+one: a host that sleeps between frames sleeps that long.
 
 To stop a script earlier, for example from a UI "stop" button or a watchdog thread,
 take an `InterruptHandle` before handing work to the engine's thread. It is `Send`
@@ -484,9 +514,8 @@ counts. A call that exceeds the memory limit fails, and the engine stays usable.
 
 Each loaded script owns a QuickJS context, about 65 to 85 KiB with every built-in on
 (measured on an empty script), so the default 16 MiB limit holds roughly 200 scripts:
-raise `memory_limit_bytes` for more. A load that hits the limit fails with an error
-saying so (`out of memory: ... memory_limit_bytes`) and keeps the scripts already
-loaded.
+raise `memory_limit_bytes` for more. A load that hits the limit fails with
+`EngineError::OutOfMemory` and keeps the scripts already loaded.
 
 ### Per-Script Quota
 

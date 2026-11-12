@@ -4,40 +4,15 @@
 
 use std::mem;
 use std::ptr::{self, NonNull};
-use std::time::Duration;
 
 use rquickjs::{Ctx, qjs};
 
-use super::super::errors::{
-    OUT_OF_MEMORY, forget_out_of_memory, pending_exception, raised_out_of_memory,
-};
+use super::super::errors::pending_exception;
 use super::super::quota::ChargeGuard;
 use super::dispatch::NULL_EXCEPTION;
 use super::{Engine, EngineScript};
-use crate::error::EngineError;
-
-/// Why a script's slice counts as a fault.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Fault {
-    /// It used up its time.
-    Budget,
-    /// It failed for lack of memory.
-    Memory,
-    /// It went over its own memory quota, of this many bytes
-    /// (`EngineOptions::script_memory_limit_bytes`).
-    Quota(usize),
-}
-
-/// Where a script stands after a fault was counted against it.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Standing {
-    /// Quarantine is off (`max_script_faults` is 0).
-    Unlimited,
-    /// It has `faults` of the `allowed` ones.
-    Warned { faults: u32, allowed: u32 },
-    /// It reached the limit: its handlers and timers no longer run.
-    Quarantined { faults: u32 },
-}
+use crate::error::{EngineError, FaultStanding, ScriptFault};
+use crate::types::ScriptId;
 
 impl Engine {
     /// The ids, in load order, of the scripts that ran out of their time or memory
@@ -53,6 +28,20 @@ impl Engine {
             .map(|(id, _)| id.as_str())
     }
 
+    /// Forgets the faults counted against a script that is not quarantined, so that its
+    /// next one is its first again. Faults never expire on their own: a host that
+    /// forgives a script for a slow frame an hour ago calls this where it sees fit, such
+    /// as between levels. A quarantined script stays quarantined, since its timers and
+    /// pending host answers were dropped with its handlers: reload it. Fails when the
+    /// script is not loaded.
+    pub fn clear_faults(&self, script_id: &str) -> Result<(), EngineError> {
+        let script = self.script(script_id)?;
+        if !script.quarantined.get() {
+            script.faults.set(0);
+        }
+        Ok(())
+    }
+
     /// Runs `body`, which delivers something to `script` in `ctx`, as one slice: under a
     /// budget of its own, followed by the Promise jobs it queued, and judges the outcome.
     /// `what` says what was delivered, for the error that names the script.
@@ -62,14 +51,13 @@ impl Engine {
     pub(super) fn run_slice(
         &self,
         ctx: &Ctx<'_>,
-        id: &str,
+        id: &ScriptId,
         script: &EngineScript,
         what: impl FnOnce() -> String,
         body: impl FnOnce() -> Result<(), EngineError>,
     ) -> Result<(), EngineError> {
         let _charge = self.charge_to(script);
         self.execution.restart_slice();
-        forget_out_of_memory();
         let outcome = body();
         let jobs = drain_jobs(ctx);
         self.judge_slice(ctx, id, script, outcome.and(jobs), what)
@@ -87,27 +75,25 @@ impl Engine {
     /// also counts the fault, a call does not.
     pub(super) fn explain_quota<T>(
         &self,
-        id: &str,
+        id: &ScriptId,
         script: &EngineScript,
         what: impl FnOnce() -> String,
         result: Result<T, EngineError>,
     ) -> Result<T, EngineError> {
-        let (Err(EngineError::Execution { details }), Some(quota), Some(owner)) =
-            (&result, &self.faults.quota, &script.owner)
+        let (Err(error), Some(quota), Some(owner)) = (&result, &self.faults.quota, &script.owner)
         else {
             return result;
         };
-        if !looks_like_exhaustion(details) || !owner.take_refused() {
+        if !looks_like_exhaustion(error) || !owner.take_refused() {
             return result;
         }
-        Err(EngineError::Execution {
-            details: fault_message(
-                id,
-                &what(),
-                Fault::Quota(quota.limit()),
-                Standing::Unlimited,
-                self.execution_timeout,
-            ),
+        Err(EngineError::Fault {
+            script_id: id.clone(),
+            what: what(),
+            fault: ScriptFault::Quota {
+                limit_bytes: quota.limit(),
+            },
+            standing: FaultStanding::Unlimited,
         })
     }
 
@@ -124,7 +110,7 @@ impl Engine {
     fn judge_slice(
         &self,
         ctx: &Ctx<'_>,
-        id: &str,
+        id: &ScriptId,
         script: &EngineScript,
         outcome: Result<(), EngineError>,
         what: impl FnOnce() -> String,
@@ -132,9 +118,11 @@ impl Engine {
         let Some(fault) = self.fault_of(ctx, script, &outcome) else {
             return outcome;
         };
-        let standing = self.count_fault(script);
-        Err(EngineError::Execution {
-            details: fault_message(id, &what(), fault, standing, self.execution_timeout),
+        Err(EngineError::Fault {
+            script_id: id.clone(),
+            what: what(),
+            fault,
+            standing: self.count_fault(script),
         })
     }
 
@@ -148,44 +136,40 @@ impl Engine {
         ctx: &Ctx<'_>,
         script: &EngineScript,
         outcome: &Result<(), EngineError>,
-    ) -> Option<Fault> {
+    ) -> Option<ScriptFault> {
         if self.execution.slice_expired() {
-            return Some(Fault::Budget);
+            return Some(ScriptFault::Budget {
+                timeout: self.execution_timeout,
+            });
         }
-        let Err(EngineError::Execution { details }) = outcome else {
+        let error = outcome.as_ref().err()?;
+        if !looks_like_exhaustion(error) {
             return None;
-        };
-        // A script over its own quota is the culprit whatever the pool holds.
-        if looks_like_exhaustion(details)
-            && script
-                .owner
-                .as_ref()
-                .is_some_and(|owner| owner.take_refused())
-        {
-            return self
-                .faults
-                .quota
-                .as_ref()
-                .map(|quota| Fault::Quota(quota.limit()));
         }
-        let ran_out_of_memory = (details.starts_with(OUT_OF_MEMORY) && raised_out_of_memory())
-            || (looks_like_exhaustion(details) && pool_nearly_full(ctx));
-        (ran_out_of_memory && !self.faults.memory_fault_seen.replace(true)).then_some(Fault::Memory)
+        // A script over its own quota is the culprit whatever the pool holds.
+        if (script.owner.as_ref()).is_some_and(|owner| owner.take_refused()) {
+            return (self.faults.quota.as_ref()).map(|quota| ScriptFault::Quota {
+                limit_bytes: quota.limit(),
+            });
+        }
+        let ran_out_of_memory = matches!(error, EngineError::OutOfMemory) || pool_nearly_full(ctx);
+        (ran_out_of_memory && !self.faults.memory_fault_seen.replace(true))
+            .then_some(ScriptFault::Memory)
     }
 
     /// Counts a fault against `script`, quarantining it at the limit.
-    fn count_fault(&self, script: &EngineScript) -> Standing {
+    fn count_fault(&self, script: &EngineScript) -> FaultStanding {
         let faults = script.faults.get() + 1;
         script.faults.set(faults);
         let allowed = self.faults.max_script_faults;
         if allowed == 0 {
-            return Standing::Unlimited;
+            return FaultStanding::Unlimited;
         }
         if faults < allowed {
-            return Standing::Warned { faults, allowed };
+            return FaultStanding::Warned { faults, allowed };
         }
         self.quarantine(script);
-        Standing::Quarantined { faults }
+        FaultStanding::Quarantined { faults }
     }
 
     /// Takes `script` out of the event index, its timers and the pump.
@@ -196,10 +180,10 @@ impl Engine {
         }
     }
 
-    /// Whether an error message says the engine ran out of memory, as the engine words it
-    /// when it is near its limit. Takes the runtime lock: not for use inside a context.
-    pub(super) fn is_out_of_memory(&self, details: &str) -> bool {
-        if !looks_like_exhaustion(details) {
+    /// Whether `error` is QuickJS failing to allocate without saying so, while the engine
+    /// is near its limit. Takes the runtime lock: not for use inside a context.
+    pub(super) fn is_silent_out_of_memory(&self, error: &EngineError) -> bool {
+        if !matches!(error, EngineError::Execution { .. }) || !looks_like_exhaustion(error) {
             return false;
         }
         let stats = self.memory_stats();
@@ -210,14 +194,17 @@ impl Engine {
     }
 }
 
-/// Whether an error message is one QuickJS gives when an allocation fails while it was
-/// already handling a failure (nothing, or a thrown `null`), or says out of memory about
-/// an error that really was one: a script's own `throw new Error("out of memory")` is an
-/// ordinary error, and `details` cannot tell them apart.
-fn looks_like_exhaustion(details: &str) -> bool {
-    details.is_empty()
-        || details.starts_with(NULL_EXCEPTION)
-        || (details.starts_with(OUT_OF_MEMORY) && raised_out_of_memory())
+/// Whether an error is an out of memory, or what QuickJS gives when an allocation fails
+/// while it was already handling a failure: nothing, or a thrown `null`. Those two are
+/// only a hint, to confirm against how full the memory is.
+fn looks_like_exhaustion(error: &EngineError) -> bool {
+    match error {
+        EngineError::OutOfMemory => true,
+        EngineError::Execution { details } => {
+            details.is_empty() || details.starts_with(NULL_EXCEPTION)
+        }
+        _ => false,
+    }
 }
 
 /// Whether `used` is at least nine tenths of `limit`; a zero limit is no limit at all.
@@ -237,35 +224,6 @@ fn pool_nearly_full(ctx: &Ctx<'_>) -> bool {
         i128::from(usage.malloc_size),
         i128::from(usage.malloc_limit),
     )
-}
-
-/// The error for a script that faulted: what it was doing, why it failed, and where it
-/// stands.
-fn fault_message(
-    id: &str,
-    what: &str,
-    fault: Fault,
-    standing: Standing,
-    timeout: Duration,
-) -> String {
-    let cause = match fault {
-        Fault::Budget => format!("ran out of its execution budget ({timeout:?})"),
-        Fault::Memory => "ran out of memory".to_owned(),
-        Fault::Quota(limit) => format!(
-            "went over its memory quota ({limit} bytes, `EngineOptions::script_memory_limit_bytes`)"
-        ),
-    };
-    let consequence = match standing {
-        Standing::Unlimited => String::new(),
-        Standing::Warned { faults, allowed } => {
-            format!("; fault {faults} of {allowed} before it is quarantined")
-        }
-        Standing::Quarantined { faults } => format!(
-            "; it faulted {faults} times and is quarantined: its handlers and timers no \
-             longer run until it is reloaded (unload it to free its memory)"
-        ),
-    };
-    format!("{what} of script `{id}` {cause}{consequence}")
 }
 
 /// Runs the Promise jobs the script just queued, inside its slice: the job queue belongs

@@ -5,7 +5,7 @@ use crate::support;
 
 use std::time::Duration;
 
-use manivelle::{Engine, EngineError, EngineOptions};
+use manivelle::{Engine, EngineError, EngineOptions, FaultStanding, ScriptFault};
 use serde_json::json;
 use support::count;
 
@@ -46,8 +46,12 @@ fn a_runaway_handler_does_not_starve_the_scripts_after_it() {
     let result = engine.emit("tick", &json!({}));
 
     assert!(
-        matches!(&result, Err(EngineError::Execution { details })
-            if details.contains("script `spin`") && details.contains("fault 1 of 3")),
+        matches!(&result, Err(EngineError::Fault {
+            script_id,
+            fault: ScriptFault::Budget { .. },
+            standing: FaultStanding::Warned { faults: 1, allowed: 3 },
+            ..
+        }) if script_id == "spin"),
         "{result:?}"
     );
     assert_eq!(count(&engine, "good"), 1.0);
@@ -66,12 +70,58 @@ fn a_script_that_keeps_running_out_of_its_budget_is_quarantined() {
 
     assert!(first.is_err());
     assert!(
-        matches!(&second, Err(EngineError::Execution { details }) if details.contains("quarantined")),
+        matches!(
+            &second,
+            Err(EngineError::Fault {
+                standing: FaultStanding::Quarantined { .. },
+                ..
+            })
+        ),
         "{second:?}"
     );
     assert_eq!(third.expect("a quarantined script is no longer visited"), 1);
     assert_eq!(quarantined(&engine), ["spin"]);
     assert_eq!(count(&engine, "good"), 3.0);
+}
+
+#[test]
+fn clearing_faults_makes_the_next_fault_the_first_again() {
+    let mut engine = engine(2);
+    engine.load_script("spin", SPIN).expect("load spin");
+    let _ = engine.emit("tick", &json!({}));
+
+    engine.clear_faults("spin").expect("spin is loaded");
+    let after = engine.emit("tick", &json!({}));
+
+    assert!(
+        matches!(
+            &after,
+            Err(EngineError::Fault {
+                standing: FaultStanding::Warned {
+                    faults: 1,
+                    allowed: 2
+                },
+                ..
+            })
+        ),
+        "{after:?}"
+    );
+    assert!(quarantined(&engine).is_empty());
+}
+
+#[test]
+fn clearing_faults_does_not_lift_a_quarantine() {
+    let mut engine = engine(1);
+    engine.load_script("spin", SPIN).expect("load spin");
+    let _ = engine.emit("tick", &json!({}));
+
+    engine.clear_faults("spin").expect("spin is loaded");
+
+    assert_eq!(quarantined(&engine), ["spin"]);
+    assert!(matches!(
+        engine.clear_faults("absent"),
+        Err(EngineError::ScriptNotFound { .. })
+    ));
 }
 
 #[test]
@@ -118,7 +168,13 @@ fn zero_max_faults_never_quarantines() {
     for _ in 0..4 {
         let result = engine.emit("tick", &json!({}));
         assert!(
-            matches!(&result, Err(EngineError::Execution { details }) if !details.contains("quarantined")),
+            matches!(
+                &result,
+                Err(EngineError::Fault {
+                    standing: FaultStanding::Unlimited,
+                    ..
+                })
+            ),
             "{result:?}"
         );
     }
@@ -171,8 +227,8 @@ fn running_out_of_memory_is_a_fault_that_leaves_the_other_scripts_working() {
     let result = engine.emit("tick", &json!({}));
 
     assert!(
-        matches!(&result, Err(EngineError::Execution { details })
-            if details.contains("script `hog`") && details.contains("out of memory")),
+        matches!(&result, Err(EngineError::Fault { script_id, fault: ScriptFault::Memory, .. })
+            if script_id == "hog"),
         "{result:?}"
     );
     assert_eq!(quarantined(&engine), ["hog"]);
@@ -226,9 +282,7 @@ fn an_error_that_only_says_out_of_memory_is_not_a_memory_fault() {
         let result = engine.emit("tick", &json!({}));
         assert!(
             matches!(&result, Err(EngineError::Execution { details })
-                if details.contains("out of memory")
-                    && !details.contains("ran out of memory")
-                    && !details.contains("quarantined")),
+                if details.contains("out of memory")),
             "{result:?}"
         );
     }

@@ -50,11 +50,9 @@ pub mod __private {
     };
     pub use serde;
 }
-pub use error::{Direction, EngineError};
+pub use error::{Direction, EngineError, FaultStanding, ScriptFault};
 #[cfg(feature = "derive")]
-pub use manivelle_macros::{
-    TsSchema, host_event, host_fn, host_fn_async, host_fn_with_ctx, host_mod, script_export,
-};
+pub use manivelle_macros::{TsSchema, host_event, host_fn, host_mod, script_export};
 pub use packages::{
     MANIFEST_FILE, PackageDependency, PackageFailure, PackageInfo, PackageLoad, PackageManifest,
     add_permissions, resolve_packages,
@@ -69,4 +67,4 @@ pub use sdk_files::{
     DESCRIPTORS_FILE, EXPORT_SDK_ENV, GeneratedSdkFiles, SdkFileNames, export_sdk_if_requested,
     write_host_sdk_files, write_host_sdk_files_with_names,
 };
-pub use types::{Emission, MemoryStats, ReloadReport, ScriptId, StateSnapshot};
+pub use types::{Emission, MemoryStats, PendingWork, ReloadReport, ScriptId, StateSnapshot};

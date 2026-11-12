@@ -177,7 +177,11 @@ fn validate_type(
         TsType::Boolean => validate_bool(value, path),
         TsType::Number => validate_number(value, path),
         TsType::String => validate_string(value, path),
-        TsType::Uint8Array => validate_array(&TsType::Number, value, path, options, context),
+        TsType::Uint8Array => match value {
+            // Every item of a byte buffer is a number already: nothing to look at.
+            Snapshot::Bytes(_) => Ok(()),
+            _ => validate_array(&TsType::Number, value, path, options, context),
+        },
         TsType::Literal(literal) => validate_literal(literal, value, path),
         TsType::Object(fields) => {
             validate_object(ObjectShape::new(fields), value, path, options, context)

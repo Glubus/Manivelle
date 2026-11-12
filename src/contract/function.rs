@@ -27,13 +27,13 @@ pub trait HostFunction: HostFunctionSignature {
 /// [`InMemoryHostContractRegistry::function`](crate::InMemoryHostContractRegistry::function)
 /// requires of its type parameter.
 ///
-/// Every [`HostFunction`] (hand-written, or declared with `#[host_fn]`) implements it. So does
-/// the marker of a function declared with `#[host_fn_with_ctx]` or `#[host_fn_async]`, whose
-/// handler needs more than a static `call`: the macro writes the impl. Register through
-/// `registry.function::<T>()` rather than calling [`Self::register_in`].
+/// Every [`HostFunction`], hand-written or declared with `#[host_fn]`, implements it. So
+/// does the marker of a `#[host_fn]` function that takes the `Caller` or a `HostResolver`,
+/// whose handler needs more than a static `call`: the macro writes the impl. Register
+/// through `registry.function::<T>()` rather than calling [`Self::register_in`].
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be registered with `InMemoryHostContractRegistry::function`",
-    label = "not a `HostFunction`, nor declared with `#[host_fn_with_ctx]` or `#[host_fn_async]`",
+    label = "not a `HostFunction`, nor declared with `#[host_fn]`",
     note = "its `Input` must implement `TsSchema` and `JsDecode`, and its `Output` `TsSchema` and `JsEncode`; to register a closure, use `function_with`"
 )]
 pub trait RegisterHostFunction {

@@ -69,6 +69,12 @@ impl HostPromises {
         self.scope.inbox.has_ready()
     }
 
+    /// How many calls wait for their Promise to settle: the host has not answered them,
+    /// or `poll` has not delivered the answer yet.
+    pub(crate) fn waiting(&self) -> usize {
+        self.scope.pending.borrow().len()
+    }
+
     /// A handle for native functions that does not keep this scope alive.
     pub(crate) fn downgrade(&self) -> WeakHostPromises {
         WeakHostPromises(Rc::downgrade(&self.scope))

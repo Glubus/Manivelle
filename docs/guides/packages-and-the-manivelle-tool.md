@@ -178,6 +178,12 @@ Each finding names the file and line. `--fix` adds the permissions the code uses
 manifest of DIRECTORY lacks, after the ones already there (never removing one, and keeping
 comments), then checks again. `--from` starts the program once, which means trusting it.
 
+With `--from`, a package whose `manivelle/manivelle.d.ts` is no longer what the program
+exports is an error too: the program changed since `manivelle init` last ran there, and
+`tsc` would check the scripts against an API it no longer has. Run `manivelle init --from
+./game` in the package to refresh it. A package that renamed the file (`--types`) is not
+compared.
+
 The reading is **static and best effort**. It follows `math.add(...)`, `ctx.on("event", ...)`,
 the same through the generated SDK (`import { math } from "./manivelle.sdk"`) and the
 `manivelle:env` module, and it tells a host namespace from a local variable of the same

@@ -130,6 +130,29 @@ fn a_resolution_reaches_the_script_only_when_the_engine_pumps() {
 }
 
 #[test]
+fn a_host_call_counts_as_pending_work_until_the_pump_delivers_its_answer() {
+    let (mut engine, calls) = score_engine(&EngineOptions::default());
+    engine
+        .load_script("game", SCORE_SCRIPT)
+        .expect("load script");
+    let _pending = engine
+        .call_deferred::<u32>("game", "doubled", ("ada",))
+        .expect("start call");
+    let (_, resolver) = last_call(&calls);
+
+    assert_eq!(engine.pending_work().host_calls, 1);
+    resolver.resolve(21).expect("queue the reply");
+    assert_eq!(
+        engine.pending_work().host_calls,
+        1,
+        "an answer the pump has not delivered is still awaited"
+    );
+    engine.pump().expect("pump");
+
+    assert_eq!(engine.pending_work().host_calls, 0);
+}
+
+#[test]
 fn rejected_and_abandoned_calls_reject_the_script_promise() {
     let (mut engine, calls) = score_engine(&EngineOptions::default());
     engine

@@ -98,72 +98,49 @@ pub fn derive_ts_schema(input: TokenStream) -> TokenStream {
 /// A type of the same name in the same module is a compile error ("the name `FindUser`
 /// is defined multiple times", reported on the attribute): rename the function or the type.
 ///
-/// The marker implements `HostContract` (the given `name`), `HostFunctionSignature`
-/// (`Input` is the parameter type, `()` without parameter; `Output` is the `T` of
-/// `Result<T, EngineError>`, or the plain return type of a function that cannot fail) and
-/// `HostFunction`. Every host function attribute registers the same way, with
-/// `registry.function::<Marker>()`: the marker implements `RegisterHostFunction`, which
-/// `HostFunction` gives it here.
+/// The marker implements `HostContract` (the given `name`) and `HostFunctionSignature`
+/// (`Input` is the input's type, `()` without one; `Output` is the `T` of
+/// `Result<T, EngineError>`, or the plain return type of a function that cannot fail).
+/// It registers with `registry.function::<Marker>()` whatever the parameters are.
 ///
-/// The function must not be `async` or generic, and takes at most one parameter. To
-/// receive the calling script, see [`macro@host_fn_with_ctx`]; for a function settled
-/// later, [`macro@host_fn_async`].
-#[proc_macro_attribute]
-pub fn host_fn(args: TokenStream, item: TokenStream) -> TokenStream {
-    expand_host_function(args, item, host_fn::Kind::Static)
-}
-
-/// Declares a host function that receives the calling script, `manivelle::Caller`.
+/// The parameters say what the function needs, in this order, each one optional:
 ///
 /// ```ignore
-/// #[host_fn_with_ctx(name = "user.find")]
+/// // The calling script and the state the host lends: a leading `&Caller`.
+/// #[host_fn(name = "user.find")]
 /// fn find_user(ctx: &Caller<'_>, input: FindUserInput) -> Result<FindUserOutput, EngineError> {
 ///     Ok(FindUserOutput { display_name: format!("{} asks {}", ctx.script_id(), input.user_id) })
 /// }
 ///
-/// engine.registry().function::<FindUser>()?;
-/// ```
-///
-/// Like [`macro@host_fn`], it generates the marker (`FindUser`, named the same way) with
-/// `HostContract` and `HostFunctionSignature`. A static `HostFunction` cannot know its
-/// caller, so the marker implements `RegisterHostFunction` itself, with a handler that
-/// calls the function through `function_with_caller`; `registry.function::<FindUser>()`
-/// is still how it is registered. The input is optional (`fn(ctx)`).
-#[proc_macro_attribute]
-pub fn host_fn_with_ctx(args: TokenStream, item: TokenStream) -> TokenStream {
-    expand_host_function(args, item, host_fn::Kind::WithCtx)
-}
-
-/// Declares a host function that settles a `Promise` later, through a
-/// `manivelle::HostResolver`.
-///
-/// ```ignore
-/// #[host_fn_async(name = "score.lookup")]
+/// // An answer given later, which the script awaits: a trailing `HostResolver<Output>`.
+/// #[host_fn(name = "score.lookup")]
 /// fn lookup_score(input: PlayerId, resolver: HostResolver<u32>) -> Result<(), EngineError> {
 ///     pending().push((input, resolver));
 ///     Ok(())
 /// }
-///
-/// engine.registry().function::<LookupScore>()?;
 /// ```
 ///
-/// The marker (`LookupScore`, named like that of [`macro@host_fn`]) is registered with
-/// `registry.function::<LookupScore>()` too. The parameters are
-/// `[ctx: &Caller<'_>,] input, resolver: HostResolver<Output>`; the `Output` is the
-/// resolver's type parameter. The generated `RegisterHostFunction` impl uses
-/// `async_function_with` (or `async_function_with_caller` with a `ctx`). The function
-/// returns `Result<(), EngineError>` or nothing.
+/// - `ctx: &Caller<'_>` first: the function receives the calling script.
+/// - one input: group several values in a struct.
+/// - `resolver: HostResolver<Output>` last: the script gets a `Promise` of `Output`, the
+///   resolver's type parameter, and the function returns `Result<(), EngineError>` or
+///   nothing.
+///
+/// The two are told by their type names, `Caller` behind a reference and `HostResolver`,
+/// under any path: an input type of your own must not end in either name. A function
+/// with neither is a static `HostFunction`; the others implement `RegisterHostFunction`
+/// through the registry method that takes their handler (`function_with_caller`,
+/// `async_function_with`, `async_function_with_caller`).
+///
+/// The function must not be `async` or generic.
 #[proc_macro_attribute]
-pub fn host_fn_async(args: TokenStream, item: TokenStream) -> TokenStream {
-    expand_host_function(args, item, host_fn::Kind::Async)
-}
-
-fn expand_host_function(args: TokenStream, item: TokenStream, kind: host_fn::Kind) -> TokenStream {
+pub fn host_fn(args: TokenStream, item: TokenStream) -> TokenStream {
     let function = parse_macro_input!(item as syn::ItemFn);
-    host_fn::expand_host_fn(args.into(), &function, kind)
+    host_fn::expand_host_fn(args.into(), &function)
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
+
 /// Declares a host event from the struct or enum that is its payload.
 ///
 /// ```ignore

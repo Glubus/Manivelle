@@ -9,7 +9,7 @@ use rquickjs::{CatchResultExt, Ctx, Value as JsValue};
 use super::invoke::invoke;
 use crate::contract::{JsArgs, JsDecode, JsEncode};
 use crate::error::EngineError;
-use crate::types::ScriptId;
+use crate::types::{PendingWork, ScriptId};
 
 use super::super::errors::caught_js_error;
 use super::super::tasks::{PendingCall, RequestGuard, RequestResults, ScriptTask};
@@ -65,6 +65,39 @@ impl Engine {
         );
     }
 
+    /// How long until the earliest timer of any script is due on the engine clock, zero
+    /// when one already is, and `None` when no script has a timer: what a host that
+    /// sleeps between frames can sleep for, and passes to
+    /// [`advance_timers`](Self::advance_timers) on waking. The timers of a quarantined
+    /// script never fire and do not count.
+    pub fn next_timer_due(&self) -> Option<Duration> {
+        let due = self
+            .scripts
+            .values()
+            .filter(|script| !script.quarantined.get())
+            .map(|script| script.signals.next_timer.due())
+            .fold(f64::INFINITY, f64::min);
+        let millis = (due - self.scheduling.timer_clock.now()).max(0.0);
+        due.is_finite()
+            .then(|| Duration::try_from_secs_f64(millis / 1000.0).unwrap_or(Duration::MAX))
+    }
+
+    /// What the scripts wait for that only a later host-driven operation can give them:
+    /// zero everywhere means no [`PendingCall`] is open and no async host function
+    /// awaits its answer. A count that stays up frame after frame is a
+    /// [`pump`](Self::pump) or an [`advance_timers`](Self::advance_timers) the host loop
+    /// does not call, or a `HostResolver` nobody answers.
+    pub fn pending_work(&self) -> PendingWork {
+        PendingWork {
+            deferred: self.scheduling.active_tasks.get(),
+            host_calls: self
+                .scripts
+                .values()
+                .map(|script| script.host_promises.waiting())
+                .sum(),
+        }
+    }
+
     /// Starts an exported function without requiring its Promise to settle in this
     /// operation. The returned handle completes when the engine next drains jobs;
     /// `pump` delivers host replies without advancing the timer clock.
@@ -114,11 +147,11 @@ impl Engine {
             self.scheduling.host_wake.store(true, Ordering::Release);
         }
         self.begin_settle_slice();
-        self.attribute_interrupt(self.settle(first_error.map_or(Ok(()), Err)))
+        self.attribute_stop(self.settle(first_error.map_or(Ok(()), Err)))
     }
 
     /// Delivers the host answers waiting for one script, under a slice of its own.
-    fn pump_script(&self, id: &str, script: &EngineScript) -> Result<(), EngineError> {
+    fn pump_script(&self, id: &ScriptId, script: &EngineScript) -> Result<(), EngineError> {
         if script.quarantined.get() || !script.host_promises.has_ready() {
             return Ok(());
         }
@@ -264,7 +297,7 @@ impl TimerPass<'_> {
         }
         // The work left to settle runs under a budget of its own.
         self.engine.begin_settle_slice();
-        self.engine.attribute_interrupt(
+        self.engine.attribute_stop(
             self.engine
                 .settle(self.first_error.map_or(Ok(self.fired), Err)),
         )

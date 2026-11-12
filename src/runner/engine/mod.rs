@@ -22,7 +22,7 @@ use crate::registry::InMemoryHostContractRegistry;
 use crate::types::{MemoryStats, ScriptId};
 
 use super::console::{ConsoleLevel, ConsoleSink};
-use super::errors::{forget_out_of_memory, js_error, pending_exception};
+use super::errors::{js_error, pending_exception};
 use super::events::{EventIndex, ListenedEvents};
 use super::execution::{ExecutionControl, ExecutionGuard};
 use super::host_fn::HostFnClass;
@@ -58,7 +58,8 @@ mod state;
 ///
 /// Every load, call, emit, request and timer advance runs under
 /// `EngineOptions::execution_timeout`: JavaScript still running when it expires is
-/// interrupted and the operation fails with `EngineError::Execution`.
+/// interrupted and the operation fails with `EngineError::BudgetExceeded`, or, for a
+/// script an event, a timer or a host answer was delivered to, `EngineError::Fault`.
 /// [`Engine::interrupt_handle`] stops it earlier from another thread. Both are
 /// cooperative and cannot preempt a Rust host function.
 ///
@@ -391,10 +392,16 @@ impl Engine {
         self.scripts.get(id).ok_or_else(|| script_not_found(id))
     }
 
+    /// The script with the id the engine keeps for it, which an error can share.
+    fn script_entry(&self, id: &str) -> Result<(&ScriptId, &EngineScript), EngineError> {
+        self.scripts
+            .get_key_value(id)
+            .ok_or_else(|| script_not_found(id))
+    }
+
     /// Starts the execution budget for one operation; it ends when the guard drops.
     fn budget(&self) -> ExecutionGuard<'_> {
         self.faults.memory_fault_seen.set(false);
-        forget_out_of_memory();
         self.execution.enter(self.execution_timeout)
     }
 }

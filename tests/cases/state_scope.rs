@@ -3,14 +3,14 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;
 
-use manivelle::{Caller, Engine, EngineError, EngineOptions, ScriptId, host_fn_with_ctx};
+use manivelle::{Caller, Engine, EngineError, EngineOptions, ScriptId, host_fn};
 
 #[derive(Default)]
 struct World {
     score: u32,
 }
 
-#[host_fn_with_ctx(name = "world.add")]
+#[host_fn(name = "world.add")]
 fn add(ctx: &Caller<'_>, amount: u32) -> Result<u32, EngineError> {
     ctx.with_state(|world: &mut World| {
         world.score += amount;

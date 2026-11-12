@@ -1,0 +1,8 @@
+package "greedy" {
+    version "0.1.0"
+    depends { "core" version "^1.0" }
+    entry "main.ts"
+    // No permission: this package may call no host function.
+    permissions {
+    }
+}

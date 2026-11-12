@@ -128,7 +128,7 @@ impl Engine {
         let created_group = group.filter(|name| !self.groups.contains_key(*name));
         let target = match self.target(group) {
             Ok(target) => target,
-            Err(error) => return self.attribute_interrupt(self.settle(Err(error))),
+            Err(error) => return self.attribute_stop(self.settle(Err(error))),
         };
         if group.is_some() {
             self.module_store.mark_grouped(graph.graph_id)?;
@@ -145,7 +145,7 @@ impl Engine {
         let mounted = target
             .context
             .with(|ctx| self.mount_in(&ctx, &target.prelude, &mounting, hot_data));
-        match self.attribute_interrupt(self.settle(mounted)) {
+        match self.attribute_stop(self.settle(mounted)) {
             Ok((exports, hooks)) => Ok(Mounted {
                 context: target.context,
                 exports,

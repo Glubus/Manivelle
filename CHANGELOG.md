@@ -28,17 +28,31 @@
 - `#[derive(TsSchema)]` refuses at compile time a field or variant that serde writes under
   one name and reads under another, on a type both encoded and decoded. Add
   `#[manivelle(encode_only)]` or `#[manivelle(decode_only)]`.
-- `#[host_fn]`, `#[host_fn_with_ctx]` and `#[host_fn_async]` require `EngineError` as the
-  error type.
-- Every host function declared with a macro registers the same way, with
-  `registry.function::<Marker>()`: `#[host_fn]`, `#[host_fn_with_ctx]` and `#[host_fn_async]` all
-  generate a marker that implements the new `RegisterHostFunction` trait, and `function` takes
-  that trait, so hand-written `HostFunction` contracts register unchanged. The
-  `Marker::register(&registry)` function that `#[host_fn_with_ctx]` and `#[host_fn_async]`
-  generated is removed: replace `FindUser::register(engine.registry())?` with
+- One attribute declares every host function: `#[host_fn_with_ctx]` and `#[host_fn_async]`
+  are removed, and `#[host_fn]` reads what the function needs from its parameters, a
+  leading `ctx: &Caller<'_>` and a trailing `resolver: HostResolver<Output>`, each
+  optional, around at most one input. Replace both attributes with `#[host_fn]`; the
+  signatures stay as they are. An async function may now take no input (`fn(resolver)`).
+- `#[host_fn]` requires `EngineError` as the error type.
+- Every host function declared with the macro registers the same way, with
+  `registry.function::<Marker>()`: the marker implements the new `RegisterHostFunction`
+  trait, and `function` takes that trait, so hand-written `HostFunction` contracts register
+  unchanged. The `Marker::register(&registry)` function generated for functions with a
+  `Caller` or a resolver is removed: replace `FindUser::register(engine.registry())?` with
   `engine.registry().function::<FindUser>()?`. The marker is named after the function in
   `UpperCamelCase` (`find_user` becomes `FindUser`); a type of that name in the same module is a
   compile error.
+- Running out of time or memory is no longer an `EngineError::Execution` to read: match on
+  the new variants instead of the message.
+  - `EngineError::Fault { script_id, what, fault, standing }` for a script that faults
+    while an event, a timer or a host answer is delivered to it, and for a call over the
+    script's memory quota. `fault` is a `ScriptFault` (`Budget`, `Memory`, `Quota`) and
+    `standing` a `FaultStanding` (`Unlimited`, `Warned`, `Quarantined`). Its text is the
+    message `Execution` carried before.
+  - `EngineError::BudgetExceeded { timeout }` for a call, a load or the settling of an
+    operation stopped at `execution_timeout`.
+  - `EngineError::OutOfMemory` when the engine reaches `memory_limit_bytes`. The numbers
+    its message used to carry are in `Engine::memory_stats()`.
 
 ### Changed
 
@@ -46,13 +60,32 @@
   from a host function or the `console` sink. The sink used to produce a `TypeError`.
 - A thrown value that is not an `Error` (`throw { code: 1 }`) is reported as its JSON.
 - `getrandom` is an optional dependency, enabled by the `cli` feature.
+- The crate no longer builds oxc's minifier, mangler and declaration emitter: it runs the
+  parse, transform and print steps itself instead of enabling oxc's `full` feature (6
+  crates fewer). The JavaScript produced is the same.
+- Contract validation accepts a `Uint8Array` or `ArrayBuffer` for a byte type without
+  checking each byte as a number. In one `cargo bench --bench native_bridge` run with
+  `ContractValidation::InputsAndOutputs`, a host function returning 1 MiB of
+  `NativeBytes` went from 14.2 ms to 177 µs (27 µs with validation off).
 - `manivelle_bevy`: `with_engine` panics with the real `with_state` error, and the crate
   ships its `LICENSE`.
 
 ### Added
 
-- `#[host_mod(namespace = "math", import = "app")]` makes every `#[host_fn]`,
-  `#[host_fn_with_ctx]`, `#[host_fn_async]` and `#[host_event]` of the module importable: it sets
+- `Engine::pending_work()` counts the deferred results and async host calls still open,
+  and `Engine::next_timer_due()` says how long until the earliest timer: a host loop that
+  forgets `pump` or `advance_timers` can now be seen.
+- `Engine::clear_faults(script_id)` forgets the faults counted against a script that is
+  not quarantined; faults never expire on their own.
+- `manivelle init` and `manivelle check --from` quote the last lines the program wrote to
+  stderr when it fails to export its SDK, instead of asking to run it again by hand.
+- `manivelle check --from <program>` fails when `manivelle/manivelle.d.ts` in a package is
+  no longer what the program exports, and says to run `manivelle init` again: scripts are
+  not type-checked against an API the program dropped.
+- Examples `host_state` (`Engine::with_state`, `snapshot` and `restore`) and `packages`
+  (`load_packages`, dependencies, a refused permission), both run in CI.
+- `#[host_mod(namespace = "math", import = "app")]` makes every `#[host_fn]`
+  and `#[host_event]` of the module importable: it sets
   `IMPORT_MODULE` and `EXPORT_PATH`, so a script, including one in a context group, writes
   `import { math } from "app"; math.add(..)`. `import` on `#[host_fn]` or `#[host_event]`
   directly is a compile error pointing to `#[host_mod]`.
@@ -61,7 +94,7 @@
   functions), so `import { math } from "app"` type-checks from `manivelle.d.ts` alone, with no SDK
   file or `paths` mapping; `manivelle init` projects get it with no extra setup.
 - `examples/game_loop` loads its scripts from `examples/game_loop/*.ts`, typed by a checked-in
-  generated `manivelle.d.ts`; it uses `#[host_mod]`, `#[host_fn_async]` and `#[host_event]`
+  generated `manivelle.d.ts`; it uses `#[host_mod]`, `#[host_fn]` and `#[host_event]`
   (including a typed `status` request), reloads the project from disk with `reload_changed`, fails
   when the checked-in declarations are stale, and `tsc` checks the scripts in the test suite.
 

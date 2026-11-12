@@ -30,7 +30,8 @@ cli = ["dep:clap", "dep:getrandom"]
 disable-assertions = ["rquickjs/disable-assertions"]
 
 [dependencies]
-oxc = { version = "0.137.0", features = ["codegen", "full", "transformer"] }
+# Not `full`: that feature links the minifier, the mangler and the declaration emitter.
+oxc = { version = "0.137.0", features = ["ast_visit", "codegen", "semantic", "transformer"] }
 oxc_resolver = "11.21.3"
 oxc_sourcemap = "8.1.2"
 rquickjs = { version = "0.14.0", features = ["rust-alloc", "loader"] }
@@ -88,6 +89,14 @@ required-features = ["derive"]
 
 [[example]]
 name = "init_program"
+required-features = ["derive"]
+
+[[example]]
+name = "host_state"
+required-features = ["derive"]
+
+[[example]]
+name = "packages"
 required-features = ["derive"]
 
 [profile.release]

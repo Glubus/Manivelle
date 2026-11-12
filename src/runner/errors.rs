@@ -1,49 +1,20 @@
 //! QuickJS error mapping helpers.
 
-use std::cell::Cell;
-
 use crate::error::EngineError;
 
-/// How every out of memory starts once described: QuickJS's own `InternalError`, an
-/// allocation rquickjs failed ([`rquickjs::Error::Allocation`]) and a context the engine
-/// could not create, so the engine reports them alike wherever the allocation failed.
-pub(crate) const OUT_OF_MEMORY: &str = "out of memory";
+/// The message of QuickJS's own out of memory, an `InternalError`.
+const OUT_OF_MEMORY: &str = "out of memory";
 
-thread_local! {
-    /// Set by describing an error that was a real out of memory. The engine runs on one
-    /// thread, and the error it describes is `EngineError::Execution { details }` whatever
-    /// it was, so what the details cannot carry is kept here.
-    static RAISED_OUT_OF_MEMORY: Cell<bool> = const { Cell::new(false) };
-}
-
+/// An rquickjs error as the operation's error. An allocation rquickjs failed is
+/// [`EngineError::OutOfMemory`], like QuickJS's own, so the engine reports them alike
+/// wherever the allocation failed.
 pub(crate) fn js_error(error: rquickjs::Error) -> EngineError {
-    EngineError::Execution {
-        details: rquickjs_error_details(&error),
-    }
-}
-
-fn rquickjs_error_details(error: &rquickjs::Error) -> String {
     match error {
-        rquickjs::Error::Allocation => {
-            RAISED_OUT_OF_MEMORY.set(true);
-            OUT_OF_MEMORY.to_owned()
-        }
-        error => error.to_string(),
+        rquickjs::Error::Allocation => EngineError::OutOfMemory,
+        error => EngineError::Execution {
+            details: error.to_string(),
+        },
     }
-}
-
-/// Forgets the out of memory [`raised_out_of_memory`] reports: an operation or a slice
-/// starts, and what it raises is its own.
-pub(crate) fn forget_out_of_memory() {
-    RAISED_OUT_OF_MEMORY.set(false);
-}
-
-/// Whether an error described since the last [`forget_out_of_memory`] was a real out of
-/// memory, told by its type: QuickJS's `InternalError` or an allocation rquickjs failed.
-/// Its details read the same as a script's own `throw new Error("out of memory")`, so
-/// they cannot say.
-pub(crate) fn raised_out_of_memory() -> bool {
-    RAISED_OUT_OF_MEMORY.get()
 }
 
 /// The exception QuickJS left pending in `ctx` after a call through the C API returned
@@ -57,18 +28,19 @@ pub(crate) fn pending_exception(ctx: &rquickjs::Ctx<'_>) -> EngineError {
         })
 }
 
+/// What a script threw, as the operation's error. A real out of memory is told by its
+/// type, QuickJS's `InternalError`: its message reads the same as a script's own
+/// `throw new Error("out of memory")`, which stays an ordinary error.
 pub(crate) fn caught_js_error(error: rquickjs::CaughtError<'_>) -> EngineError {
-    EngineError::Execution {
-        details: caught_js_error_details(&error),
-    }
-}
-
-pub(crate) fn caught_js_error_details(error: &rquickjs::CaughtError<'_>) -> String {
-    match error {
-        rquickjs::CaughtError::Exception(exception) => exception_details(exception),
-        rquickjs::CaughtError::Value(value) => js_value_details(value),
-        rquickjs::CaughtError::Error(error) => rquickjs_error_details(error),
-    }
+    let details = match error {
+        rquickjs::CaughtError::Exception(exception) if is_quickjs_out_of_memory(&exception) => {
+            return EngineError::OutOfMemory;
+        }
+        rquickjs::CaughtError::Exception(exception) => exception_details(&exception),
+        rquickjs::CaughtError::Value(value) => js_value_details(&value),
+        rquickjs::CaughtError::Error(error) => return js_error(error),
+    };
+    EngineError::Execution { details }
 }
 
 /// Describes a thrown or rejected JavaScript value, with its stack when it is an `Error`.
@@ -105,9 +77,6 @@ fn exception_details(exception: &rquickjs::Exception<'_>) -> String {
     let message = exception
         .message()
         .unwrap_or_else(|| String::from("javascript exception"));
-    if is_quickjs_out_of_memory(exception, &message) {
-        RAISED_OUT_OF_MEMORY.set(true);
-    }
     match exception.stack() {
         Some(stack) if !stack.trim().is_empty() => format!("{message}\n{stack}"),
         _ => message,
@@ -116,8 +85,8 @@ fn exception_details(exception: &rquickjs::Exception<'_>) -> String {
 
 /// QuickJS's own out of memory, an `InternalError`: the same words in a script's
 /// `throw new Error("out of memory")` are an ordinary error.
-fn is_quickjs_out_of_memory(exception: &rquickjs::Exception<'_>, message: &str) -> bool {
-    message == OUT_OF_MEMORY
+fn is_quickjs_out_of_memory(exception: &rquickjs::Exception<'_>) -> bool {
+    exception.message().as_deref() == Some(OUT_OF_MEMORY)
         && exception
             .as_object()
             .get::<_, Option<rquickjs::convert::Coerced<String>>>("name")

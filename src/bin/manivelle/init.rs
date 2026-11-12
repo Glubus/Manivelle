@@ -14,7 +14,7 @@ use super::files::{create_if_missing, replace_file};
 use super::sdk::FileNames;
 
 /// Where `init` puts the files the program generated; they are rewritten on every run.
-const GENERATED_DIR: &str = "manivelle";
+pub(super) const GENERATED_DIR: &str = "manivelle";
 
 const MAIN_TS: &str = r#"import { console } from "manivelle:env";
 

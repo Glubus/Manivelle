@@ -92,8 +92,8 @@ validation is off by default; set `ContractValidation::InputsAndOutputs` before 
 you do not trust (see [Untrusted Mods](docs/guides/untrusted-mods.md)).
 
 A host function that needs the calling script or the host's state takes `ctx: &Caller<'_>`
-with `#[host_fn_with_ctx]`, one that answers later takes a `HostResolver` with `#[host_fn_async]`,
-and every kind registers the same way, `registry().function::<Marker>()`. A closure that captures
+first, one that answers later takes a `HostResolver` last; `#[host_fn]` reads both from the
+signature, and every kind registers the same way, `registry().function::<Marker>()`. A closure that captures
 state (a channel, a handle) registers with `function_with` instead. A hand-written contract sets
 `IMPORT_MODULE` and `EXPORT_PATH` itself; see
 [Import Modules](docs/guides/generate-sdk-files.md#import-modules).
@@ -163,8 +163,8 @@ events it lists. A package is optional: a simple script needs none.
 With the `derive` feature, attributes write the boilerplate:
 
 - `#[host_fn(name = "user.find")]` on a function declares a host function (zero or one
-  parameter, `Result<T, EngineError>` or a plain `T`); `#[host_fn_with_ctx]` also receives the
-  calling script, `#[host_fn_async]` settles a `Promise` later;
+  input, `Result<T, EngineError>` or a plain `T`); a leading `ctx: &Caller<'_>` also receives
+  the calling script, a trailing `HostResolver<T>` settles a `Promise` later;
 - `#[host_event(name = "user.found")]` on the payload struct declares an event;
   `reply = Type` makes it a request;
 - `#[host_mod(namespace = "math")]` on an inline module prefixes the names of its functions
@@ -215,6 +215,10 @@ program (one Rust function called from a script), and
 [`examples/game_loop.rs`](examples/game_loop.rs) runs a frame loop over a context
 group with timers, events, requests, an async host function and a hot reload that
 keeps state: `cargo run --example game_loop --features derive`.
+[`examples/host_state.rs`](examples/host_state.rs) lends the host's own `&mut` state to
+host functions and carries script state from one run to the next, and
+[`examples/packages.rs`](examples/packages.rs) loads two packages and shows a permission
+being refused.
 
 Build the book with:
 

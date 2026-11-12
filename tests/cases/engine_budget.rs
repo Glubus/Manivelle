@@ -34,7 +34,7 @@ fn budget_includes_synchronous_host_handler_time() {
     assert!(
         matches!(
             engine.call::<f64>("slow", "invoke", ()),
-            Err(EngineError::Execution { .. })
+            Err(EngineError::BudgetExceeded { .. })
         ),
         "the host handler must consume the operation budget"
     );
@@ -68,7 +68,7 @@ fn host_time_counts_against_the_budget_in_a_warm_context() {
     let result = engine.call::<f64>("slow", "invoke", (1.0,));
 
     assert!(
-        matches!(result, Err(EngineError::Execution { .. })),
+        matches!(result, Err(EngineError::BudgetExceeded { .. })),
         "the sleeping host call must consume the budget: {result:?}"
     );
 }

@@ -42,10 +42,10 @@ mod game {
     use std::thread;
     use std::time::Duration;
 
-    use manivelle::{EngineError, HostResolver, host_fn_async};
+    use manivelle::{EngineError, HostResolver, host_fn};
 
     /// The best score on record, answered by another thread.
-    #[host_fn_async(name = "highScore")]
+    #[host_fn(name = "highScore")]
     pub fn high_score(_input: (), resolver: HostResolver<f64>) -> Result<(), EngineError> {
         thread::spawn(move || {
             thread::sleep(Duration::from_millis(5)); // pretend to read a save file

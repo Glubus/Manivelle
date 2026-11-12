@@ -112,6 +112,20 @@ pub struct ReloadReport {
     pub dispose_failed: Vec<(ScriptId, EngineError)>,
 }
 
+/// Outcome of [`Engine::pending_work`](crate::Engine::pending_work): what the scripts wait
+/// for from later host-driven operations.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PendingWork {
+    /// The Promises behind open [`PendingCall`](crate::PendingCall)s that have not
+    /// settled: one per deferred call, one per handler of a deferred request.
+    pub deferred: usize,
+    /// The calls to async host functions whose Promise has not settled: the host has not
+    /// answered through the `HostResolver`, or [`Engine::pump`](crate::Engine::pump) has
+    /// not delivered the answer.
+    pub host_calls: usize,
+}
+
 /// Outcome of [`Engine::emit_report`](crate::Engine::emit_report): what an event did to
 /// each script.
 #[derive(Debug, Default)]

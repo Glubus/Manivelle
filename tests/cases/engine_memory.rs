@@ -24,10 +24,7 @@ fn loading_scripts_past_the_memory_limit_says_the_limit_was_reached() {
         })
         .expect("4 MiB hold fewer than 1000 contexts");
 
-    assert!(
-        matches!(&error, EngineError::Execution { details } if details.contains("out of memory") && details.contains("memory_limit_bytes")),
-        "{error:?}"
-    );
+    assert!(matches!(&error, EngineError::OutOfMemory), "{error:?}");
     let one: f64 = engine
         .call("first", "one", ())
         .expect("engine stays usable");
@@ -63,8 +60,9 @@ fn exceeding_the_memory_limit_fails_the_call_and_the_engine_stays_usable() {
     // QuickJS throws an `InternalError` when it can still build one, and `null` when it ran
     // out of memory while building it: both are the exhaustion, worded either way.
     assert!(
-        matches!(&hog, Err(EngineError::Execution { details })
-            if details.contains("out of memory") || details.starts_with("non-error exception: Null")),
+        matches!(&hog, Err(EngineError::OutOfMemory))
+            || matches!(&hog, Err(EngineError::Execution { details })
+                if details.starts_with("non-error exception: Null")),
         "{hog:?}"
     );
     assert_eq!(small, 1.0);

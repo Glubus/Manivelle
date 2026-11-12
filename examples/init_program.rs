@@ -56,6 +56,10 @@ fn main() {
     if std::env::args().any(|arg| arg == "no-opt-in") {
         return;
     }
+    if std::env::args().any(|arg| arg == "crash") {
+        eprintln!("cannot open the save file");
+        std::process::exit(3);
+    }
     if std::env::var_os("MANIVELLE_TEST_HANG").is_some() {
         std::thread::sleep(Duration::from_secs(30));
     }

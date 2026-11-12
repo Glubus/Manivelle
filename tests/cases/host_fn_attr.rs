@@ -1,7 +1,6 @@
 use manivelle::{
     Caller, Engine, EngineError, EngineOptions, HostContract, HostFunction, HostResolver,
-    ScriptExport, ScriptId, TsSchema, host_event, host_fn, host_fn_async, host_fn_with_ctx,
-    host_mod, script_export,
+    ScriptExport, ScriptId, TsSchema, host_event, host_fn, host_mod, script_export,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -136,12 +135,12 @@ fn host_mod_prefixes_names_unless_no_namespace() {
     assert_eq!(physics::Gravity::NAME, "physics.gravity");
 }
 
-#[host_fn_with_ctx(name = "host.whoami")]
+#[host_fn(name = "host.whoami")]
 fn whoami(ctx: &Caller<'_>) -> String {
     ctx.script_id().to_owned()
 }
 
-#[host_fn_with_ctx(name = "host.greet")]
+#[host_fn(name = "host.greet")]
 fn greet(ctx: &Caller<'_>, input: String) -> Result<String, EngineError> {
     Ok(format!("{} greets {input}", ctx.script_id()))
 }
@@ -167,12 +166,12 @@ fn ctx_functions_see_which_script_called() {
 
 static PENDING: Mutex<Vec<(String, HostResolver<u32>)>> = Mutex::new(Vec::new());
 
-#[host_fn_async(name = "scores.lookup")]
+#[host_fn(name = "scores.lookup")]
 fn lookup_score(input: String, resolver: HostResolver<u32>) {
     PENDING.lock().unwrap().push((input, resolver));
 }
 
-#[host_fn_async(name = "scores.owner")]
+#[host_fn(name = "scores.owner")]
 fn score_owner(
     ctx: &Caller<'_>,
     _input: (),
@@ -319,7 +318,7 @@ fn script_exports_are_declared_with_an_attribute() {
 
 #[host_mod(namespace = "shop", import = "app")]
 mod shop {
-    use manivelle::{Caller, HostResolver, host_event, host_fn, host_fn_async, host_fn_with_ctx};
+    use manivelle::{Caller, HostResolver, host_event, host_fn};
     use manivelle::{EngineError, TsSchema};
     use serde::Serialize;
 
@@ -328,12 +327,12 @@ mod shop {
         sku.len() as f64
     }
 
-    #[host_fn_with_ctx]
+    #[host_fn]
     pub fn buyer(ctx: &Caller<'_>) -> String {
         ctx.script_id().to_owned()
     }
 
-    #[host_fn_async]
+    #[host_fn]
     pub fn stock(_sku: String, resolver: HostResolver<u32>) -> Result<(), EngineError> {
         resolver.resolve(7)
     }

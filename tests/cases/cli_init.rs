@@ -206,6 +206,52 @@ fn a_program_that_did_not_opt_in_is_reported_and_leaves_no_files() {
 }
 
 #[test]
+fn a_program_that_fails_shows_what_it_wrote_to_stderr() {
+    let dir = TestCacheDir::new("cli-init-crash");
+    let project = dir.path().join("my-mod");
+
+    let output = init(&project, &[], &["crash"]);
+
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("cannot open the save file"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn check_flags_declarations_the_program_no_longer_exports() {
+    let dir = TestCacheDir::new("cli-init-stale");
+    let project = dir.path().join("my-mod");
+    assert!(init(&project, &[], &[]).status.success());
+    let check = || {
+        Command::new(env!("CARGO_BIN_EXE_manivelle"))
+            .arg("check")
+            .arg(&project)
+            .arg("--from")
+            .arg(example_program("init_program"))
+            .output()
+            .expect("run manivelle check")
+    };
+    let fresh = check();
+    assert!(fresh.status.success(), "{}", stderr(&fresh));
+
+    // What an older version of the program would have left behind.
+    let types = project.join("manivelle/manivelle.d.ts");
+    let current = fs::read_to_string(&types).expect("types");
+    fs::write(&types, current.replace("math", "maths")).expect("write stale types");
+    let stale = check();
+
+    assert!(!stale.status.success());
+    assert!(
+        stderr(&stale).contains("is not what the program exports now"),
+        "{}",
+        stderr(&stale)
+    );
+}
+
+#[test]
 fn a_program_that_never_exits_is_stopped_at_the_timeout() {
     let dir = TestCacheDir::new("cli-init-timeout");
     let project = dir.path().join("my-mod");

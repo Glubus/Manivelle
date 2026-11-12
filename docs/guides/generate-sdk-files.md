@@ -83,7 +83,7 @@ that should be exported from the same module. Contexts are not exported: they
 are declarative metadata.
 
 `#[host_mod(namespace = "user", import = "my_sdk")]` sets both for every
-`#[host_fn]`, `#[host_fn_with_ctx]`, `#[host_fn_async]` and `#[host_event]` of an inline
+`#[host_fn]` and `#[host_event]` of an inline
 module, with the contract name as the export path (`user.find` is `["user", "find"]`).
 
 ## What The Declaration File Contains

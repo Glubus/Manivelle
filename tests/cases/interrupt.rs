@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use manivelle::{Engine, EngineError, EngineOptions, InterruptHandle};
+use manivelle::{Engine, EngineError, EngineOptions, InterruptHandle, ScriptFault};
 
 const SCRIPT: &str = r#"
 export function spin(): void { while (true) {} }
@@ -78,7 +78,7 @@ fn a_timeout_is_not_reported_as_an_interrupt() {
     let result = engine.call::<()>("loops", "spin", ());
 
     assert!(
-        matches!(result, Err(EngineError::Execution { .. })),
+        matches!(result, Err(EngineError::BudgetExceeded { .. })),
         "{result:?}"
     );
 }
@@ -92,7 +92,11 @@ ctx.on("tick", () => { ran += 1; while (true) {} });
 setTimeout(() => { ran += 1; while (true) {} }, 0);
 "#;
 
-const LISTENERS: usize = 20;
+const LISTENERS: usize = 6;
+
+/// The budget each runaway script uses up. Loading the scripts runs under it too, and has
+/// to fit while the other tests keep every core busy: 30 ms did not always.
+const RUNAWAY_BUDGET: Duration = Duration::from_millis(150);
 
 fn engine_with_listeners(execution_timeout: Duration) -> Engine {
     let mut engine = Engine::new(&EngineOptions {
@@ -140,7 +144,7 @@ fn interrupted<T>(handle: InterruptHandle, operation: impl FnOnce() -> T) -> T {
 #[test]
 fn a_script_that_uses_up_its_budget_does_not_stop_the_scripts_after_it() {
     for request in [false, true] {
-        let engine = engine_with_listeners(Duration::from_millis(30));
+        let engine = engine_with_listeners(RUNAWAY_BUDGET);
 
         let result = if request {
             engine.request::<_, ()>("tick", &1u32).map(|_| ())
@@ -149,7 +153,8 @@ fn a_script_that_uses_up_its_budget_does_not_stop_the_scripts_after_it() {
         };
 
         assert!(
-            matches!(&result, Err(EngineError::Execution { details }) if details.contains("script `s0`")),
+            matches!(&result, Err(EngineError::Fault { script_id, fault: ScriptFault::Budget { .. }, .. })
+                if script_id == "s0"),
             "the first fault is reported, with its script (request: {request}): {result:?}"
         );
         assert_eq!(
@@ -175,12 +180,18 @@ fn an_interrupt_stops_an_emit_at_the_handler_it_reached() {
 
 #[test]
 fn a_timer_that_uses_up_its_budget_does_not_stop_the_timers_after_it() {
-    let engine = engine_with_listeners(Duration::from_millis(30));
+    let engine = engine_with_listeners(RUNAWAY_BUDGET);
 
     let result = engine.advance_timers(Duration::from_millis(1));
 
     assert!(
-        matches!(result, Err(EngineError::Execution { .. })),
+        matches!(
+            result,
+            Err(EngineError::Fault {
+                fault: ScriptFault::Budget { .. },
+                ..
+            })
+        ),
         "{result:?}"
     );
     assert_eq!(

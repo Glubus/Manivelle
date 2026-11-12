@@ -72,7 +72,7 @@ impl Engine {
         let error = (emission.failures.into_iter().next())
             .map(|(_, error)| error)
             .or(emission.unattributed);
-        self.attribute_interrupt(error.map_or(Ok(delivered), Err))
+        self.attribute_stop(error.map_or(Ok(delivered), Err))
     }
 
     /// The scripts listening to `event`, quarantined ones left out.
