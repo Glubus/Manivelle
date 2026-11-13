@@ -36,7 +36,7 @@ pub struct AddInput { left: i32, right: i32 }
 #[derive(Deserialize, Serialize, TsSchema)]
 pub struct AddOutput { value: i32 }
 
-#[host_mod(namespace = "math", import = "app")]
+#[host_mod(namespace = "math", module = "app")]
 mod math {
     use super::{AddInput, AddOutput};
     use manivelle::{EngineError, host_fn};

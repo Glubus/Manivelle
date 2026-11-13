@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use rquickjs::{Object, Result as JsResult, Value as JsValue};
 
+use super::api_schema::render_api_schema;
 use super::bindings::{
     ContractValidator, FunctionBindingStore, NativeContext, Refusal, duplicate_contract,
 };
@@ -327,6 +328,17 @@ impl InMemoryHostContractRegistry {
     /// Renders an ergonomic TypeScript SDK from registered host contracts.
     pub fn sdk(&self) -> Result<String, EngineError> {
         Ok(render_typescript_sdk(&self.descriptors()?))
+    }
+
+    /// Describes every registered contract in one JSON document, in the manner of
+    /// OpenAPI: `functions`, `events`, script `exports` and `contexts` by name, each with
+    /// its `description` (the `///` comment), the `module` and `path` scripts import it
+    /// from when it has one, and its values as JSON Schema 2020-12; named types are under
+    /// `schemas` and referenced with `$ref`. A function that takes or returns nothing
+    /// has no `input` or `output`, and one that returns a `Promise` has `"async": true`.
+    /// `manivelle` is the version of this layout.
+    pub fn api_schema(&self) -> Result<serde_json::Value, EngineError> {
+        Ok(render_api_schema(&self.descriptors()?))
     }
 
     /// Writes generated declaration and SDK source files into one directory.

@@ -1,11 +1,11 @@
-error: `import` needs the name of the module scripts import from
- --> tests/ui/host_fn/import_without_module.rs:3:41
+error: `module` needs the name of the module scripts import from
+ --> tests/ui/host_fn/module_without_name.rs:3:41
   |
-3 | #[host_mod(namespace = "math", import = "")]
+3 | #[host_mod(namespace = "math", module = "")]
   |                                         ^^
 
 warning: unused imports: `EngineError` and `host_fn`
- --> tests/ui/host_fn/import_without_module.rs:1:17
+ --> tests/ui/host_fn/module_without_name.rs:1:17
   |
 1 | use manivelle::{EngineError, host_fn, host_mod};
   |                 ^^^^^^^^^^^  ^^^^^^^

@@ -260,7 +260,7 @@ fn resolver_output(ty: &Type) -> syn::Result<Type> {
     }
 }
 
-/// The argument under which `#[host_mod(import = "...")]` hands its import module to the
+/// The argument under which `#[host_mod(module = "...")]` hands its import module to the
 /// attributes it rewrites. Reserved: only the module writes it.
 pub(crate) const MOD_IMPORT_KEY: &str = "__host_mod_import";
 
@@ -273,7 +273,7 @@ pub(crate) struct HostFnArgs {
     pub(crate) no_namespace: bool,
     /// The `reply` type of a `#[host_event]` that is a request.
     pub(crate) reply: Option<Type>,
-    /// The import module `#[host_mod(import = "...")]` gives its contracts, read from
+    /// The import module `#[host_mod(module = "...")]` gives its contracts, read from
     /// [`MOD_IMPORT_KEY`].
     pub(crate) import: Option<LitStr>,
 }
@@ -286,9 +286,9 @@ impl HostFnArgs {
             "expected `name = \"contract.name\"`, and optionally `no_namespace` \
              or, for an event, `reply = Type`",
             |meta| {
-                if meta.path.is_ident("import") {
+                if meta.path.is_ident("module") {
                     return Err(meta.error(
-                        "`import` belongs to the module: write `#[host_mod(import = \"module\")]`",
+                        "`module` belongs to `#[host_mod]`: write `#[host_mod(module = \"app\")]`",
                     ));
                 }
                 Ok(take_value(meta, "name", &mut parsed.name)?
@@ -306,13 +306,13 @@ pub(crate) fn check_import(import: &LitStr) -> syn::Result<()> {
     if import.value().is_empty() {
         return Err(Error::new(
             import.span(),
-            "`import` needs the name of the module scripts import from",
+            "`module` needs the name of the module scripts import from",
         ));
     }
     Ok(())
 }
 
-/// `IMPORT_MODULE` and `EXPORT_PATH` of a contract imported from `import`: scripts reach
+/// `IMPORT_MODULE` and `EXPORT_PATH` of a contract imported from module `import`: scripts reach
 /// it at the path of its name, as they do under the global namespace (`math.add` is
 /// `import { math } from "app"; math.add(...)`).
 pub(crate) fn import_consts(import: Option<&LitStr>, name: &LitStr) -> Option<TokenStream> {

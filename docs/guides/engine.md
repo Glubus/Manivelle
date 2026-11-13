@@ -44,7 +44,11 @@ engine.emit("user.found", &UserFoundPayload { user_id: 7 })?;
   an export the script does not have fails with `EngineError::FunctionNotFound`. An
   exception thrown by the script is returned as `EngineError::Execution` with its
   message and stack, located in the TypeScript source (see
-  [Error Locations](#error-locations)).
+  [Error Locations](#error-locations)). A value the script returned that does not convert
+  to the Rust type asked for is `EngineError::OutputDecoding`, with the path to the value
+  that failed (`position.x: expected number, got string`): the script ran, its result is
+  the wrong shape. `EngineError::ContractValidation` is a third case, a value refused by
+  the schema of a host contract when validation is on.
 
 ## Scripts And Projects
 

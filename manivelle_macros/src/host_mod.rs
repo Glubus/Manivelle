@@ -9,7 +9,7 @@ use crate::args::{parse_args, take_value};
 use crate::host_fn::{HostFnArgs, MOD_IMPORT_KEY, check_import};
 
 /// Rewrites every direct `#[host_fn]` and `#[host_event]` of the inline module to carry
-/// its full contract name, `namespace.name`, and the module's `import` when it has one;
+/// its full contract name, `namespace.name`, and the module's `module` when it has one;
 /// the attribute then expands as usual.
 pub(crate) fn expand_host_mod(args: TokenStream, mut module: ItemMod) -> syn::Result<TokenStream> {
     let args = ModArgs::parse(args)?;
@@ -54,16 +54,16 @@ struct ModArgs {
 }
 
 impl ModArgs {
-    /// Reads `namespace = "..."` and `import = "..."`.
+    /// Reads `namespace = "..."` and `module = "..."`.
     fn parse(args: TokenStream) -> syn::Result<Self> {
         let mut namespace: Option<LitStr> = None;
         let mut import: Option<LitStr> = None;
         parse_args(
             args,
-            "expected `namespace = \"name\"` and, optionally, `import = \"module\"`",
+            "expected `namespace = \"name\"` and, optionally, `module = \"app\"`",
             |meta| {
                 Ok(take_value(meta, "namespace", &mut namespace)?
-                    || take_value(meta, "import", &mut import)?)
+                    || take_value(meta, "module", &mut import)?)
             },
         )?;
         if let Some(import) = &import {
@@ -76,7 +76,7 @@ impl ModArgs {
     }
 }
 
-/// Gives each contract attribute in `attrs` its full name, and the module's `import` unless
+/// Gives each contract attribute in `attrs` its full name, and the import module unless
 /// it has its own. `default_name` is the name a bare `#[host_fn]` takes, the function's;
 /// an event must give its own.
 fn prefix_attributes(

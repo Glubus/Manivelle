@@ -8,7 +8,7 @@ use crate::contract::{
 use super::module_declarations::ImportModules;
 use super::names::{indent, is_identifier_name};
 
-const DEFAULT_ENUM_TAG: &str = "type";
+pub(super) const DEFAULT_ENUM_TAG: &str = "type";
 
 /// `HostHotContext`, the type of `ctx.hot`, shared by the declarations and the SDK.
 pub(super) const HOT_CONTEXT_TYPE: &str = include_str!("../../../assets/hot_context.ts");

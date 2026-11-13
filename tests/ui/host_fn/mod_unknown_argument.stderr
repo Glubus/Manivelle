@@ -1,7 +1,7 @@
-error: expected `namespace = "name"` and, optionally, `import = "module"`
+error: expected `namespace = "name"` and, optionally, `module = "app"`
  --> tests/ui/host_fn/mod_unknown_argument.rs:3:32
   |
-3 | #[host_mod(namespace = "math", module = "app")]
+3 | #[host_mod(namespace = "math", import = "app")]
   |                                ^^^^^^
 
 warning: unused imports: `EngineError` and `host_fn`

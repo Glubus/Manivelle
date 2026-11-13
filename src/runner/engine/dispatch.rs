@@ -7,7 +7,7 @@ use crate::contract::{JsArgs, JsDecode, JsEncode, ScriptExport};
 use crate::error::EngineError;
 use crate::types::{Emission, ScriptId};
 
-use super::super::errors::{caught_js_error, pending_exception};
+use super::super::errors::{caught_js_error, decode_returned, pending_exception};
 use super::super::host_fn;
 use super::super::source_locations::in_typescript;
 use super::super::tasks::{RequestGuard, ScriptTask};
@@ -64,10 +64,7 @@ impl Engine {
         let value = self.await_returned(ctx, returned, || {
             format!("function `{function}` of script `{script_id}`")
         })?;
-        R::decode_js(ctx, value)
-            .map_err(rquickjs::Error::from)
-            .catch(ctx)
-            .map_err(caught_js_error)
+        decode_returned(ctx, value)
     }
 
     /// Calls the export declared by `E`, like [`Engine::call`], with its name, argument
@@ -181,10 +178,7 @@ impl Engine {
                 let value = self.await_returned(ctx, returned, || {
                     format!("a `{event}` handler of script `{script_id}`")
                 })?;
-                let reply = R::decode_js(ctx, value)
-                    .map_err(rquickjs::Error::from)
-                    .catch(ctx)
-                    .map_err(caught_js_error)?;
+                let reply = decode_returned(ctx, value)?;
                 replies.push((script_id.clone(), reply));
                 Ok(())
             },

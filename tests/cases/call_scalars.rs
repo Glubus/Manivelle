@@ -164,7 +164,7 @@ fn results_that_do_not_fit_fail_with_a_conversion_error() {
     ] {
         let error = result.expect_err(name);
         assert!(
-            error.to_string().contains("Error converting from js"),
+            matches!(error, manivelle::EngineError::OutputDecoding { .. }),
             "{name}: {error}"
         );
     }

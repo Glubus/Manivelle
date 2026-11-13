@@ -180,7 +180,7 @@ fn a_reply_of_the_wrong_type_fails_the_request() {
     let result = engine.request::<_, String>("menu.label", "x");
 
     assert!(
-        matches!(result, Err(EngineError::Execution { .. })),
+        matches!(result, Err(EngineError::OutputDecoding { ref details }) if details.contains("expected string")),
         "{result:?}"
     );
 }

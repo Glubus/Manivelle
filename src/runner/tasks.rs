@@ -11,7 +11,7 @@ use crate::contract::JsDecode;
 use crate::error::EngineError;
 use crate::types::ScriptId;
 
-use super::errors::{caught_js_error, js_error};
+use super::errors::{caught_js_error, decode_returned, js_error};
 use super::module_loader::ModuleStore;
 use super::promise_rejections::UnhandledRejections;
 use super::source_locations::in_typescript;
@@ -136,7 +136,7 @@ impl<R: JsDecode + 'static> RequestResults<R> {
             ctx,
             value,
             Box::new(move |ctx, outcome| {
-                let reply = outcome.and_then(|value| decode_reply::<R>(ctx, value));
+                let reply = outcome.and_then(|value| decode_returned::<R>(ctx, value));
                 completed
                     .borrow_mut()
                     .record(slot, reply.map(|reply| (id, reply)));
@@ -192,14 +192,6 @@ impl<R: JsDecode + 'static> RequestResults<R> {
     }
 }
 
-/// Decodes a script's reply as `R`; a failed conversion is the operation's error.
-fn decode_reply<'js, R: JsDecode>(ctx: &Ctx<'js>, value: JsValue<'js>) -> Result<R, EngineError> {
-    R::decode_js(ctx, value)
-        .map_err(rquickjs::Error::from)
-        .catch(ctx)
-        .map_err(caught_js_error)
-}
-
 type TaskFinish = Box<dyn for<'js> FnOnce(&Ctx<'js>, Result<JsValue<'js>, EngineError>)>;
 
 pub(super) struct ScriptTask {
@@ -220,7 +212,7 @@ impl ScriptTask {
             ctx,
             value,
             Box::new(move |ctx, value| {
-                result.complete(value.and_then(|value| decode_reply::<R>(ctx, value)));
+                result.complete(value.and_then(|value| decode_returned::<R>(ctx, value)));
             }),
             Box::new(move || cancelled.complete(Err(EngineError::Cancelled))),
         )

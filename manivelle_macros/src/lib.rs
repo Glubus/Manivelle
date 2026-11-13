@@ -188,7 +188,7 @@ pub fn script_export(args: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Prefixes the contract names of the `#[host_fn]` functions and `#[host_event]` types of
-/// an inline module, and with `import` makes them importable from a module.
+/// an inline module, and with `module` makes them importable from a module.
 ///
 /// ```ignore
 /// #[host_mod(namespace = "math")] // or `#[host_mod]`: the module's name
@@ -208,14 +208,14 @@ pub fn script_export(args: TokenStream, item: TokenStream) -> TokenStream {
 /// in the module and follow the function's visibility, so use `pub fn` to register
 /// them from outside (`math::Add`).
 ///
-/// `import = "app"` also sets, on every contract of the module, the `IMPORT_MODULE` and
+/// `module = "app"` also sets, on every contract of the module, the `IMPORT_MODULE` and
 /// `EXPORT_PATH` a hand-written contract sets by hand: scripts then reach `math.add` with
 /// `import { math } from "app"; math.add(...)`, the path being the full contract name. A
 /// script in a context group has no host globals, so the import is how it reaches the
 /// function.
 ///
 /// ```ignore
-/// #[host_mod(namespace = "math", import = "app")]
+/// #[host_mod(namespace = "math", module = "app")]
 /// mod math {
 ///     #[host_fn]
 ///     pub fn add(input: AddInput) -> Result<AddOutput, EngineError> { /* ... */ }

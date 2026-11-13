@@ -92,6 +92,16 @@ pub enum EngineError {
         /// Validation failure details.
         details: String,
     },
+    /// A value a script returned to the host, from an export or a request handler, does
+    /// not convert to the Rust type the host asked for. The script ran to its end: an
+    /// exception it threw is an [`EngineError::Execution`], and a value refused by the
+    /// published schema of a host contract is an [`EngineError::ContractValidation`].
+    #[error("the value the script returned does not decode as the requested type: {details}")]
+    OutputDecoding {
+        /// The path to the value that failed and what was expected there, such as
+        /// `position.x: expected number, got string`.
+        details: String,
+    },
     /// TypeScript transpilation failed.
     #[error("typescript transpilation failed: {details}")]
     Transpile {

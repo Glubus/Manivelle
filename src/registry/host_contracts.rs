@@ -1,5 +1,6 @@
 //! Registry for Rust-declared host contracts.
 
+mod api_schema;
 mod bindings;
 pub(crate) use bindings::NativeContext;
 mod declarations;

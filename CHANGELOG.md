@@ -53,6 +53,12 @@
     operation stopped at `execution_timeout`.
   - `EngineError::OutOfMemory` when the engine reaches `memory_limit_bytes`. The numbers
     its message used to carry are in `Engine::memory_stats()`.
+- A value a script returns that does not convert to the requested Rust type (`call`,
+  `call_typed`, `request`, and their deferred forms) fails with the new
+  `EngineError::OutputDecoding { details }` instead of `EngineError::Execution`, so a
+  script that threw and a script that returned the wrong shape are told apart by type.
+  `details` is the path and the expectation (`position.x: expected number, got string`),
+  without the `Error converting from js ...` prefix.
 
 ### Changed
 
@@ -82,6 +88,11 @@
 
 ### Added
 
+- `registry().api_schema()` describes every registered contract in one JSON document, in
+  the manner of OpenAPI: `functions`, `events`, script `exports` and `contexts` by name,
+  with the `///` comment as `description`, the `module` and `path` scripts import it from,
+  and the types as JSON Schema 2020-12 under `schemas`, referenced with `$ref`. For
+  documentation, API discovery and tools that do not read TypeScript.
 - `Engine::pending_work()` counts the deferred results and async host calls still open,
   and `Engine::next_timer_due()` says how long until the earliest timer: a host loop that
   forgets `pump` or `advance_timers` can now be seen.
@@ -94,10 +105,10 @@
   not type-checked against an API the program dropped.
 - Examples `host_state` (`Engine::with_state`, `snapshot` and `restore`) and `packages`
   (`load_packages`, dependencies, a refused permission), both run in CI.
-- `#[host_mod(namespace = "math", import = "app")]` makes every `#[host_fn]`
+- `#[host_mod(namespace = "math", module = "app")]` makes every `#[host_fn]`
   and `#[host_event]` of the module importable: it sets
   `IMPORT_MODULE` and `EXPORT_PATH`, so a script, including one in a context group, writes
-  `import { math } from "app"; math.add(..)`. `import` on `#[host_fn]` or `#[host_event]`
+  `import { math } from "app"; math.add(..)`. `module` on `#[host_fn]` or `#[host_event]`
   directly is a compile error pointing to `#[host_mod]`.
 - The generated declarations type import modules: every `IMPORT_MODULE` becomes a
   `declare module "..."` block (functions, nested objects, callbacks as handler-registering

@@ -133,6 +133,18 @@ impl CodecError {
         }
         text
     }
+
+    /// Tells a value of the wrong shape, described with its path, from a QuickJS failure
+    /// (a pending exception, an allocation), which is handed back as it is.
+    pub(crate) fn into_mismatch(self) -> Result<String, rquickjs::Error> {
+        let text = self.text();
+        match self.cause {
+            Cause::FromJs { from, to, .. } | Cause::IntoJs { from, to, .. } => {
+                Ok(text.unwrap_or_else(|| format!("expected {to}, got {from}")))
+            }
+            Cause::Engine(error) => Err(error),
+        }
+    }
 }
 
 impl Display for CodecError {

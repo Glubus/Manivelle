@@ -1,11 +1,11 @@
-error: `import` belongs to the module: write `#[host_mod(import = "module")]`
- --> tests/ui/host_fn/import_on_function.rs:3:30
+error: `module` belongs to `#[host_mod]`: write `#[host_mod(module = "app")]`
+ --> tests/ui/host_fn/module_on_function.rs:3:30
   |
-3 | #[host_fn(name = "math.add", import = "app")]
+3 | #[host_fn(name = "math.add", module = "app")]
   |                              ^^^^^^
 
 warning: unused import: `EngineError`
- --> tests/ui/host_fn/import_on_function.rs:1:17
+ --> tests/ui/host_fn/module_on_function.rs:1:17
   |
 1 | use manivelle::{EngineError, host_fn};
   |                 ^^^^^^^^^^^

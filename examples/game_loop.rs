@@ -37,7 +37,7 @@ struct Status;
 
 /// `import { game } from "game"`: the host functions of the scripts. A grouped script has
 /// no host globals, so it reaches them through this import.
-#[host_mod(namespace = "game", import = "game")]
+#[host_mod(namespace = "game", module = "game")]
 mod game {
     use std::thread;
     use std::time::Duration;

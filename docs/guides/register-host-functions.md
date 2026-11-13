@@ -156,11 +156,11 @@ Use `pub fn` to register the marker from outside the module. Only the module's o
 functions are rewritten: a nested module needs its own `#[host_mod]`. `mod name;` in
 another file is not supported, because a macro cannot read it.
 
-Add `import = "app"` to make every function and event of the module importable, which is
+Add `module = "app"` to make every function and event of the module importable, which is
 what a script in a context group needs (it has no host globals):
 
 ```rust
-#[host_mod(namespace = "math", import = "app")]
+#[host_mod(namespace = "math", module = "app")]
 mod math { /* the same functions */ }
 ```
 

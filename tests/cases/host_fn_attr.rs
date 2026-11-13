@@ -316,7 +316,7 @@ fn script_exports_are_declared_with_an_attribute() {
     engine.call_typed::<Reset>("s", ()).unwrap();
 }
 
-#[host_mod(namespace = "shop", import = "app")]
+#[host_mod(namespace = "shop", module = "app")]
 mod shop {
     use manivelle::{Caller, HostResolver, host_event, host_fn};
     use manivelle::{EngineError, TsSchema};
@@ -353,7 +353,7 @@ fn a_module_with_import_makes_its_contracts_importable_from_a_group() {
     assert_eq!(
         math::Add::IMPORT_MODULE,
         "",
-        "a module without `import` keeps the contract global-only"
+        "a module without `module` keeps the contract global-only"
     );
 
     let mut engine = Engine::new(&EngineOptions::default()).unwrap();
@@ -383,4 +383,72 @@ fn a_module_with_import_makes_its_contracts_importable_from_a_group() {
     let pending = engine.call_deferred::<u32>("first", "left", ()).unwrap();
     engine.pump().unwrap();
     assert_eq!(pending.take().expect("finished").unwrap(), 7);
+}
+
+#[test]
+fn the_registry_describes_its_contracts_as_one_json_document() {
+    let engine = Engine::new(&EngineOptions::default()).unwrap();
+    engine
+        .registry()
+        .function::<FindUser>()
+        .and_then(|registry| registry.function::<shop::Stock>())
+        .and_then(|registry| registry.callback::<shop::Sold>())
+        .and_then(|registry| registry.script_export::<Double>())
+        .unwrap();
+
+    let document = engine.registry().api_schema().unwrap();
+
+    assert_eq!(
+        document,
+        serde_json::json!({
+            "manivelle": 1,
+            "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+            "functions": {
+                "user.find": {
+                    "description": "Finds a user by id.\n\nReturns a display name.",
+                    "input": { "$ref": "#/schemas/FindUserInput" },
+                    "output": { "$ref": "#/schemas/FindUserOutput" },
+                },
+                "shop.stock": {
+                    "module": "app",
+                    "path": ["shop", "stock"],
+                    "input": { "type": "string" },
+                    "output": { "type": "number" },
+                    "async": true,
+                },
+            },
+            "events": {
+                "shop.sold": {
+                    "module": "app",
+                    "path": ["shop", "sold"],
+                    "payload": { "$ref": "#/schemas/Sold" },
+                },
+            },
+            "exports": {
+                "double": {
+                    "args": [{ "type": "number" }],
+                    "output": { "type": "number" },
+                },
+            },
+            "contexts": {},
+            "schemas": {
+                "FindUserInput": {
+                    "type": "object",
+                    "properties": { "user_id": { "type": "number" } },
+                    "required": ["user_id"],
+                },
+                "FindUserOutput": {
+                    "type": "object",
+                    "properties": { "displayName": { "type": "string" } },
+                    "required": ["displayName"],
+                },
+                "Sold": {
+                    "type": "object",
+                    "properties": { "sku": { "type": "string" } },
+                    "required": ["sku"],
+                },
+            },
+        }),
+        "{document:#}"
+    );
 }

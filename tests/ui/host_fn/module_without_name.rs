@@ -1,6 +1,6 @@
 use manivelle::{EngineError, host_fn, host_mod};
 
-#[host_mod(namespace = "math", import = "")]
+#[host_mod(namespace = "math", module = "")]
 mod math {
     use super::*;
 

@@ -82,7 +82,7 @@ that registers a handler (`user.found(handler)` for
 that should be exported from the same module. Contexts are not exported: they
 are declarative metadata.
 
-`#[host_mod(namespace = "user", import = "my_sdk")]` sets both for every
+`#[host_mod(namespace = "user", module = "my_sdk")]` sets both for every
 `#[host_fn]` and `#[host_event]` of an inline
 module, with the contract name as the export path (`user.find` is `["user", "find"]`).
 
@@ -103,7 +103,7 @@ The declaration file contains the public TypeScript API:
 
 The `declare module` blocks mirror the virtual module `Engine` builds, so
 `import { user } from "my_sdk"` type-checks from the declaration file alone, with no
-SDK file and no `paths` mapping. For `#[host_mod(namespace = "math", import = "app")]`
+SDK file and no `paths` mapping. For `#[host_mod(namespace = "math", module = "app")]`
 and a documented `add` function:
 
 ```ts
@@ -237,3 +237,56 @@ would run anyway.
 `manivelle sdk descriptors.json out-dir` writes the same files from a descriptors file,
 for build scripts that never start the program: the descriptors are
 `engine.registry().descriptors()` serialized as JSON.
+
+## Describe The API As JSON
+
+`engine.registry().api_schema()` returns the same contracts as one `serde_json::Value`,
+laid out like an OpenAPI document, for documentation generators, API discovery and tools
+that do not read TypeScript:
+
+```json
+{
+  "manivelle": 1,
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "functions": {
+    "math.add": {
+      "description": "Adds two numbers.",
+      "module": "app",
+      "path": ["math", "add"],
+      "input": { "$ref": "#/schemas/AddInput" },
+      "output": { "$ref": "#/schemas/AddOutput" }
+    }
+  },
+  "events": {},
+  "exports": {},
+  "contexts": {},
+  "schemas": {
+    "AddInput": {
+      "type": "object",
+      "properties": { "left": { "type": "number" }, "right": { "type": "number" } },
+      "required": ["left", "right"]
+    },
+    "AddOutput": {
+      "type": "object",
+      "properties": { "value": { "type": "number" } },
+      "required": ["value"]
+    }
+  }
+}
+```
+
+- `functions` are host functions, `events` the callbacks and requests (`payload`, and
+  `reply` for a request), `exports` the functions scripts export (`args`, `output`).
+- `description` is the `///` comment of the Rust item. `module` and `path` are present
+  when the contract is importable (`import { math } from "app"`).
+- A function that takes or returns nothing has no `input` or `output`; one that returns
+  a `Promise` has `"async": true`.
+- Types are JSON Schema 2020-12. A named Rust type is listed once under `schemas` and
+  referenced with `$ref`. An optional field is left out of `required`; a `Uint8Array` is
+  the array of its bytes with `"format": "uint8array"`; an enum with fields is a `oneOf`
+  of objects told apart by its tag.
+- `manivelle` is the version of this layout, raised when a reader of the previous one
+  would misread the new one.
+
+Unlike `descriptors()`, which serializes the registry's own Rust types so that
+`manivelle sdk` can read them back, this document is meant to be read by other tools.

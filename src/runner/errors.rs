@@ -1,5 +1,8 @@
 //! QuickJS error mapping helpers.
 
+use rquickjs::CatchResultExt;
+
+use crate::contract::JsDecode;
 use crate::error::EngineError;
 
 /// The message of QuickJS's own out of memory, an `InternalError`.
@@ -41,6 +44,22 @@ pub(crate) fn caught_js_error(error: rquickjs::CaughtError<'_>) -> EngineError {
         rquickjs::CaughtError::Error(error) => return js_error(error),
     };
     EngineError::Execution { details }
+}
+
+/// Decodes what a script returned to the host as `R`. A value of the wrong shape is an
+/// [`EngineError::OutputDecoding`]; a QuickJS failure met while reading it (an exception,
+/// an allocation) is reported as any other.
+pub(crate) fn decode_returned<'js, R: JsDecode>(
+    ctx: &rquickjs::Ctx<'js>,
+    value: rquickjs::Value<'js>,
+) -> Result<R, EngineError> {
+    R::decode_js(ctx, value).map_err(|error| match error.into_mismatch() {
+        Ok(details) => EngineError::OutputDecoding { details },
+        Err(error) => match Err::<std::convert::Infallible, _>(error).catch(ctx) {
+            Err(caught) => caught_js_error(caught),
+            Ok(never) => match never {},
+        },
+    })
 }
 
 /// Describes a thrown or rejected JavaScript value, with its stack when it is an `Error`.
